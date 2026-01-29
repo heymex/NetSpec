@@ -3,6 +3,8 @@ package evaluator
 import (
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/netspec/netspec/internal/config"
 	"github.com/openconfig/gnmi/proto/gnmi"
@@ -14,6 +16,7 @@ type Evaluator struct {
 	config     *config.Config
 	logger     zerolog.Logger
 	stateCache map[string]interfaceState
+	mu         sync.RWMutex
 }
 
 // interfaceState represents the current state of an interface
@@ -23,6 +26,24 @@ type interfaceState struct {
 	OperStatus  string
 	AdminStatus string
 	Members     []string
+	UpdatedAt   time.Time
+}
+
+var (
+	alertTypeInterfaceMismatch = "interface_state_mismatch"
+	alertTypeInterfaceAdminDown = "interface_admin_down"
+	alertTypeChannelDown       = "port_channel_down"
+	alertTypeMemberDown        = "port_channel_member_down"
+)
+
+var supportedOperStates = map[string]struct{}{
+	"up":   {},
+	"down": {},
+}
+
+var supportedAdminStates = map[string]struct{}{
+	"enabled":  {},
+	"disabled": {},
 }
 
 // StateChange represents a detected state change
@@ -79,7 +100,7 @@ func (e *Evaluator) EvaluateNotification(deviceName string, notification *gnmi.N
 		}
 
 		// Get interface config for this device
-		deviceCfg, ok := e.config.Devices[deviceName]
+		deviceCfg, ok := e.config.DesiredState.Devices[deviceName]
 		if !ok {
 			continue
 		}
@@ -99,24 +120,43 @@ func (e *Evaluator) EvaluateNotification(deviceName string, notification *gnmi.N
 		}
 
 		// Update state cache
+		e.mu.Lock()
 		cacheKey := fmt.Sprintf("%s:%s", deviceName, ifaceName)
 		state := e.stateCache[cacheKey]
 		state.Device = deviceName
 		state.Interface = ifaceName
+		state.UpdatedAt = time.Now()
 
 		// Update appropriate state field
 		switch stateType {
 		case "oper-status":
-			state.OperStatus = stateValue
+			state.OperStatus = normalizeState(stateValue)
 		case "admin-status":
-			state.AdminStatus = stateValue
+			state.AdminStatus = normalizeState(stateValue)
 		}
 
 		e.stateCache[cacheKey] = state
+		prevState := state
+		e.mu.Unlock()
 
 		// Evaluate state against desired state
-		if change := e.evaluateInterfaceState(deviceName, ifaceName, ifCfg, state); change != nil {
-			changes = append(changes, *change)
+		if ifCfg != nil {
+			if stateType == "admin-status" {
+				if adminChange := e.evaluateAdminChange(deviceName, ifaceName, *ifCfg, prevState, state); adminChange != nil {
+					changes = append(changes, *adminChange)
+				}
+			}
+			if stateType == "oper-status" {
+				if operChange := e.evaluateOperChange(deviceName, ifaceName, *ifCfg, state); operChange != nil {
+					changes = append(changes, *operChange)
+				}
+			}
+		}
+
+		// Evaluate port-channel membership if this is an oper-status change
+		if stateType == "oper-status" {
+			pcChanges := e.evaluatePortChannel(deviceName, ifaceName, deviceCfg, state)
+			changes = append(changes, pcChanges...)
 		}
 	}
 
@@ -160,56 +200,193 @@ func (e *Evaluator) parseInterfacePath(path *gnmi.Path) (ifaceName string, state
 	return ifaceName, stateType, nil
 }
 
-// evaluateInterfaceState compares current state against desired state
-func (e *Evaluator) evaluateInterfaceState(deviceName, ifaceName string, ifCfg config.InterfaceConfig, state interfaceState) *StateChange {
-	// Check admin status first
+// evaluateAdminChange evaluates admin status changes
+func (e *Evaluator) evaluateAdminChange(deviceName, ifaceName string, ifCfg config.InterfaceConfig, prevState, ifaceState interfaceState) *StateChange {
+	if ifCfg.AdminState == "" {
+		return nil
+	}
+	desiredAdmin := normalizeState(ifCfg.AdminState)
+	if _, ok := supportedAdminStates[desiredAdmin]; !ok {
+		return nil
+	}
+	if prevState.AdminStatus == ifaceState.AdminStatus {
+		return nil
+	}
+	if ifaceState.AdminStatus == "" || ifaceState.AdminStatus == desiredAdmin {
+		return nil
+	}
+	severity := severityForAlert(ifCfg, "admin_down", "warning")
+	return &StateChange{
+		Device:    deviceName,
+		Interface: ifaceName,
+		AlertType: alertTypeInterfaceAdminDown,
+		Severity:  severity,
+		Message:   fmt.Sprintf("interface %s admin state %s", ifaceName, ifaceState.AdminStatus),
+		RelatedState: map[string]string{
+			"expected_admin": desiredAdmin,
+			"actual_admin":   ifaceState.AdminStatus,
+		},
+	}
+}
+
+// evaluateOperChange evaluates operational status changes
+func (e *Evaluator) evaluateOperChange(deviceName, ifaceName string, ifCfg config.InterfaceConfig, ifaceState interfaceState) *StateChange {
+	if ifCfg.DesiredState == "" {
+		return nil
+	}
+	desired := normalizeState(ifCfg.DesiredState)
+	if _, ok := supportedOperStates[desired]; !ok {
+		return nil
+	}
+
+	// Check admin status first - if admin is down, don't alert on oper down
 	if ifCfg.AdminState != "" {
-		expectedAdmin := "UP"
-		if ifCfg.AdminState == "disabled" {
-			expectedAdmin = "DOWN"
-		}
-
-		if state.AdminStatus != "" && state.AdminStatus != expectedAdmin {
-			severity := "warning"
-			if ifCfg.Alerts.AdminDown != "" {
-				severity = ifCfg.Alerts.AdminDown
-			}
-
-			return &StateChange{
-				Device:    deviceName,
-				Interface: ifaceName,
-				AlertType: "admin_down",
-				Severity:  severity,
-				Message:   fmt.Sprintf("Interface %s on %s is administratively %s (expected %s)", 
-					ifaceName, deviceName, state.AdminStatus, expectedAdmin),
+		desiredAdmin := normalizeState(ifCfg.AdminState)
+		if _, ok := supportedAdminStates[desiredAdmin]; ok {
+			if ifaceState.AdminStatus != "" && ifaceState.AdminStatus != desiredAdmin {
+				return nil
 			}
 		}
 	}
 
-	// Check operational status
-	expectedOper := strings.ToUpper(ifCfg.DesiredState)
-	actualOper := strings.ToUpper(state.OperStatus)
+	if ifaceState.OperStatus == "" {
+		return nil
+	}
 
-	if actualOper != expectedOper {
-		// If admin is down, oper down is expected - don't alert
-		if state.AdminStatus == "DOWN" {
-			return nil
-		}
-
-		severity := "warning"
-		if ifCfg.Alerts.StateMismatch != "" {
-			severity = ifCfg.Alerts.StateMismatch
-		}
-
+	if ifaceState.OperStatus != desired {
+		severity := severityForAlert(ifCfg, "state_mismatch", "critical")
 		return &StateChange{
 			Device:    deviceName,
 			Interface: ifaceName,
-			AlertType: "state_mismatch",
+			AlertType: alertTypeInterfaceMismatch,
 			Severity:  severity,
-			Message:   fmt.Sprintf("Interface %s on %s is %s (expected %s)", 
-				ifaceName, deviceName, actualOper, expectedOper),
+			Message:   fmt.Sprintf("interface %s expected %s got %s", ifaceName, desired, ifaceState.OperStatus),
+			RelatedState: map[string]string{
+				"expected_state": desired,
+				"actual_state":   ifaceState.OperStatus,
+			},
 		}
 	}
 
 	return nil
+}
+
+// evaluatePortChannel evaluates port-channel member requirements
+func (e *Evaluator) evaluatePortChannel(deviceName, ifaceName string, deviceCfg config.DeviceConfig, ifaceState interfaceState) []StateChange {
+	var changes []StateChange
+	channelNames := e.channelNamesForMember(deviceCfg, ifaceName)
+	if ifaceCfg, ok := deviceCfg.Interfaces[ifaceName]; ok && ifaceCfg.Members != nil && len(ifaceCfg.Members.Required) > 0 {
+		channelNames = append(channelNames, ifaceName)
+	}
+	for _, channelName := range channelNames {
+		channelCfg, ok := deviceCfg.Interfaces[channelName]
+		if !ok {
+			continue
+		}
+		channelAlerts := e.evaluateChannelMembers(deviceName, channelName, channelCfg, ifaceState)
+		changes = append(changes, channelAlerts...)
+	}
+	return changes
+}
+
+// evaluateChannelMembers evaluates port-channel member policies
+func (e *Evaluator) evaluateChannelMembers(deviceName, channelName string, ifaceCfg config.InterfaceConfig, ifaceState interfaceState) []StateChange {
+	if ifaceCfg.Members == nil || len(ifaceCfg.Members.Required) == 0 {
+		return nil
+	}
+	memberPolicy := ifaceCfg.MemberPolicy
+	mode := "all_active"
+	minimum := len(ifaceCfg.Members.Required)
+	if memberPolicy != nil {
+		if memberPolicy.Mode != "" {
+			mode = memberPolicy.Mode
+		}
+		if mode == "min_active" && memberPolicy.Minimum > 0 {
+			minimum = memberPolicy.Minimum
+		}
+	}
+
+	e.mu.RLock()
+	active := 0
+	var downMembers []string
+	for _, member := range ifaceCfg.Members.Required {
+		cacheKey := fmt.Sprintf("%s:%s", deviceName, member)
+		memberState := e.stateCache[cacheKey]
+		if normalizeState(memberState.OperStatus) == "up" {
+			active++
+		} else {
+			downMembers = append(downMembers, member)
+		}
+	}
+	e.mu.RUnlock()
+
+	if mode == "all_active" && len(downMembers) > 0 {
+		severity := severityForAlert(ifaceCfg, "member_down", "critical")
+		return []StateChange{{
+			Device:    deviceName,
+			Interface: channelName,
+			AlertType: alertTypeMemberDown,
+			Severity:  severity,
+			Message:   fmt.Sprintf("port-channel %s members down: %s", channelName, strings.Join(downMembers, ", ")),
+			RelatedState: map[string]string{
+				"down_members": strings.Join(downMembers, ","),
+			},
+		}}
+	}
+
+	if mode == "min_active" && active < minimum {
+		severity := severityForAlert(ifaceCfg, "channel_down", "critical")
+		return []StateChange{{
+			Device:    deviceName,
+			Interface: channelName,
+			AlertType: alertTypeChannelDown,
+			Severity:  severity,
+			Message:   fmt.Sprintf("port-channel %s active members %d below minimum %d", channelName, active, minimum),
+			RelatedState: map[string]string{
+				"active_members": fmt.Sprintf("%d", active),
+				"minimum":        fmt.Sprintf("%d", minimum),
+			},
+		}}
+	}
+
+	return nil
+}
+
+// channelNamesForMember finds port-channels that include a given member interface
+func (e *Evaluator) channelNamesForMember(deviceCfg config.DeviceConfig, member string) []string {
+	var channels []string
+	for ifaceName, ifaceCfg := range deviceCfg.Interfaces {
+		if ifaceCfg.Members == nil || len(ifaceCfg.Members.Required) == 0 {
+			continue
+		}
+		for _, required := range ifaceCfg.Members.Required {
+			if required == member {
+				channels = append(channels, ifaceName)
+				break
+			}
+		}
+	}
+	return channels
+}
+
+// normalizeState normalizes state values to lowercase
+func normalizeState(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+// severityForAlert gets severity from config or returns fallback
+func severityForAlert(ifaceCfg config.InterfaceConfig, alertName, fallback string) string {
+	if ifaceCfg.Alerts.StateMismatch != "" && alertName == "state_mismatch" {
+		return ifaceCfg.Alerts.StateMismatch
+	}
+	if ifaceCfg.Alerts.MemberDown != "" && alertName == "member_down" {
+		return ifaceCfg.Alerts.MemberDown
+	}
+	if ifaceCfg.Alerts.ChannelDown != "" && alertName == "channel_down" {
+		return ifaceCfg.Alerts.ChannelDown
+	}
+	if ifaceCfg.Alerts.AdminDown != "" && alertName == "admin_down" {
+		return ifaceCfg.Alerts.AdminDown
+	}
+	return fallback
 }

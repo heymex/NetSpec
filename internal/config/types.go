@@ -4,17 +4,47 @@ import "time"
 
 // Config represents the complete NetSpec configuration
 type Config struct {
-	Global    GlobalConfig            `yaml:"global"`
-	Devices   map[string]DeviceConfig `yaml:"devices"`
-	Alerts    AlertConfig             `yaml:"alerts"`
-	Maintenance []MaintenanceWindow   `yaml:"maintenance_windows,omitempty"`
+	DesiredState DesiredStateConfig `yaml:"desired_state"`
+	Alerts       AlertsConfig      `yaml:"alerts"`
+	Credentials  CredentialsConfig `yaml:"credentials"`
+	Maintenance  MaintenanceConfig `yaml:"maintenance"`
+}
+
+// DesiredStateConfig contains device and interface monitoring configuration
+type DesiredStateConfig struct {
+	Global  GlobalConfig            `yaml:"global"`
+	Devices map[string]DeviceConfig `yaml:"devices"`
+}
+
+// AlertsConfig defines alert routing and behavior
+type AlertsConfig struct {
+	Channels      map[string]ChannelConfig `yaml:"channels"`
+	AlertRules    map[string]AlertRule    `yaml:"alert_rules"`
+	AlertBehavior AlertBehavior           `yaml:"alert_behavior"`
+}
+
+// CredentialsConfig defines credential storage
+type CredentialsConfig struct {
+	Credentials map[string]CredentialEntry `yaml:"credentials"`
+}
+
+// CredentialEntry defines a credential set
+type CredentialEntry struct {
+	Username     string `yaml:"username"`
+	PasswordEnv  string `yaml:"password_env,omitempty"`
+	PasswordVault string `yaml:"password_vault,omitempty"`
+}
+
+// MaintenanceConfig defines maintenance windows
+type MaintenanceConfig struct {
+	MaintenanceWindows []MaintenanceWindow `yaml:"maintenance_windows,omitempty"`
 }
 
 // GlobalConfig contains global settings
 type GlobalConfig struct {
-	DefaultCredentials string        `yaml:"default_credentials"`
-	GNMIPort           int           `yaml:"gnmi_port"`
-	CollectionInterval time.Duration `yaml:"collection_interval"`
+	DefaultCredentials string        `yaml:"default_credentials,omitempty"`
+	GNMIPort           int           `yaml:"gnmi_port,omitempty"`
+	CollectionInterval time.Duration `yaml:"collection_interval,omitempty"`
 }
 
 // DeviceConfig defines a device to monitor
@@ -77,8 +107,16 @@ type AlertRule struct {
 
 // AlertBehavior defines alert behavior settings
 type AlertBehavior struct {
-	DeduplicationWindow time.Duration `yaml:"deduplication_window"`
+	DeduplicationWindow time.Duration    `yaml:"deduplication_window"`
+	FlapDetection       FlapDetection    `yaml:"flap_detection,omitempty"`
 	StatePersistence    StatePersistence `yaml:"state_persistence,omitempty"`
+}
+
+// FlapDetection defines flap detection settings
+type FlapDetection struct {
+	Enabled  bool          `yaml:"enabled"`
+	Threshold int          `yaml:"threshold"`
+	Window   time.Duration `yaml:"window"`
 }
 
 // StatePersistence defines state persistence settings

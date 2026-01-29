@@ -52,7 +52,7 @@ func main() {
 	}
 
 	logger.Info().
-		Int("device_count", len(cfg.Devices)).
+		Int("device_count", len(cfg.DesiredState.Devices)).
 		Msg("Configuration loaded")
 
 	// Create notifier
@@ -60,6 +60,9 @@ func main() {
 
 	// Create alert engine
 	alertEngine := alerter.NewEngine(cfg, notifier, logger)
+
+	// Start alert engine
+	go alertEngine.Run()
 
 	// Create evaluator
 	eval := evaluator.NewEvaluator(cfg, logger)
@@ -80,12 +83,25 @@ func main() {
 	}
 
 	// Start collectors
-	for deviceName, deviceCfg := range cfg.Devices {
+	for deviceName, deviceCfg := range cfg.DesiredState.Devices {
+		cred := cfg.ResolveCredentials(deviceName)
+		credUsername := cred.Username
+		credPassword := ""
+		if cred.PasswordEnv != "" {
+			credPassword = os.Getenv(cred.PasswordEnv)
+		}
+		if credUsername == "" {
+			credUsername = username
+		}
+		if credPassword == "" {
+			credPassword = password
+		}
+
 		col := collector.NewCollector(
 			deviceCfg.Address,
-			username,
-			password,
-			cfg.Global.GNMIPort,
+			credUsername,
+			credPassword,
+			cfg.DesiredState.Global.GNMIPort,
 			logger.With().Str("device", deviceName).Logger(),
 		)
 
@@ -134,14 +150,8 @@ func main() {
 					
 					// Process each change
 					for _, change := range changes {
-						if change.AlertType == "state_mismatch" && change.Severity != "" {
-							// Check if this is a recovery (interface came back up)
-							// For MVP, we'll check if the state is now matching desired
-							// This is simplified - in production, we'd track previous state
-							alertEngine.ProcessStateChange(change)
-						} else {
-							alertEngine.ProcessStateChange(change)
-						}
+						// Send to alert engine via event channel
+						alertEngine.ProcessStateChange(change)
 					}
 				}
 			}
