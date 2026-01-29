@@ -8,6 +8,7 @@ import (
 	"github.com/netspec/netspec/internal/config"
 	"github.com/netspec/netspec/internal/evaluator"
 	"github.com/netspec/netspec/internal/notifier"
+	"github.com/netspec/netspec/internal/types"
 	"github.com/rs/zerolog"
 )
 
@@ -16,23 +17,10 @@ type Engine struct {
 	config      *config.Config
 	notifier    *notifier.Notifier
 	logger      zerolog.Logger
-	activeAlerts map[string]*Alert
+	activeAlerts map[string]*types.Alert
 	mu          sync.RWMutex
 }
 
-// Alert represents an active or resolved alert
-type Alert struct {
-	ID          string
-	Device      string
-	Entity      string
-	AlertType   string
-	Severity    string
-	State       string // "firing" or "resolved"
-	FiredAt     time.Time
-	ResolvedAt  *time.Time
-	Message     string
-	RelatedState map[string]string
-}
 
 // NewEngine creates a new alert engine
 func NewEngine(cfg *config.Config, notifier *notifier.Notifier, logger zerolog.Logger) *Engine {
@@ -40,7 +28,7 @@ func NewEngine(cfg *config.Config, notifier *notifier.Notifier, logger zerolog.L
 		config:       cfg,
 		notifier:     notifier,
 		logger:       logger,
-		activeAlerts: make(map[string]*Alert),
+		activeAlerts: make(map[string]*types.Alert),
 	}
 }
 
@@ -62,7 +50,7 @@ func (e *Engine) ProcessStateChange(change evaluator.StateChange) {
 	}
 
 	// Create new alert
-	alert := &Alert{
+	alert := &types.Alert{
 		ID:          alertID,
 		Device:      change.Device,
 		Entity:      change.Interface,
@@ -145,11 +133,11 @@ func (e *Engine) getChannelsForSeverity(severity string) []string {
 }
 
 // GetActiveAlerts returns all active alerts
-func (e *Engine) GetActiveAlerts() []*Alert {
+func (e *Engine) GetActiveAlerts() []*types.Alert {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
-	alerts := make([]*Alert, 0, len(e.activeAlerts))
+	alerts := make([]*types.Alert, 0, len(e.activeAlerts))
 	for _, alert := range e.activeAlerts {
 		if alert.State == "firing" {
 			alerts = append(alerts, alert)

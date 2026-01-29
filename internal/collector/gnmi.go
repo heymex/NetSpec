@@ -115,7 +115,7 @@ func (c *Collector) startSubscription() error {
 		Request: &gnmi.SubscribeRequest_Subscribe{
 			Subscribe: &gnmi.SubscriptionList{
 				Subscription: subscriptions,
-				Mode:         gnmi.SubscriptionList_ON_CHANGE,
+				Mode:         gnmi.SubscriptionList_STREAM,
 				UpdatesOnly:  true,
 			},
 		},

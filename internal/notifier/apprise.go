@@ -9,7 +9,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/netspec/netspec/internal/alerter"
+	"github.com/netspec/netspec/internal/types"
 	"github.com/rs/zerolog"
 )
 
@@ -30,7 +30,7 @@ func NewNotifier(logger zerolog.Logger) *Notifier {
 }
 
 // SendAlert sends an alert to the specified channels
-func (n *Notifier) SendAlert(alert *alerter.Alert, channelNames []string) error {
+func (n *Notifier) SendAlert(alert *types.Alert, channelNames []string) error {
 	// Get channel configs
 	channels := make([]Channel, 0, len(channelNames))
 	for _, name := range channelNames {
@@ -79,7 +79,7 @@ type Channel struct {
 }
 
 // formatMessage formats an alert into a notification message
-func (n *Notifier) formatMessage(alert *alerter.Alert) string {
+func (n *Notifier) formatMessage(alert *types.Alert) string {
 	var emoji string
 	switch alert.Severity {
 	case "critical":
