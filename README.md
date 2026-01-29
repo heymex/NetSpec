@@ -13,14 +13,19 @@ NetSpec is a next-generation, declarative network monitoring system designed for
 ### Configuration
 
 1. Edit `config/desired-state.yaml` with your devices and interfaces
-2. Create `.env` file with credentials:
+2. Copy `.env.example` to `.env` and update with your credentials:
 
 ```bash
-GNMI_USERNAME=gnmi-monitor
-GNMI_PASSWORD=your-password
-APPRISE_SLACK_WEBHOOK=slack://tokenA/tokenB/tokenC
-APPRISE_TEAMS_WEBHOOK=msteams://...
+cp .env.example .env
+# Edit .env with your actual values
 ```
+
+The `.env` file should contain:
+- `GNMI_PASSWORD` - Required password for gNMI connections
+- `GNMI_USERNAME` - gNMI username (defaults to `gnmi-monitor`)
+- `APPRISE_SLACK_WEBHOOK` - Slack notification URL (optional)
+- `APPRISE_TEAMS_WEBHOOK` - Teams notification URL (optional)
+- Other optional settings as documented in `.env.example`
 
 ### Running
 
