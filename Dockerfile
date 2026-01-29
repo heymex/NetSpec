@@ -3,7 +3,7 @@ FROM golang:1.21-alpine AS builder
 WORKDIR /build
 
 # Copy go mod files
-COPY go.mod go.sum ./
+COPY go.mod go.sum* ./
 RUN go mod download
 
 # Copy source
@@ -24,6 +24,6 @@ COPY --from=builder /build/netspec .
 # Create config and data directories
 RUN mkdir -p /config /data
 
-EXPOSE 8080
+EXPOSE 8088
 
 ENTRYPOINT ["./netspec"]

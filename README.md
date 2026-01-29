@@ -56,6 +56,25 @@ gNMI Stream → State Evaluator → Alert Engine → Apprise
 
 See `config/desired-state.yaml` for configuration examples.
 
+## CI/CD
+
+GitHub Actions automatically:
+- Builds and tests on every push and pull request
+- Builds and pushes multi-arch Docker images (linux/amd64, linux/arm64) to GitHub Container Registry
+- Images are tagged with: `latest`, branch name, commit SHA, and semantic version tags
+
+### Using the Container Image
+
+Images are published to GitHub Container Registry. Replace `OWNER/REPO` with your repository:
+
+```bash
+# Pull the latest image
+docker pull ghcr.io/OWNER/REPO:latest
+
+# Or use a specific version
+docker pull ghcr.io/OWNER/REPO:v1.0.0
+```
+
 ## License
 
 See LICENSE file for details.
