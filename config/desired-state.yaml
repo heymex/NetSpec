@@ -1,0 +1,64 @@
+# NetSpec Desired State Configuration
+
+global:
+  default_credentials: vault://network/gnmi-creds
+  gnmi_port: 9339
+  collection_interval: 10s
+
+devices:
+  core-sw-stack:
+    address: 10.0.0.1
+    description: "Core switch stack - Building A MDF"
+    
+    interfaces:
+      Port-channel1:
+        description: "Uplink to Distribution"
+        desired_state: up
+        admin_state: enabled
+        alerts:
+          state_mismatch: critical
+          admin_down: warning
+          
+      GigabitEthernet1/0/1:
+        description: "Server Room UPS"
+        desired_state: up
+        admin_state: enabled
+        alerts:
+          state_mismatch: warning
+
+  dist-sw-01:
+    address: 10.0.0.10
+    description: "Distribution switch - Building A IDF-1"
+    
+    interfaces:
+      Port-channel10:
+        description: "Downlink to Access"
+        desired_state: up
+        admin_state: enabled
+        alerts:
+          state_mismatch: critical
+
+alerts:
+  channels:
+    ops-slack:
+      type: apprise
+      url_env: APPRISE_SLACK_WEBHOOK
+      severity_filter: [warning, critical]
+      
+    ops-teams:
+      type: apprise
+      url_env: APPRISE_TEAMS_WEBHOOK
+      severity_filter: [critical]
+
+  alert_rules:
+    default:
+      channels: [ops-slack]
+      
+    critical:
+      channels: [ops-slack, ops-teams]
+      
+    warning:
+      channels: [ops-slack]
+
+  alert_behavior:
+    deduplication_window: 300s

@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  netspec:
+    build: .
+    container_name: netspec
+    restart: unless-stopped
+    volumes:
+      - ./config:/config:ro
+      - ./data:/data
+    environment:
+      - GNMI_USERNAME=${GNMI_USERNAME:-gnmi-monitor}
+      - GNMI_PASSWORD=${GNMI_PASSWORD}
+      - APPRISE_API_URL=${APPRISE_API_URL:-http://apprise:8000}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    ports:
+      - "8088:8088"
+    depends_on:
+      - apprise
+    networks:
+      - monitoring
+
+  apprise:
+    image: lscr.io/linuxserver/apprise-api:latest
+    container_name: apprise
+    restart: unless-stopped
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/Chicago
+    volumes:
+      - ./apprise-config:/config
+    ports:
+      - "8000:8000"
+    networks:
+      - monitoring
+
+networks:
+  monitoring:
+    driver: bridge

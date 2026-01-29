@@ -1,0 +1,174 @@
+package main
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/netspec/netspec/internal/alerter"
+	"github.com/netspec/netspec/internal/api"
+	"github.com/netspec/netspec/internal/collector"
+	"github.com/netspec/netspec/internal/config"
+	"github.com/netspec/netspec/internal/evaluator"
+	"github.com/netspec/netspec/internal/notifier"
+	"github.com/rs/zerolog"
+)
+
+var (
+	version = "dev"
+	commit  = "unknown"
+)
+
+func main() {
+	configPath := flag.String("config", "/config/desired-state.yaml", "Path to desired state configuration")
+	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
+	flag.Parse()
+
+	// Setup logger
+	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
+	logLevelParsed, err := zerolog.ParseLevel(*logLevel)
+	if err != nil {
+		logLevelParsed = zerolog.InfoLevel
+	}
+	zerolog.SetGlobalLevel(logLevelParsed)
+	logger := zerolog.New(os.Stdout).With().
+		Timestamp().
+		Str("version", version).
+		Str("commit", commit).
+		Logger()
+
+	logger.Info().Msg("Starting NetSpec")
+
+	// Load configuration
+	cfg, err := config.LoadConfig(*configPath)
+	if err != nil {
+		logger.Fatal().
+			Err(err).
+			Str("config_path", *configPath).
+			Msg("Failed to load configuration")
+	}
+
+	logger.Info().
+		Int("device_count", len(cfg.Devices)).
+		Msg("Configuration loaded")
+
+	// Create notifier
+	notifier := notifier.NewNotifier(logger)
+
+	// Create alert engine
+	alertEngine := alerter.NewEngine(cfg, notifier, logger)
+
+	// Create evaluator
+	eval := evaluator.NewEvaluator(cfg, logger)
+
+	// Create collectors for each device
+	collectors := make(map[string]*collector.Collector)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Get credentials (simplified for MVP - in production, use vault integration)
+	username := os.Getenv("GNMI_USERNAME")
+	if username == "" {
+		username = "gnmi-monitor"
+	}
+	password := os.Getenv("GNMI_PASSWORD")
+	if password == "" {
+		logger.Fatal().Msg("GNMI_PASSWORD environment variable is required")
+	}
+
+	// Start collectors
+	for deviceName, deviceCfg := range cfg.Devices {
+		col := collector.NewCollector(
+			deviceCfg.Address,
+			username,
+			password,
+			cfg.Global.GNMIPort,
+			logger.With().Str("device", deviceName).Logger(),
+		)
+
+		collectors[deviceName] = col
+
+		// Connect in goroutine with retry
+		go func(name string, c *collector.Collector) {
+			for {
+				if err := c.Connect(); err != nil {
+					logger.Error().
+						Err(err).
+						Str("device", name).
+						Msg("Failed to connect, retrying in 10s")
+					time.Sleep(10 * time.Second)
+					continue
+				}
+				break
+			}
+		}(deviceName, col)
+	}
+
+	// Start API server
+	apiPort := os.Getenv("API_PORT")
+	if apiPort == "" {
+		apiPort = "8080"
+	}
+	apiServer := api.NewServer(alertEngine, logger, apiPort)
+	go func() {
+		if err := apiServer.Start(); err != nil {
+			logger.Error().
+				Err(err).
+				Msg("API server error")
+		}
+	}()
+
+	// Process updates from collectors
+	for deviceName, col := range collectors {
+		go func(name string, c *collector.Collector) {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case notification := <-c.Updates():
+					// Evaluate state changes
+					changes := eval.EvaluateNotification(name, notification)
+					
+					// Process each change
+					for _, change := range changes {
+						if change.AlertType == "state_mismatch" && change.Severity != "" {
+							// Check if this is a recovery (interface came back up)
+							// For MVP, we'll check if the state is now matching desired
+							// This is simplified - in production, we'd track previous state
+							alertEngine.ProcessStateChange(change)
+						} else {
+							alertEngine.ProcessStateChange(change)
+						}
+					}
+				}
+			}
+		}(deviceName, col)
+	}
+
+	// Setup graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	logger.Info().Msg("NetSpec running, press Ctrl+C to stop")
+
+	// Wait for shutdown signal
+	<-sigChan
+	logger.Info().Msg("Shutting down...")
+
+	// Close all collectors
+	for name, col := range collectors {
+		if err := col.Close(); err != nil {
+			logger.Error().
+				Err(err).
+				Str("device", name).
+				Msg("Error closing collector")
+		}
+	}
+
+	cancel()
+	logger.Info().Msg("NetSpec stopped")
+}
