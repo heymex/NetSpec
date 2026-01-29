@@ -2,7 +2,9 @@ version: '3.8'
 
 services:
   netspec:
-    image: ghcr.io/heymex/netspec:${NETSPEC_IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: netspec
     restart: unless-stopped
     volumes:

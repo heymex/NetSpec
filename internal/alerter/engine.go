@@ -1,7 +1,6 @@
 package alerter
 
 import (
-	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -16,9 +15,6 @@ import (
 // NotifyFunc is called when an alert fires or resolves
 type NotifyFunc func(alert types.Alert)
 
-// EscalateFunc is called when an alert escalates to additional channels
-type EscalateFunc func(alert types.Alert, channels []string)
-
 // Engine manages alert lifecycle and routing
 type Engine struct {
 	config       *config.Config
@@ -31,7 +27,6 @@ type Engine struct {
 	escalation   *EscalationManager
 	events       chan AlertEvent
 	notify       NotifyFunc
-	escalate     EscalateFunc
 }
 
 // AlertEvent represents an alert event from the evaluator
@@ -97,17 +92,14 @@ func NewEngine(cfg *config.Config, notifier *notifier.Notifier, logger zerolog.L
 	}
 
 	if escMgr != nil {
-		engine.escalate = func(alert types.Alert, channels []string) {
+		escFn := func(alert types.Alert, channels []string) {
 			alert.Message = fmt.Sprintf("[ESCALATED] %s", alert.Message)
 			for _, chName := range channels {
 				ch, ok := cfg.Alerts.Channels[chName]
 				if !ok {
 					continue
 				}
-				url := getChannelURL(ch.URLEnv)
-				if url == "" {
-					continue
-				}
+				_ = ch // Use channel config if needed
 				if err := notifier.SendAlert(&alert, []string{chName}); err != nil {
 					l.Error().Err(err).Str("channel", chName).Msg("escalation notification failed")
 				} else {
@@ -115,7 +107,7 @@ func NewEngine(cfg *config.Config, notifier *notifier.Notifier, logger zerolog.L
 				}
 			}
 		}
-		escMgr.onEscalate = engine.escalate
+		escMgr.onEscalate = escFn
 	}
 
 	return engine
@@ -266,10 +258,8 @@ func (e *Engine) process(ev AlertEvent) {
 			Str("type", ev.AlertType).
 			Msg("alert resolved")
 
-		if !existing.Suppressed {
-			if e.notify != nil {
-				e.notify(*existing)
-			}
+		if e.notify != nil {
+			e.notify(*existing)
 		}
 
 		// Cancel escalation
@@ -330,7 +320,7 @@ func (e *Engine) ResolveAlert(device, entity, alertType string) {
 		Msg("Alert resolved")
 
 	// Send recovery notification
-	channels := e.getChannelsForSeverity(alert.Severity)
+	channels := getChannelsForSeverity(e.config, alert.Severity)
 	if err := e.notifier.SendAlert(alert, channels); err != nil {
 		e.logger.Error().
 			Err(err).

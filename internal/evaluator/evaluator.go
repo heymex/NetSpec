@@ -105,8 +105,9 @@ func (e *Evaluator) EvaluateNotification(deviceName string, notification *gnmi.N
 			continue
 		}
 
-		ifCfg, ok := deviceCfg.Interfaces[ifaceName]
-		if !ok {
+		// Check if interface is in desired state config
+		_, hasInterfaceConfig := deviceCfg.Interfaces[ifaceName]
+		if !hasInterfaceConfig {
 			// Interface not in desired state config, skip
 			continue
 		}
@@ -140,14 +141,14 @@ func (e *Evaluator) EvaluateNotification(deviceName string, notification *gnmi.N
 		e.mu.Unlock()
 
 		// Evaluate state against desired state
-		if ifCfg != nil {
+		if ifCfg, ok := deviceCfg.Interfaces[ifaceName]; ok {
 			if stateType == "admin-status" {
-				if adminChange := e.evaluateAdminChange(deviceName, ifaceName, *ifCfg, prevState, state); adminChange != nil {
+				if adminChange := e.evaluateAdminChange(deviceName, ifaceName, ifCfg, prevState, state); adminChange != nil {
 					changes = append(changes, *adminChange)
 				}
 			}
 			if stateType == "oper-status" {
-				if operChange := e.evaluateOperChange(deviceName, ifaceName, *ifCfg, state); operChange != nil {
+				if operChange := e.evaluateOperChange(deviceName, ifaceName, ifCfg, state); operChange != nil {
 					changes = append(changes, *operChange)
 				}
 			}
