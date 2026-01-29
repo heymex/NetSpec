@@ -74,6 +74,10 @@ gNMI Stream → State Evaluator → Alert Engine → Apprise
 
 See `config/desired-state.yaml` for configuration examples.
 
+### Cisco IOS-XE gNMI Setup
+
+For detailed instructions on configuring gNMI on Cisco IOS-XE devices, see the [Cisco gNMI Setup Guide](docs/CISCO_GNMI_SETUP.md).
+
 ## CI/CD
 
 GitHub Actions automatically:
