@@ -24,8 +24,21 @@ APPRISE_TEAMS_WEBHOOK=msteams://...
 
 ### Running
 
+The docker-compose file uses the container image built by GitHub Actions from GitHub Container Registry.
+
+**Note**: To pull from GitHub Container Registry, you may need to authenticate:
+```bash
+echo $GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
+```
+
+Then start the services:
 ```bash
 docker-compose up -d
+```
+
+To use a specific image tag instead of `latest`, set the `NETSPEC_IMAGE_TAG` environment variable:
+```bash
+NETSPEC_IMAGE_TAG=v1.0.0 docker-compose up -d
 ```
 
 ### Building from Source
