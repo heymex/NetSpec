@@ -138,7 +138,7 @@ func main() {
 	// Start API server with Web UI
 	apiPort := os.Getenv("API_PORT")
 	if apiPort == "" {
-		apiPort = "8080"
+		apiPort = "8088"
 	}
 	apiServer := api.NewServer(alertEngine, logger, apiPort)
 

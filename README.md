@@ -77,6 +77,32 @@ This MVP includes:
 - ✅ Basic alerting via Apprise
 - ✅ YAML configuration
 - ✅ Docker deployment
+- ✅ Web status interface
+
+## Web Interface
+
+NetSpec includes a built-in web UI accessible at `http://localhost:8088` (or your configured host/port).
+
+### Features
+
+- **Dashboard** - Overview of devices, interfaces, and active alerts
+- **Device List** - All monitored devices with interface counts
+- **Active Alerts** - Current firing alerts with severity indicators
+- **Live Logs** - Auto-refreshing log stream (updates every 5 seconds)
+- **Configuration View** - Current gNMI port, collection interval, and dedup settings
+- **Config Reload** - Button to force re-read of `desired-state.yaml` without restart
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/` | GET | Web UI dashboard |
+| `/health` | GET | Health check |
+| `/status` | GET | Status summary (JSON) |
+| `/alerts` | GET | Active alerts (JSON) |
+| `/api/logs` | GET | Recent log entries (JSON) |
+| `/api/devices` | GET | Device configuration (JSON) |
+| `/api/reload` | POST | Reload configuration |
 
 ## Architecture
 
