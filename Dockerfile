@@ -25,10 +25,10 @@ COPY --from=builder /build/netspec .
 # Download and install gnmic (gNMI CLI client)
 # Supports both amd64 and arm64 architectures
 ARG TARGETARCH
-ARG GNMIC_VERSION=0.59.0
+ARG GNMIC_VERSION=0.26.0
 RUN case ${TARGETARCH} in \
-        amd64) ARCH="linux_amd64" ;; \
-        arm64) ARCH="linux_arm64" ;; \
+        amd64) ARCH="Linux_x86_64" ;; \
+        arm64) ARCH="Linux_aarch64" ;; \
         *) echo "Unsupported architecture: ${TARGETARCH}" && exit 1 ;; \
     esac && \
     wget -q -O /tmp/gnmic.tar.gz \
