@@ -13,7 +13,7 @@ services:
     environment:
       - GNMI_USERNAME=${GNMI_USERNAME:-gnmi-monitor}
       - GNMI_PASSWORD=${GNMI_PASSWORD}
-      - APPRISE_API_URL=${APPRISE_API_URL:-http://apprise:8000}
+      - APPRISE_API_URL=${APPRISE_API_URL:-http://apprise:8086}
       - LOG_LEVEL=${LOG_LEVEL:-info}
     ports:
       - "8088:8088"
@@ -23,7 +23,10 @@ services:
       - monitoring
 
   apprise:
-    image: lscr.io/linuxserver/apprise-api:latest
+    # Alternative registries if lscr.io is unavailable:
+    # - docker.io/linuxserver/apprise-api:latest (Docker Hub)
+    # - ghcr.io/linuxserver/apprise-api:latest (GitHub Container Registry)
+    image: ${APPRISE_IMAGE:-docker.io/linuxserver/apprise-api:latest}
     container_name: apprise
     restart: unless-stopped
     environment:
@@ -33,7 +36,7 @@ services:
     volumes:
       - ${NETSPEC_DATA_DIR:-/opt/netspec}/apprise-config:/config
     ports:
-      - "8000:8000"
+      - "8086:8086"
     networks:
       - monitoring
 
