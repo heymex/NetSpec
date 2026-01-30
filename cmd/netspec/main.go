@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"flag"
+	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -14,6 +16,7 @@ import (
 	"github.com/netspec/netspec/internal/config"
 	"github.com/netspec/netspec/internal/evaluator"
 	"github.com/netspec/netspec/internal/notifier"
+	"github.com/netspec/netspec/internal/webui"
 	"github.com/rs/zerolog"
 )
 
@@ -27,20 +30,29 @@ func main() {
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 	flag.Parse()
 
-	// Setup logger
+	// Create log buffer for web UI (captures last 1000 log entries)
+	logBuffer := webui.NewLogBuffer(1000)
+
+	// Setup logger with multi-writer (stdout + log buffer)
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
 	logLevelParsed, err := zerolog.ParseLevel(*logLevel)
 	if err != nil {
 		logLevelParsed = zerolog.InfoLevel
 	}
 	zerolog.SetGlobalLevel(logLevelParsed)
-	logger := zerolog.New(os.Stdout).With().
+
+	// Write to both stdout and the log buffer
+	multiWriter := io.MultiWriter(os.Stdout, logBuffer)
+	logger := zerolog.New(multiWriter).With().
 		Timestamp().
 		Str("version", version).
 		Str("commit", commit).
 		Logger()
 
 	logger.Info().Msg("Starting NetSpec")
+
+	// Resolve config directory
+	configDir := filepath.Dir(*configPath)
 
 	// Load configuration
 	cfg, err := config.LoadConfig(*configPath)
@@ -123,12 +135,32 @@ func main() {
 		}(deviceName, col)
 	}
 
-	// Start API server
+	// Start API server with Web UI
 	apiPort := os.Getenv("API_PORT")
 	if apiPort == "" {
 		apiPort = "8080"
 	}
 	apiServer := api.NewServer(alertEngine, logger, apiPort)
+
+	// Configure the API server with log buffer and config
+	apiServer.SetLogBuffer(logBuffer)
+	apiServer.SetConfig(cfg, *configPath)
+
+	// Set up config reload function
+	apiServer.SetReloadFunc(func() (*config.Config, error) {
+		logger.Info().Str("config_dir", configDir).Msg("Reloading configuration")
+		newCfg, err := config.LoadConfigDir(configDir)
+		if err != nil {
+			return nil, err
+		}
+		// Note: In a full implementation, you would also:
+		// - Update the evaluator with new config
+		// - Restart collectors for new devices
+		// - Stop collectors for removed devices
+		// For MVP, we just reload the config for display purposes
+		return newCfg, nil
+	})
+
 	go func() {
 		if err := apiServer.Start(); err != nil {
 			logger.Error().
@@ -136,6 +168,10 @@ func main() {
 				Msg("API server error")
 		}
 	}()
+
+	logger.Info().
+		Str("port", apiPort).
+		Msg("Web UI available")
 
 	// Process updates from collectors
 	for deviceName, col := range collectors {
@@ -147,7 +183,7 @@ func main() {
 				case notification := <-c.Updates():
 					// Evaluate state changes
 					changes := eval.EvaluateNotification(name, notification)
-					
+
 					// Process each change
 					for _, change := range changes {
 						// Send to alert engine via event channel

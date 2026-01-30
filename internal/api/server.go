@@ -3,17 +3,29 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/netspec/netspec/internal/alerter"
+	"github.com/netspec/netspec/internal/config"
+	"github.com/netspec/netspec/internal/webui"
 	"github.com/rs/zerolog"
 )
 
-// Server provides HTTP API endpoints
+// ConfigReloadFunc is called when config reload is requested
+type ConfigReloadFunc func() (*config.Config, error)
+
+// Server provides HTTP API endpoints and web UI
 type Server struct {
-	alertEngine *alerter.Engine
-	logger      zerolog.Logger
-	port        string
+	alertEngine  *alerter.Engine
+	logger       zerolog.Logger
+	port         string
+	logBuffer    *webui.LogBuffer
+	config       *config.Config
+	configPath   string
+	startTime    time.Time
+	reloadFunc   ConfigReloadFunc
+	reloadMu     sync.RWMutex
 }
 
 // NewServer creates a new API server
@@ -22,21 +34,47 @@ func NewServer(alertEngine *alerter.Engine, logger zerolog.Logger, port string) 
 		alertEngine: alertEngine,
 		logger:      logger,
 		port:        port,
+		startTime:   time.Now(),
 	}
+}
+
+// SetLogBuffer sets the log buffer for the web UI
+func (s *Server) SetLogBuffer(lb *webui.LogBuffer) {
+	s.logBuffer = lb
+}
+
+// SetConfig sets the current configuration
+func (s *Server) SetConfig(cfg *config.Config, configPath string) {
+	s.reloadMu.Lock()
+	defer s.reloadMu.Unlock()
+	s.config = cfg
+	s.configPath = configPath
+}
+
+// SetReloadFunc sets the function to call when config reload is requested
+func (s *Server) SetReloadFunc(fn ConfigReloadFunc) {
+	s.reloadFunc = fn
 }
 
 // Start starts the HTTP server
 func (s *Server) Start() error {
 	mux := http.NewServeMux()
-	
+
+	// API endpoints
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/status", s.handleStatus)
 	mux.HandleFunc("/alerts", s.handleAlerts)
+	mux.HandleFunc("/api/logs", s.handleLogsAPI)
+	mux.HandleFunc("/api/reload", s.handleReload)
+	mux.HandleFunc("/api/devices", s.handleDevicesAPI)
+
+	// Web UI
+	mux.HandleFunc("/", s.handleWebUI)
 
 	addr := ":" + s.port
 	s.logger.Info().
 		Str("address", addr).
-		Msg("Starting API server")
+		Msg("Starting API server with Web UI")
 
 	return http.ListenAndServe(addr, mux)
 }
@@ -54,23 +92,232 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 // handleStatus returns current state summary
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	
+
 	alerts := s.alertEngine.GetActiveAlerts()
 	status := map[string]interface{}{
 		"active_alerts": len(alerts),
 		"time":          time.Now().UTC().Format(time.RFC3339),
+		"uptime":        time.Since(s.startTime).String(),
 	}
-	
+
 	json.NewEncoder(w).Encode(status)
 }
 
 // handleAlerts returns active alerts
 func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	
+
 	alerts := s.alertEngine.GetActiveAlerts()
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"alerts": alerts,
 		"count":  len(alerts),
 	})
+}
+
+// handleLogsAPI returns recent log entries as JSON
+func (s *Server) handleLogsAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	var entries []webui.LogEntry
+	if s.logBuffer != nil {
+		entries = s.logBuffer.GetRecentEntries(200)
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"entries": entries,
+		"count":   len(entries),
+	})
+}
+
+// handleDevicesAPI returns device configuration as JSON
+func (s *Server) handleDevicesAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	s.reloadMu.RLock()
+	cfg := s.config
+	s.reloadMu.RUnlock()
+
+	if cfg == nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"devices": []interface{}{},
+		})
+		return
+	}
+
+	devices := make([]map[string]interface{}, 0)
+	for name, dev := range cfg.DesiredState.Devices {
+		devices = append(devices, map[string]interface{}{
+			"name":            name,
+			"address":         dev.Address,
+			"description":     dev.Description,
+			"interface_count": len(dev.Interfaces),
+		})
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"devices": devices,
+	})
+}
+
+// handleReload handles config reload requests
+func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	if s.reloadFunc == nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "Config reload not configured",
+		})
+		return
+	}
+
+	s.logger.Info().Msg("Config reload requested via API")
+
+	newCfg, err := s.reloadFunc()
+	if err != nil {
+		s.logger.Error().Err(err).Msg("Config reload failed")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	s.reloadMu.Lock()
+	s.config = newCfg
+	s.reloadMu.Unlock()
+
+	s.logger.Info().
+		Int("device_count", len(newCfg.DesiredState.Devices)).
+		Msg("Config reloaded successfully")
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":      true,
+		"device_count": len(newCfg.DesiredState.Devices),
+	})
+}
+
+// DeviceInfo holds device information for the web UI
+type DeviceInfo struct {
+	Name           string
+	Address        string
+	Description    string
+	InterfaceCount int
+}
+
+// AlertInfo holds alert information for the web UI
+type AlertInfo struct {
+	Device   string
+	Entity   string
+	Severity string
+	Message  string
+}
+
+// ConfigInfo holds configuration summary for the web UI
+type ConfigInfo struct {
+	GNMIPort           int
+	CollectionInterval string
+	DedupWindow        string
+	ConfigPath         string
+}
+
+// PageData holds all data for the web UI template
+type PageData struct {
+	DeviceCount    int
+	InterfaceCount int
+	AlertCount     int
+	Uptime         string
+	Devices        []DeviceInfo
+	Alerts         []AlertInfo
+	Logs           []webui.LogEntry
+	Config         ConfigInfo
+}
+
+// handleWebUI renders the main web interface
+func (s *Server) handleWebUI(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+
+	s.reloadMu.RLock()
+	cfg := s.config
+	configPath := s.configPath
+	s.reloadMu.RUnlock()
+
+	// Build page data
+	data := PageData{
+		Uptime: formatDuration(time.Since(s.startTime)),
+		Config: ConfigInfo{
+			ConfigPath: configPath,
+		},
+	}
+
+	// Add config details
+	if cfg != nil {
+		data.DeviceCount = len(cfg.DesiredState.Devices)
+		data.Config.GNMIPort = cfg.DesiredState.Global.GNMIPort
+		data.Config.CollectionInterval = cfg.DesiredState.Global.CollectionInterval.String()
+		data.Config.DedupWindow = cfg.Alerts.AlertBehavior.DeduplicationWindow.String()
+
+		// Build device list
+		for name, dev := range cfg.DesiredState.Devices {
+			data.Devices = append(data.Devices, DeviceInfo{
+				Name:           name,
+				Address:        dev.Address,
+				Description:    dev.Description,
+				InterfaceCount: len(dev.Interfaces),
+			})
+			data.InterfaceCount += len(dev.Interfaces)
+		}
+	}
+
+	// Get active alerts
+	alerts := s.alertEngine.GetActiveAlerts()
+	data.AlertCount = len(alerts)
+	for _, alert := range alerts {
+		data.Alerts = append(data.Alerts, AlertInfo{
+			Device:   alert.Device,
+			Entity:   alert.Entity,
+			Severity: alert.Severity,
+			Message:  alert.Message,
+		})
+	}
+
+	// Get recent logs
+	if s.logBuffer != nil {
+		data.Logs = s.logBuffer.GetRecentEntries(100)
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := webui.Templates.ExecuteTemplate(w, "base", data); err != nil {
+		s.logger.Error().Err(err).Msg("Failed to render template")
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+	}
+}
+
+// formatDuration formats a duration in a human-readable way
+func formatDuration(d time.Duration) string {
+	if d < time.Minute {
+		return d.Round(time.Second).String()
+	}
+	if d < time.Hour {
+		return d.Round(time.Minute).String()
+	}
+	hours := int(d.Hours())
+	if hours < 24 {
+		return d.Round(time.Minute).String()
+	}
+	days := hours / 24
+	hours = hours % 24
+	if hours == 0 {
+		return string(rune('0'+days)) + "d"
+	}
+	return string(rune('0'+days)) + "d " + string(rune('0'+hours)) + "h"
 }
