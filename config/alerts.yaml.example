@@ -1,0 +1,96 @@
+# NetSpec Alert Configuration
+# Copy this file to alerts.yaml and configure your notification channels
+
+channels:
+  # Slack channel for operations team
+  ops-slack:
+    type: apprise
+    url_env: APPRISE_SLACK_WEBHOOK
+    severity_filter: [warning, critical]
+    
+  # Microsoft Teams channel for critical alerts only
+  ops-teams:
+    type: apprise
+    url_env: APPRISE_TEAMS_WEBHOOK
+    severity_filter: [critical]
+    
+  # OpsGenie for critical alerts with escalation delay
+  # Only notifies after 10 minutes if alert is still unresolved
+  opsgenie-critical:
+    type: apprise
+    url_env: APPRISE_OPSGENIE_URL
+    severity_filter: [critical]
+    escalation_delay: 600  # 10 minutes in seconds
+    
+  # Email notifications to NOC
+  email-noc:
+    type: apprise
+    url_env: APPRISE_EMAIL_URL
+    severity_filter: [warning, critical]
+    
+  # PagerDuty for critical infrastructure issues
+  pagerduty:
+    type: apprise
+    url_env: APPRISE_PAGERDUTY_URL
+    severity_filter: [critical]
+    escalation_delay: 300  # 5 minutes
+
+alert_rules:
+  # Default routing - all alerts go to Slack
+  default:
+    channels: [ops-slack]
+    
+  # Critical alerts go to multiple channels
+  critical:
+    channels: [ops-slack, ops-teams, opsgenie-critical, pagerduty]
+    
+  # Warning alerts go to Slack only
+  warning:
+    channels: [ops-slack]
+    
+  # Info alerts go to Slack (optional, for discovery notifications)
+  info:
+    channels: [ops-slack]
+
+alert_behavior:
+  # Deduplication window: prevent duplicate alerts within this time
+  # Format: duration string (e.g., "300s", "5m", "1h")
+  deduplication_window: 300s  # 5 minutes
+  
+  # Flap detection: suppress alerts for interfaces that are rapidly changing state
+  flap_detection:
+    enabled: true
+    threshold: 3      # Number of state changes to trigger flap detection
+    window: 300s      # Time window in which threshold must be met (5 minutes)
+    
+  # State persistence: save alert state to disk for recovery after restart
+  state_persistence:
+    enabled: true
+    path: /data/state.json
+    on_restart: warn_unknown  # Options: "warn_unknown" or "silent"
+    # "warn_unknown" - send warning if state is unknown after restart
+    # "silent" - silently re-learn state without alerting
+
+# Message templates (optional - for custom alert formatting)
+# These use Go template syntax and will be rendered with alert data
+message_templates:
+  interface_down: |
+    🔴 **Interface Down**: {{ .Device }}
+    Interface: {{ .Entity }} 
+    Expected: UP | Actual: DOWN
+    Time: {{ .FiredAt }}
+    
+  interface_recovered: |
+    🟢 **Interface Recovered**: {{ .Device }}
+    Interface: {{ .Entity }}
+    Down duration: {{ .Duration }}
+    
+  port_channel_member_down: |
+    ⚠️ **Port-Channel Member Down**: {{ .Device }}
+    Channel: {{ .Entity }}
+    Down members: {{ .RelatedState.down_members }}
+    
+  bgp_state_change: |
+    ⚠️ **BGP State Change**: {{ .Device }}
+    Neighbor: {{ .RelatedState.neighbor_address }}
+    Previous: {{ .RelatedState.previous_state }} | Current: {{ .RelatedState.current_state }}

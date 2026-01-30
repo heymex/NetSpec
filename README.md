@@ -13,7 +13,14 @@ NetSpec is a next-generation, declarative network monitoring system designed for
 ### Configuration
 
 1. Edit `config/desired-state.yaml` with your devices and interfaces
-2. Copy `.env.example` to `.env` and update with your credentials:
+2. Copy `config/alerts.yaml.example` to `config/alerts.yaml` and configure notification channels:
+
+```bash
+cp config/alerts.yaml.example config/alerts.yaml
+# Edit config/alerts.yaml with your notification channels
+```
+
+3. Copy `.env.example` to `.env` and update with your credentials:
 
 ```bash
 cp .env.example .env
@@ -23,9 +30,16 @@ cp .env.example .env
 The `.env` file should contain:
 - `GNMI_PASSWORD` - Required password for gNMI connections
 - `GNMI_USERNAME` - gNMI username (defaults to `gnmi-monitor`)
-- `APPRISE_SLACK_WEBHOOK` - Slack notification URL (optional)
-- `APPRISE_TEAMS_WEBHOOK` - Teams notification URL (optional)
+- `APPRISE_SLACK_WEBHOOK` - Slack notification URL (set in alerts.yaml)
+- `APPRISE_TEAMS_WEBHOOK` - Teams notification URL (set in alerts.yaml)
+- `APPRISE_API_URL` - Apprise API URL (defaults to `http://apprise:8000`)
 - Other optional settings as documented in `.env.example`
+
+The `config/alerts.yaml` file configures:
+- Notification channels (Slack, Teams, OpsGenie, Email, etc.)
+- Alert routing rules by severity
+- Deduplication and flap detection settings
+- State persistence configuration
 
 ### Running
 
@@ -72,7 +86,14 @@ gNMI Stream → State Evaluator → Alert Engine → Apprise
 
 ## Configuration
 
-See `config/desired-state.yaml` for configuration examples.
+NetSpec uses multiple configuration files:
+
+- **`config/desired-state.yaml`** - Device and interface monitoring configuration
+- **`config/alerts.yaml`** - Alert routing and notification channel configuration (see `config/alerts.yaml.example`)
+- **`config/credentials.yaml`** - (Optional) Credential management
+- **`config/maintenance.yaml`** - (Optional) Maintenance window definitions
+
+See `config/desired-state.yaml` and `config/alerts.yaml.example` for configuration examples.
 
 ### Cisco IOS-XE gNMI Setup
 
