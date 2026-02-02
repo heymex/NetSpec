@@ -141,19 +141,22 @@ func main() {
 					continue
 				}
 				
+				logger.Info().
+					Str("device", name).
+					Msg("Connection established, monitoring for errors")
+				
 				// Monitor connection health and reconnect if lost
-				for {
-					select {
-					case <-ctx.Done():
-						return
-					case err := <-c.Errors():
-						if err != nil {
-							logger.Warn().
-								Err(err).
-								Str("device", name).
-								Msg("Connection lost, reconnecting...")
-							break // Break inner loop to reconnect
-						}
+				// Wait for an error or context cancellation
+				select {
+				case <-ctx.Done():
+					return
+				case err := <-c.Errors():
+					if err != nil {
+						logger.Warn().
+							Err(err).
+							Str("device", name).
+							Msg("Connection lost, reconnecting...")
+						// Break to outer loop to reconnect
 					}
 				}
 			}
