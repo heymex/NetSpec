@@ -189,10 +189,15 @@ func main() {
 	}
 	apiServer := api.NewServer(alertEngine, logger, apiPort)
 
-	// Configure the API server with log buffer, config, and version
+	// Configure the API server with log buffer, config, version, and collector getter
 	apiServer.SetLogBuffer(logBuffer)
 	apiServer.SetConfig(cfg, *configPath)
 	apiServer.SetVersion(version.GetVersion(), version.GetCommit(), version.GetBuildDate())
+	apiServer.SetCollectorGetter(func(deviceName string) *collector.Collector {
+		collectorsMu.RLock()
+		defer collectorsMu.RUnlock()
+		return collectors[deviceName]
+	})
 
 	// Set up config reload function
 	apiServer.SetReloadFunc(func() (*config.Config, error) {

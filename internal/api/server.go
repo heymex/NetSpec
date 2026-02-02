@@ -3,10 +3,12 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/netspec/netspec/internal/alerter"
+	"github.com/netspec/netspec/internal/collector"
 	"github.com/netspec/netspec/internal/config"
 	"github.com/netspec/netspec/internal/webui"
 	"github.com/rs/zerolog"
@@ -15,21 +17,26 @@ import (
 // ConfigReloadFunc is called when config reload is requested
 type ConfigReloadFunc func() (*config.Config, error)
 
+// CollectorGetter is a function that returns a collector by device name
+type CollectorGetter func(deviceName string) *collector.Collector
+
 // Server provides HTTP API endpoints and web UI
 type Server struct {
-	alertEngine  *alerter.Engine
-	logger       zerolog.Logger
-	port         string
-	logBuffer    *webui.LogBuffer
-	config       *config.Config
-	configPath   string
-	startTime    time.Time
-	reloadFunc   ConfigReloadFunc
-	reloadMu     sync.RWMutex
-	version      string
-	commit       string
-	buildDate    string
-	versionMu    sync.RWMutex
+	alertEngine    *alerter.Engine
+	logger         zerolog.Logger
+	port           string
+	logBuffer      *webui.LogBuffer
+	config         *config.Config
+	configPath     string
+	startTime      time.Time
+	reloadFunc     ConfigReloadFunc
+	reloadMu       sync.RWMutex
+	version        string
+	commit         string
+	buildDate      string
+	versionMu      sync.RWMutex
+	collectorGetter CollectorGetter
+	collectorMu     sync.RWMutex
 }
 
 // NewServer creates a new API server
@@ -69,6 +76,13 @@ func (s *Server) SetVersion(version, commit, buildDate string) {
 	s.buildDate = buildDate
 }
 
+// SetCollectorGetter sets the function to get collectors by device name
+func (s *Server) SetCollectorGetter(getter CollectorGetter) {
+	s.collectorMu.Lock()
+	defer s.collectorMu.Unlock()
+	s.collectorGetter = getter
+}
+
 // Start starts the HTTP server
 func (s *Server) Start() error {
 	mux := http.NewServeMux()
@@ -80,6 +94,10 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/logs", s.handleLogsAPI)
 	mux.HandleFunc("/api/reload", s.handleReload)
 	mux.HandleFunc("/api/devices", s.handleDevicesAPI)
+	mux.HandleFunc("/api/devices/", s.handleDeviceDetailAPI)
+	
+	// Web UI routes
+	mux.HandleFunc("/device/", s.handleDevicePage)
 
 	// Web UI
 	mux.HandleFunc("/", s.handleWebUI)
@@ -179,6 +197,92 @@ func (s *Server) handleDevicesAPI(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"devices": devices,
 	})
+}
+
+// handleDeviceDetailAPI returns detailed information about a specific device
+func (s *Server) handleDeviceDetailAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	// Extract device name from path: /api/devices/{name}
+	path := strings.TrimPrefix(r.URL.Path, "/api/devices/")
+	if path == "" || path == "/api/devices" {
+		http.Error(w, "Device name required", http.StatusBadRequest)
+		return
+	}
+	deviceName := path
+
+	s.reloadMu.RLock()
+	cfg := s.config
+	s.reloadMu.RUnlock()
+
+	if cfg == nil {
+		http.Error(w, "Configuration not loaded", http.StatusInternalServerError)
+		return
+	}
+
+	// Get device config
+	deviceCfg, exists := cfg.DesiredState.Devices[deviceName]
+	if !exists {
+		http.Error(w, "Device not found", http.StatusNotFound)
+		return
+	}
+
+	// Get collector health
+	var health collector.DeviceHealth
+	s.collectorMu.RLock()
+	getter := s.collectorGetter
+	s.collectorMu.RUnlock()
+
+	if getter != nil {
+		if col := getter(deviceName); col != nil {
+			health = col.Health()
+		}
+	}
+
+	// Build interface list
+	interfaces := make([]map[string]interface{}, 0)
+	for ifaceName, ifaceCfg := range deviceCfg.Interfaces {
+		interfaces = append(interfaces, map[string]interface{}{
+			"name":          ifaceName,
+			"description":   ifaceCfg.Description,
+			"desired_state": ifaceCfg.DesiredState,
+			"admin_state":   ifaceCfg.AdminState,
+			"alerts":        ifaceCfg.Alerts,
+		})
+	}
+
+	// Get device-specific logs
+	var deviceLogs []webui.LogEntry
+	if s.logBuffer != nil {
+		allLogs := s.logBuffer.GetRecentEntries(500)
+		for _, entry := range allLogs {
+			// Check if log entry is for this device
+			if strings.Contains(strings.ToLower(entry.Message), strings.ToLower(deviceName)) ||
+				strings.Contains(strings.ToLower(entry.Message), deviceCfg.Address) {
+				deviceLogs = append(deviceLogs, entry)
+			}
+		}
+		// Limit to most recent 100
+		if len(deviceLogs) > 100 {
+			deviceLogs = deviceLogs[len(deviceLogs)-100:]
+		}
+	}
+
+	response := map[string]interface{}{
+		"name":        deviceName,
+		"address":     deviceCfg.Address,
+		"description": deviceCfg.Description,
+		"health": map[string]interface{}{
+			"connected":       health.Connected,
+			"last_update":      health.LastUpdate,
+			"last_error":       health.LastError,
+			"reconnect_count":  health.ReconnectCount,
+		},
+		"interfaces": interfaces,
+		"logs":       deviceLogs,
+	}
+
+	json.NewEncoder(w).Encode(response)
 }
 
 // handleReload handles config reload requests
@@ -333,6 +437,136 @@ func (s *Server) handleWebUI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := webui.Templates.ExecuteTemplate(w, "base", data); err != nil {
 		s.logger.Error().Err(err).Msg("Failed to render template")
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+	}
+}
+
+// DevicePageData holds data for the device detail page
+type DevicePageData struct {
+	Device      DeviceDetailInfo
+	Version     string
+	Commit      string
+	BuildDate   string
+}
+
+// DeviceDetailInfo holds detailed device information
+type DeviceDetailInfo struct {
+	Name           string
+	Address        string
+	Description    string
+	Connected      bool
+	LastUpdate     time.Time
+	LastError      string
+	ReconnectCount int
+	Interfaces     []InterfaceInfo
+	Logs           []webui.LogEntry
+}
+
+// InterfaceInfo holds interface configuration
+type InterfaceInfo struct {
+	Name          string
+	Description   string
+	DesiredState  string
+	AdminState    string
+	Alerts        config.AlertSeverity
+}
+
+// handleDevicePage renders the device detail page
+func (s *Server) handleDevicePage(w http.ResponseWriter, r *http.Request) {
+	// Extract device name from path: /device/{name}
+	path := strings.TrimPrefix(r.URL.Path, "/device/")
+	if path == "" || path == "/device" {
+		http.NotFound(w, r)
+		return
+	}
+	deviceName := path
+
+	s.reloadMu.RLock()
+	cfg := s.config
+	s.reloadMu.RUnlock()
+
+	if cfg == nil {
+		http.Error(w, "Configuration not loaded", http.StatusInternalServerError)
+		return
+	}
+
+	// Get device config
+	deviceCfg, exists := cfg.DesiredState.Devices[deviceName]
+	if !exists {
+		http.NotFound(w, r)
+		return
+	}
+
+	// Get version info
+	s.versionMu.RLock()
+	version := s.version
+	commit := s.commit
+	buildDate := s.buildDate
+	s.versionMu.RUnlock()
+
+	// Get collector health
+	var health collector.DeviceHealth
+	s.collectorMu.RLock()
+	getter := s.collectorGetter
+	s.collectorMu.RUnlock()
+
+	if getter != nil {
+		if col := getter(deviceName); col != nil {
+			health = col.Health()
+		}
+	}
+
+	// Build interface list
+	interfaces := make([]InterfaceInfo, 0)
+	for ifaceName, ifaceCfg := range deviceCfg.Interfaces {
+		interfaces = append(interfaces, InterfaceInfo{
+			Name:         ifaceName,
+			Description:  ifaceCfg.Description,
+			DesiredState: ifaceCfg.DesiredState,
+			AdminState:   ifaceCfg.AdminState,
+			Alerts:       ifaceCfg.Alerts,
+		})
+	}
+
+	// Get device-specific logs
+	var deviceLogs []webui.LogEntry
+	if s.logBuffer != nil {
+		allLogs := s.logBuffer.GetRecentEntries(500)
+		for _, entry := range allLogs {
+			// Check if log entry is for this device
+			if strings.Contains(strings.ToLower(entry.Message), strings.ToLower(deviceName)) ||
+				strings.Contains(strings.ToLower(entry.Message), deviceCfg.Address) {
+				deviceLogs = append(deviceLogs, entry)
+			}
+		}
+		// Limit to most recent 100
+		if len(deviceLogs) > 100 {
+			deviceLogs = deviceLogs[len(deviceLogs)-100:]
+		}
+	}
+
+	deviceDetail := DeviceDetailInfo{
+		Name:           deviceName,
+		Address:        deviceCfg.Address,
+		Description:    deviceCfg.Description,
+		Connected:      health.Connected,
+		LastUpdate:     health.LastUpdate,
+		LastError:      health.LastError,
+		ReconnectCount: health.ReconnectCount,
+		Interfaces:     interfaces,
+		Logs:           deviceLogs,
+	}
+
+	data := DevicePageData{
+		Device:    deviceDetail,
+		Version:   version,
+		Commit:    commit,
+		BuildDate: buildDate,
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := webui.Templates.ExecuteTemplate(w, "device", data); err != nil {
+		s.logger.Error().Err(err).Msg("Failed to render device template")
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
 }
