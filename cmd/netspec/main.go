@@ -91,7 +91,17 @@ func main() {
 	}
 
 	// Start collectors
+	logger.Info().
+		Int("device_count", len(cfg.DesiredState.Devices)).
+		Msg("Starting collectors for devices")
+	
 	for deviceName, deviceCfg := range cfg.DesiredState.Devices {
+		logger.Info().
+			Str("device", deviceName).
+			Str("address", deviceCfg.Address).
+			Int("port", cfg.DesiredState.Global.GNMIPort).
+			Msg("Creating collector")
+		
 		cred := cfg.ResolveCredentials(deviceName)
 		credUsername := cred.Username
 		credPassword := ""
@@ -116,7 +126,11 @@ func main() {
 		collectors[deviceName] = col
 
 		// Connect in goroutine with retry and auto-reconnect
-		go func(name string, c *collector.Collector) {
+		go func(name string, addr string, c *collector.Collector) {
+			logger.Info().
+				Str("device", name).
+				Str("address", addr).
+				Msg("Starting connection goroutine")
 			for {
 				if err := c.Connect(); err != nil {
 					logger.Error().
@@ -143,7 +157,7 @@ func main() {
 					}
 				}
 			}
-		}(deviceName, col)
+		}(deviceName, deviceCfg.Address, col)
 	}
 
 	// Start API server with Web UI
