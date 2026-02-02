@@ -140,6 +140,7 @@ func main() {
 				Str("device", name).
 				Str("address", addr).
 				Msg("Starting connection goroutine")
+		connectionLoop:
 			for {
 				if err := c.Connect(); err != nil {
 					logger.Error().
@@ -165,7 +166,7 @@ func main() {
 							Str("device", name).
 							Msg("Connection lost, reconnecting...")
 						// Break to outer loop to reconnect
-						break
+						continue connectionLoop
 					}
 				}
 			}
