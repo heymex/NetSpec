@@ -19,6 +19,7 @@ import (
 	"github.com/netspec/netspec/internal/version"
 	"github.com/netspec/netspec/internal/webui"
 	"github.com/rs/zerolog"
+	"sync"
 )
 
 func main() {
@@ -77,6 +78,7 @@ func main() {
 
 	// Create collectors for each device
 	collectors := make(map[string]*collector.Collector)
+	collectorsMu := sync.RWMutex{}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -90,12 +92,19 @@ func main() {
 		logger.Fatal().Msg("GNMI_PASSWORD environment variable is required")
 	}
 
-	// Start collectors
-	logger.Info().
-		Int("device_count", len(cfg.DesiredState.Devices)).
-		Msg("Starting collectors for devices")
-	
-	for deviceName, deviceCfg := range cfg.DesiredState.Devices {
+	// Helper function to start a collector (defined before first use)
+	startCollector := func(deviceName string, deviceCfg config.DeviceConfig, cfg *config.Config, username, password string) {
+		collectorsMu.Lock()
+		defer collectorsMu.Unlock()
+		
+		// Check if collector already exists
+		if existing, ok := collectors[deviceName]; ok {
+			// Close old collector if it exists
+			if existing != nil {
+				existing.Close()
+			}
+		}
+		
 		logger.Info().
 			Str("device", deviceName).
 			Str("address", deviceCfg.Address).
@@ -146,7 +155,6 @@ func main() {
 					Msg("Connection established, monitoring for errors")
 				
 				// Monitor connection health and reconnect if lost
-				// Wait for an error or context cancellation
 				select {
 				case <-ctx.Done():
 					return
@@ -161,6 +169,15 @@ func main() {
 				}
 			}
 		}(deviceName, deviceCfg.Address, col)
+	}
+
+	// Start collectors
+	logger.Info().
+		Int("device_count", len(cfg.DesiredState.Devices)).
+		Msg("Starting collectors for devices")
+	
+	for deviceName, deviceCfg := range cfg.DesiredState.Devices {
+		startCollector(deviceName, deviceCfg, cfg, username, password)
 	}
 
 	// Start API server with Web UI
@@ -182,11 +199,50 @@ func main() {
 		if err != nil {
 			return nil, err
 		}
-		// Note: In a full implementation, you would also:
-		// - Update the evaluator with new config
-		// - Restart collectors for new devices
-		// - Stop collectors for removed devices
-		// For MVP, we just reload the config for display purposes
+		
+		// Note: We can't easily update evaluator and alert engine without
+		// more complex state management. For now, collectors are restarted
+		// which is the main issue (IP address changes).
+		go alertEngine.Run()
+		
+		// Stop collectors for removed devices
+		collectorsMu.Lock()
+		for name, col := range collectors {
+			if _, exists := newCfg.DesiredState.Devices[name]; !exists {
+				logger.Info().Str("device", name).Msg("Device removed from config, stopping collector")
+				if col != nil {
+					col.Close()
+				}
+				delete(collectors, name)
+			}
+		}
+		collectorsMu.Unlock()
+		
+		// Start/restart collectors for all devices (handles new devices and IP changes)
+		for deviceName, deviceCfg := range newCfg.DesiredState.Devices {
+			collectorsMu.RLock()
+			existing := collectors[deviceName]
+			collectorsMu.RUnlock()
+			
+			// Check if device is new or address changed
+			needsRestart := existing == nil
+			if existing != nil {
+				// For existing collectors, always restart to pick up any config changes
+				// (we can't easily compare addresses, so restart is safer)
+				logger.Info().Str("device", deviceName).Msg("Restarting collector for device")
+				existing.Close()
+				needsRestart = true
+			}
+			
+			if needsRestart {
+				startCollector(deviceName, deviceCfg, newCfg, username, password)
+			}
+		}
+		
+		logger.Info().
+			Int("device_count", len(newCfg.DesiredState.Devices)).
+			Msg("Configuration reloaded and collectors updated")
+		
 		return newCfg, nil
 	})
 
