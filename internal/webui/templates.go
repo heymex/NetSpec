@@ -516,7 +516,12 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
         <header>
             <div class="logo">
                 <div class="logo-icon">N</div>
-                <h1>NetSpec</h1>
+                <div>
+                    <h1>NetSpec</h1>
+                    <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem;">
+                        {{if .Version}}{{.Version}}{{if ne .Commit "unknown"}} <span style="color: var(--text-muted);">({{.Commit | printf "%.7s"}})</span>{{end}}{{else}}dev{{end}}
+                    </div>
+                </div>
             </div>
             <div class="header-actions">
                 <div class="status-badge">
@@ -624,6 +629,24 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                             <span class="config-key">Config Path</span>
                             <span class="config-value">{{.Config.ConfigPath}}</span>
                         </div>
+                        {{if .Version}}
+                        <div class="config-row">
+                            <span class="config-key">Version</span>
+                            <span class="config-value">{{.Version}}</span>
+                        </div>
+                        {{end}}
+                        {{if and .Commit (ne .Commit "unknown")}}
+                        <div class="config-row">
+                            <span class="config-key">Commit</span>
+                            <span class="config-value">{{.Commit}}</span>
+                        </div>
+                        {{end}}
+                        {{if and .BuildDate (ne .BuildDate "unknown")}}
+                        <div class="config-row">
+                            <span class="config-key">Build Date</span>
+                            <span class="config-value">{{.BuildDate}}</span>
+                        </div>
+                        {{end}}
                     </div>
                 </div>
             </div>

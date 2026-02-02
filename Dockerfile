@@ -2,6 +2,11 @@ FROM golang:1.21-alpine AS builder
 
 WORKDIR /build
 
+# Build arguments for version information
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_DATE=unknown
+
 # Copy go mod files
 COPY go.mod go.sum* ./
 RUN go mod download
@@ -9,8 +14,12 @@ RUN go mod download
 # Copy source
 COPY . .
 
-# Build
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o netspec ./cmd/netspec
+# Build with version information
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo \
+    -ldflags "-X github.com/netspec/netspec/internal/version.Version=${VERSION} \
+              -X github.com/netspec/netspec/internal/version.Commit=${COMMIT} \
+              -X github.com/netspec/netspec/internal/version.BuildDate=${BUILD_DATE}" \
+    -o netspec ./cmd/netspec
 
 # Final stage
 FROM alpine:latest

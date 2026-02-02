@@ -16,13 +16,9 @@ import (
 	"github.com/netspec/netspec/internal/config"
 	"github.com/netspec/netspec/internal/evaluator"
 	"github.com/netspec/netspec/internal/notifier"
+	"github.com/netspec/netspec/internal/version"
 	"github.com/netspec/netspec/internal/webui"
 	"github.com/rs/zerolog"
-)
-
-var (
-	version = "dev"
-	commit  = "unknown"
 )
 
 func main() {
@@ -45,8 +41,8 @@ func main() {
 	multiWriter := io.MultiWriter(os.Stdout, logBuffer)
 	logger := zerolog.New(multiWriter).With().
 		Timestamp().
-		Str("version", version).
-		Str("commit", commit).
+		Str("version", version.GetVersion()).
+		Str("commit", version.GetCommit()).
 		Logger()
 
 	logger.Info().Msg("Starting NetSpec")
@@ -142,9 +138,10 @@ func main() {
 	}
 	apiServer := api.NewServer(alertEngine, logger, apiPort)
 
-	// Configure the API server with log buffer and config
+	// Configure the API server with log buffer, config, and version
 	apiServer.SetLogBuffer(logBuffer)
 	apiServer.SetConfig(cfg, *configPath)
+	apiServer.SetVersion(version.GetVersion(), version.GetCommit(), version.GetBuildDate())
 
 	// Set up config reload function
 	apiServer.SetReloadFunc(func() (*config.Config, error) {

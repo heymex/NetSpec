@@ -26,6 +26,10 @@ type Server struct {
 	startTime    time.Time
 	reloadFunc   ConfigReloadFunc
 	reloadMu     sync.RWMutex
+	version      string
+	commit       string
+	buildDate    string
+	versionMu    sync.RWMutex
 }
 
 // NewServer creates a new API server
@@ -54,6 +58,15 @@ func (s *Server) SetConfig(cfg *config.Config, configPath string) {
 // SetReloadFunc sets the function to call when config reload is requested
 func (s *Server) SetReloadFunc(fn ConfigReloadFunc) {
 	s.reloadFunc = fn
+}
+
+// SetVersion sets the version information
+func (s *Server) SetVersion(version, commit, buildDate string) {
+	s.versionMu.Lock()
+	defer s.versionMu.Unlock()
+	s.version = version
+	s.commit = commit
+	s.buildDate = buildDate
 }
 
 // Start starts the HTTP server
@@ -94,10 +107,19 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	alerts := s.alertEngine.GetActiveAlerts()
+	s.versionMu.RLock()
+	version := s.version
+	commit := s.commit
+	buildDate := s.buildDate
+	s.versionMu.RUnlock()
+
 	status := map[string]interface{}{
 		"active_alerts": len(alerts),
 		"time":          time.Now().UTC().Format(time.RFC3339),
 		"uptime":        time.Since(s.startTime).String(),
+		"version":       version,
+		"commit":        commit,
+		"build_date":    buildDate,
 	}
 
 	json.NewEncoder(w).Encode(status)
@@ -237,6 +259,9 @@ type PageData struct {
 	Alerts         []AlertInfo
 	Logs           []webui.LogEntry
 	Config         ConfigInfo
+	Version        string
+	Commit         string
+	BuildDate      string
 }
 
 // handleWebUI renders the main web interface
@@ -251,12 +276,22 @@ func (s *Server) handleWebUI(w http.ResponseWriter, r *http.Request) {
 	configPath := s.configPath
 	s.reloadMu.RUnlock()
 
+	// Get version info
+	s.versionMu.RLock()
+	version := s.version
+	commit := s.commit
+	buildDate := s.buildDate
+	s.versionMu.RUnlock()
+
 	// Build page data
 	data := PageData{
 		Uptime: formatDuration(time.Since(s.startTime)),
 		Config: ConfigInfo{
 			ConfigPath: configPath,
 		},
+		Version:   version,
+		Commit:    commit,
+		BuildDate: buildDate,
 	}
 
 	// Add config details
