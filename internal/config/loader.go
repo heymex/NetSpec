@@ -23,9 +23,12 @@ func LoadConfigDir(dir string) (*Config, error) {
 		return nil, fmt.Errorf("loading desired-state.yaml: %w", err)
 	}
 
-	// Load alerts.yaml
-	if err := loadYAML(filepath.Join(dir, "alerts.yaml"), &cfg.Alerts); err != nil {
-		return nil, fmt.Errorf("loading alerts.yaml: %w", err)
+	// Load alerts.yaml (optional)
+	alertsPath := filepath.Join(dir, "alerts.yaml")
+	if _, err := os.Stat(alertsPath); err == nil {
+		if err := loadYAML(alertsPath, &cfg.Alerts); err != nil {
+			return nil, fmt.Errorf("loading alerts.yaml: %w", err)
+		}
 	}
 
 	// Load credentials.yaml (optional)

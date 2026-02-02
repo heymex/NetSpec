@@ -115,7 +115,7 @@ func main() {
 
 		collectors[deviceName] = col
 
-		// Connect in goroutine with retry
+		// Connect in goroutine with retry and auto-reconnect
 		go func(name string, c *collector.Collector) {
 			for {
 				if err := c.Connect(); err != nil {
@@ -126,7 +126,22 @@ func main() {
 					time.Sleep(10 * time.Second)
 					continue
 				}
-				break
+				
+				// Monitor connection health and reconnect if lost
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case err := <-c.Errors():
+						if err != nil {
+							logger.Warn().
+								Err(err).
+								Str("device", name).
+								Msg("Connection lost, reconnecting...")
+							break // Break inner loop to reconnect
+						}
+					}
+				}
 			}
 		}(deviceName, col)
 	}
