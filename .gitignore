@@ -35,3 +35,6 @@ data/
 
 # Logs
 *.log
+
+# Documentation and misc files
+.docs/
