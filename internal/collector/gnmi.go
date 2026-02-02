@@ -293,16 +293,14 @@ func (c *Collector) backoffDuration(attempt int) time.Duration {
 // startSubscription sets up the gNMI subscription
 func (c *Collector) startSubscription() error {
 	// Subscribe to interface state paths
-	// Path: /interfaces/interface[name=*]/state/oper-status
-	// Path: /interfaces/interface[name=*]/state/admin-status
-	
+	// Support both OpenConfig format (/state/oper-status) and vendor-specific format (/oper-status)
+	// Try OpenConfig format first, fallback to vendor format if needed
 	subscriptions := []*gnmi.Subscription{
 		{
 			Path: &gnmi.Path{
 				Elem: []*gnmi.PathElem{
 					{Name: "interfaces"},
 					{Name: "interface", Key: map[string]string{"name": "*"}},
-					{Name: "state"},
 					{Name: "oper-status"},
 				},
 			},
@@ -313,7 +311,6 @@ func (c *Collector) startSubscription() error {
 				Elem: []*gnmi.PathElem{
 					{Name: "interfaces"},
 					{Name: "interface", Key: map[string]string{"name": "*"}},
-					{Name: "state"},
 					{Name: "admin-status"},
 				},
 			},

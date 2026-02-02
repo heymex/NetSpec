@@ -165,12 +165,14 @@ func (e *Evaluator) EvaluateNotification(deviceName string, notification *gnmi.N
 }
 
 // parseInterfacePath extracts interface name and state type from gNMI path
+// Supports both OpenConfig format (/interfaces/interface[name="X"]/state/oper-status)
+// and vendor-specific format (/interfaces/interface[name="X"]/oper-status)
 func (e *Evaluator) parseInterfacePath(path *gnmi.Path) (ifaceName string, stateType string, err error) {
-	if len(path.Elem) < 4 {
+	if len(path.Elem) < 3 {
 		return "", "", fmt.Errorf("path too short")
 	}
 
-	// Expected: /interfaces/interface[name="X"]/state/oper-status or admin-status
+	// Expected: /interfaces/interface[name="X"]/state/oper-status or /interfaces/interface[name="X"]/oper-status
 	if path.Elem[0].Name != "interfaces" || path.Elem[1].Name != "interface" {
 		return "", "", fmt.Errorf("not an interface path")
 	}
@@ -183,17 +185,23 @@ func (e *Evaluator) parseInterfacePath(path *gnmi.Path) (ifaceName string, state
 		return "", "", fmt.Errorf("interface name not found in path")
 	}
 
-	// Check if we're in state subtree
-	if len(path.Elem) < 3 || path.Elem[2].Name != "state" {
-		return "", "", fmt.Errorf("not in state subtree")
-	}
-
-	// Get state type (should be 4th element: oper-status or admin-status)
-	if len(path.Elem) < 4 {
-		return "", "", fmt.Errorf("state type not found in path")
+	// Check for OpenConfig format (with /state/) or vendor-specific format (without /state/)
+	var stateTypeIndex int
+	if len(path.Elem) >= 3 && path.Elem[2].Name == "state" {
+		// OpenConfig format: /interfaces/interface[name="X"]/state/oper-status
+		if len(path.Elem) < 4 {
+			return "", "", fmt.Errorf("state type not found in path")
+		}
+		stateTypeIndex = 3
+	} else {
+		// Vendor-specific format: /interfaces/interface[name="X"]/oper-status
+		if len(path.Elem) < 3 {
+			return "", "", fmt.Errorf("state type not found in path")
+		}
+		stateTypeIndex = 2
 	}
 	
-	stateType = path.Elem[3].Name
+	stateType = path.Elem[stateTypeIndex].Name
 	if stateType != "oper-status" && stateType != "admin-status" {
 		return "", "", fmt.Errorf("unknown state type: %s", stateType)
 	}
