@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"fmt"
 	"math/rand"
 	"os"
@@ -203,22 +204,11 @@ func (c *Collector) dialOptions() ([]grpc.DialOption, error) {
 		grpc.WithTransportCredentials(creds),
 	}
 	
-	// Note: Cisco IOS-XE gNMI may not support PerRPCCredentials authentication
-	// for insecure connections. The server may close the connection if auth metadata
-	// is sent. For now, we'll try without PerRPCCredentials and see if the server
-	// accepts the connection. If authentication is required, it may need to be
-	// handled via TLS client certificates or a different mechanism.
-	// 
-	// TODO: Investigate proper authentication method for Cisco IOS-XE gNMI
-	// Some implementations may require:
-	// - No auth for insecure connections (server-side ACL controls access)
-	// - TLS with client certificates for secure connections
-	// - Or a different authentication mechanism entirely
-	
-	// Temporarily disabled PerRPCCredentials to test if that's causing connection failures
-	// if c.username != "" || c.password != "" {
-	// 	opts = append(opts, grpc.WithPerRPCCredentials(&basicAuth{username: c.username, password: c.password}))
-	// }
+	// Add PerRPCCredentials for basic auth if username/password are provided
+	// This matches gnmic's behavior: --insecure --username --password
+	if c.username != "" || c.password != "" {
+		opts = append(opts, grpc.WithPerRPCCredentials(&basicAuth{username: c.username, password: c.password}))
+	}
 	
 	return opts, nil
 }
@@ -284,14 +274,12 @@ func (b *basicAuth) GetRequestMetadata(ctx context.Context, _ ...string) (map[st
 	if b.username == "" && b.password == "" {
 		return nil, nil
 	}
-	// Cisco IOS-XE gNMI may not support PerRPCCredentials authentication
-	// Some implementations require no auth for insecure connections
-	// or use TLS with certificates for secure connections.
-	// For now, we'll try sending auth metadata, but if the server rejects it,
-	// the connection will fail and we can investigate further.
+	// Use HTTP Basic Authentication format: "Basic <base64(username:password)>"
+	// This matches how gnmic sends credentials
+	auth := b.username + ":" + b.password
+	encoded := base64.StdEncoding.EncodeToString([]byte(auth))
 	return map[string]string{
-		"username": b.username,
-		"password": b.password,
+		"authorization": "Basic " + encoded,
 	}, nil
 }
 
