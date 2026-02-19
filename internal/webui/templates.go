@@ -969,13 +969,54 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
         <div class="card">
             <div class="card-header">
                 <span class="card-title">📡 Connection Status</span>
-                <span class="status-badge {{if .Device.Connected}}connected{{else}}disconnected{{end}}">
-                    <span class="status-dot {{if .Device.Connected}}connected{{else}}disconnected{{end}}"></span>
-                    {{if .Device.Connected}}Connected{{else}}Disconnected{{end}}
+                <div style="display: flex; gap: 0.75rem; align-items: center;">
+                    <span class="status-badge {{if .Device.Connected}}connected{{else}}disconnected{{end}}">
+                        <span class="status-dot {{if .Device.Connected}}connected{{else}}disconnected{{end}}"></span>
+                        {{if .Device.Connected}}Connected{{else}}Disconnected{{end}}
+                    </span>
+                    <button class="btn btn-secondary" onclick="testConnection()" id="test-btn">🔍 Test Connection</button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="info-grid">
+                    <div class="info-item">
+                        <span class="info-label">Description</span>
+                        <span class="info-value">{{.Device.Description}}</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Connected Since</span>
+                        <span class="info-value">
+                            {{if .Device.ConnectedSince.IsZero}}Never{{else}}{{.Device.ConnectedSince.Format "2006-01-02 15:04:05"}}{{end}}
+                        </span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Reconnect Count</span>
+                        <span class="info-value">{{.Device.ReconnectCount}}</span>
+                    </div>
+                </div>
+                {{if .Device.LastError}}
+                <div style="margin-top: 1rem; padding: 0.75rem; background: rgba(248, 81, 73, 0.1); border-left: 3px solid var(--accent-red); border-radius: 4px;">
+                    <strong style="color: var(--accent-red);">Last Error:</strong>
+                    <span style="color: var(--text-secondary); margin-left: 0.5rem;">{{.Device.LastError}}</span>
+                </div>
+                {{end}}
+                <div id="test-result" style="display: none; margin-top: 1rem; padding: 0.75rem; border-left: 3px solid var(--accent-blue); border-radius: 4px;"></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">📊 Subscription Status</span>
+                <span class="status-badge {{if .Device.SyncReceived}}connected{{else}}disconnected{{end}}">
+                    {{if .Device.SyncReceived}}Synced{{else}}Waiting{{end}}
                 </span>
             </div>
             <div class="card-body">
                 <div class="info-grid">
+                    <div class="info-item">
+                        <span class="info-label">Updates Received</span>
+                        <span class="info-value" style="{{if gt .Device.UpdateCount 0}}color: var(--accent-green);{{else}}color: var(--accent-yellow);{{end}}">{{.Device.UpdateCount}}</span>
+                    </div>
                     <div class="info-item">
                         <span class="info-label">Last Update</span>
                         <span class="info-value">
@@ -983,18 +1024,19 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                         </span>
                     </div>
                     <div class="info-item">
-                        <span class="info-label">Reconnect Count</span>
-                        <span class="info-value">{{.Device.ReconnectCount}}</span>
-                    </div>
-                    <div class="info-item">
-                        <span class="info-label">Description</span>
-                        <span class="info-value">{{.Device.Description}}</span>
+                        <span class="info-label">Sync Received</span>
+                        <span class="info-value">{{if .Device.SyncReceived}}Yes{{else}}No{{end}}</span>
                     </div>
                 </div>
-                {{if .Device.LastError}}
-                <div style="margin-top: 1rem; padding: 0.75rem; background: rgba(248, 81, 73, 0.1); border-left: 3px solid var(--accent-red); border-radius: 4px;">
-                    <strong style="color: var(--accent-red);">Last Error:</strong>
-                    <span style="color: var(--text-secondary); margin-left: 0.5rem;">{{.Device.LastError}}</span>
+                {{if .Device.LastPath}}
+                <div style="margin-top: 1rem; padding: 0.75rem; background: var(--bg-primary); border-radius: 4px; font-family: 'JetBrains Mono', monospace; font-size: 0.8125rem;">
+                    <div style="color: var(--text-secondary); margin-bottom: 0.25rem;">Last received path:</div>
+                    <div style="color: var(--accent-blue);">{{.Device.LastPath}}</div>
+                    <div style="color: var(--accent-green); margin-top: 0.25rem;">= {{.Device.LastValue}}</div>
+                </div>
+                {{else}}
+                <div style="margin-top: 1rem; padding: 0.75rem; background: rgba(210, 153, 34, 0.1); border-left: 3px solid var(--accent-yellow); border-radius: 4px; color: var(--text-secondary);">
+                    No gNMI updates received yet. If the connection is established, interface state changes will appear here.
                 </div>
                 {{end}}
             </div>
@@ -1053,11 +1095,12 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
         </div>
     </div>
     <script>
-        // Auto-refresh logs every 5 seconds
+        // Auto-refresh device data every 5 seconds
         setInterval(() => {
             fetch('/api/devices/{{.Device.Name}}')
                 .then(r => r.json())
                 .then(data => {
+                    // Update logs
                     const container = document.querySelector('.log-container');
                     if (container && data.logs) {
                         const wasAtBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + 50;
@@ -1070,8 +1113,58 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                         ).join('');
                         if (wasAtBottom) container.scrollTop = container.scrollHeight;
                     }
+
+                    // Update health stats from API response
+                    if (data.health) {
+                        const h = data.health;
+                        // Reload page if connection state changed significantly
+                        // (simpler than updating all DOM elements individually)
+                        const currentConnected = document.querySelector('.status-dot.connected') !== null;
+                        if (h.connected !== currentConnected) {
+                            location.reload();
+                        }
+                    }
                 });
         }, 5000);
+
+        // Test connection button handler
+        async function testConnection() {
+            const btn = document.getElementById('test-btn');
+            const result = document.getElementById('test-result');
+            btn.disabled = true;
+            btn.textContent = '⏳ Testing...';
+            result.style.display = 'block';
+            result.style.background = 'rgba(88, 166, 255, 0.1)';
+            result.innerHTML = '<span style="color: var(--accent-blue);">Sending gNMI Capabilities request...</span>';
+
+            try {
+                const res = await fetch('/api/test/{{.Device.Name}}', { method: 'POST' });
+                const data = await res.json();
+                if (data.success) {
+                    result.style.background = 'rgba(63, 185, 80, 0.1)';
+                    result.style.borderColor = 'var(--accent-green)';
+                    result.innerHTML = '<strong style="color: var(--accent-green);">✓ Connection test passed</strong>' +
+                        '<div style="margin-top: 0.5rem; font-family: JetBrains Mono, monospace; font-size: 0.8125rem; color: var(--text-secondary);">' +
+                        'gNMI Version: ' + escapeHtml(data.gnmi_version) + '<br>' +
+                        'Supported Models: ' + data.model_count +
+                        '</div>';
+                } else {
+                    result.style.background = 'rgba(248, 81, 73, 0.1)';
+                    result.style.borderColor = 'var(--accent-red)';
+                    result.innerHTML = '<strong style="color: var(--accent-red);">✗ Connection test failed</strong>' +
+                        '<div style="margin-top: 0.5rem; font-size: 0.8125rem; color: var(--text-secondary);">' +
+                        escapeHtml(data.error) + '</div>';
+                }
+            } catch (e) {
+                result.style.background = 'rgba(248, 81, 73, 0.1)';
+                result.style.borderColor = 'var(--accent-red)';
+                result.innerHTML = '<strong style="color: var(--accent-red);">✗ Request failed</strong>' +
+                    '<div style="margin-top: 0.5rem; font-size: 0.8125rem; color: var(--text-secondary);">' +
+                    escapeHtml(e.message) + '</div>';
+            }
+            btn.disabled = false;
+            btn.textContent = '🔍 Test Connection';
+        }
 
         function escapeHtml(text) {
             const div = document.createElement('div');

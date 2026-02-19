@@ -95,6 +95,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/reload", s.handleReload)
 	mux.HandleFunc("/api/devices", s.handleDevicesAPI)
 	mux.HandleFunc("/api/devices/", s.handleDeviceDetailAPI)
+	mux.HandleFunc("/api/test/", s.handleTestConnection)
 	
 	// Web UI routes
 	mux.HandleFunc("/device/", s.handleDevicePage)
@@ -273,16 +274,77 @@ func (s *Server) handleDeviceDetailAPI(w http.ResponseWriter, r *http.Request) {
 		"address":     deviceCfg.Address,
 		"description": deviceCfg.Description,
 		"health": map[string]interface{}{
-			"connected":       health.Connected,
-			"last_update":      health.LastUpdate,
-			"last_error":       health.LastError,
-			"reconnect_count":  health.ReconnectCount,
+			"connected":        health.Connected,
+			"last_update":       health.LastUpdate,
+			"last_error":        health.LastError,
+			"reconnect_count":   health.ReconnectCount,
+			"update_count":      health.UpdateCount,
+			"sync_received":     health.SyncReceived,
+			"last_path":         health.LastPath,
+			"last_value":        health.LastValue,
+			"connected_since":   health.ConnectedSince,
 		},
 		"interfaces": interfaces,
 		"logs":       deviceLogs,
 	}
 
 	json.NewEncoder(w).Encode(response)
+}
+
+// handleTestConnection performs a one-shot gNMI capabilities test
+func (s *Server) handleTestConnection(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	// Extract device name from path: /api/test/{name}
+	path := strings.TrimPrefix(r.URL.Path, "/api/test/")
+	if path == "" {
+		http.Error(w, "Device name required", http.StatusBadRequest)
+		return
+	}
+	deviceName := path
+
+	s.collectorMu.RLock()
+	getter := s.collectorGetter
+	s.collectorMu.RUnlock()
+
+	if getter == nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "Collector not available",
+		})
+		return
+	}
+
+	col := getter(deviceName)
+	if col == nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "Device not found or collector not running",
+		})
+		return
+	}
+
+	s.logger.Info().Str("device", deviceName).Msg("Testing gNMI connection")
+
+	modelCount, gnmiVersion, err := col.TestConnection()
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":      true,
+		"gnmi_version": gnmiVersion,
+		"model_count":  modelCount,
+	})
 }
 
 // handleReload handles config reload requests
@@ -458,6 +520,11 @@ type DeviceDetailInfo struct {
 	LastUpdate     time.Time
 	LastError      string
 	ReconnectCount int
+	UpdateCount    int64
+	SyncReceived   bool
+	LastPath       string
+	LastValue      string
+	ConnectedSince time.Time
 	Interfaces     []InterfaceInfo
 	Logs           []webui.LogEntry
 }
@@ -553,6 +620,11 @@ func (s *Server) handleDevicePage(w http.ResponseWriter, r *http.Request) {
 		LastUpdate:     health.LastUpdate,
 		LastError:      health.LastError,
 		ReconnectCount: health.ReconnectCount,
+		UpdateCount:    health.UpdateCount,
+		SyncReceived:   health.SyncReceived,
+		LastPath:       health.LastPath,
+		LastValue:      health.LastValue,
+		ConnectedSince: health.ConnectedSince,
 		Interfaces:     interfaces,
 		Logs:           deviceLogs,
 	}

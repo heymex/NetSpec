@@ -69,6 +69,11 @@ type DeviceHealth struct {
 	LastUpdate     time.Time
 	LastError      string
 	ReconnectCount int
+	UpdateCount    int64
+	SyncReceived   bool
+	LastPath       string
+	LastValue      string
+	ConnectedSince time.Time
 }
 
 // NewCollector creates a new gNMI collector
@@ -124,6 +129,8 @@ func (c *Collector) Connect() error {
 			c.mu.Lock()
 			c.health.Connected = true
 			c.health.LastError = ""
+			c.health.SyncReceived = false
+			c.health.ConnectedSince = time.Now()
 			c.mu.Unlock()
 			return nil
 		}
@@ -379,9 +386,10 @@ func (c *Collector) receiveUpdates() {
 				c.emitError(fmt.Errorf("subscribe error: %s", v.Error.Message))
 				return
 			case *gnmi.SubscribeResponse_SyncResponse:
-				c.logger.Debug().Msg("gNMI subscription sync complete")
+				c.logger.Info().Msg("gNMI subscription sync complete — stream is active")
 				c.mu.Lock()
 				c.health.LastUpdate = time.Now()
+				c.health.SyncReceived = true
 				c.mu.Unlock()
 			}
 		}
@@ -398,8 +406,34 @@ func (c *Collector) handleNotification(notif *gnmi.Notification) {
 		ts = time.Now()
 	}
 
+	// Build path and value strings for debug logging and health tracking
+	var lastPath, lastValue string
+	for _, update := range notif.Update {
+		fullPath := ""
+		if notif.Prefix != nil {
+			fullPath = pathToString(notif.Prefix)
+		}
+		if update.Path != nil {
+			fullPath += pathToString(update.Path)
+		}
+		val := typedValueToString(update.Val)
+		lastPath = fullPath
+		lastValue = val
+
+		c.logger.Debug().
+			Str("path", fullPath).
+			Str("value", val).
+			Time("timestamp", ts).
+			Msg("gNMI update received")
+	}
+
 	c.mu.Lock()
 	c.health.LastUpdate = ts
+	c.health.UpdateCount++
+	if lastPath != "" {
+		c.health.LastPath = lastPath
+		c.health.LastValue = lastValue
+	}
 	c.mu.Unlock()
 
 	select {
@@ -421,6 +455,47 @@ func (c *Collector) emitError(err error) {
 // Updates returns the channel for receiving telemetry updates
 func (c *Collector) Updates() <-chan *gnmi.Notification {
 	return c.updateChan
+}
+
+// TestConnection performs a one-shot gNMI Capabilities request to verify
+// the device is reachable and responding. Returns the supported models count
+// and any error encountered.
+func (c *Collector) TestConnection() (int, string, error) {
+	addr := fmt.Sprintf("%s:%d", c.address, c.port)
+
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), c.dialTimeout)
+	defer dialCancel()
+
+	opts, err := c.dialOptions()
+	if err != nil {
+		return 0, "", fmt.Errorf("dial options: %w", err)
+	}
+
+	conn, err := grpc.DialContext(dialCtx, addr, opts...)
+	if err != nil {
+		return 0, "", fmt.Errorf("failed to dial: %w", err)
+	}
+	defer conn.Close()
+
+	client := gnmi.NewGNMIClient(conn)
+
+	capCtx, capCancel := context.WithTimeout(context.Background(), c.dialTimeout)
+	defer capCancel()
+
+	resp, err := client.Capabilities(capCtx, &gnmi.CapabilityRequest{})
+	if err != nil {
+		return 0, "", fmt.Errorf("capabilities request failed: %w", err)
+	}
+
+	version := resp.GetGNMIVersion()
+	modelCount := len(resp.GetSupportedModels())
+
+	c.logger.Info().
+		Int("models", modelCount).
+		Str("gnmi_version", version).
+		Msg("Connection test successful")
+
+	return modelCount, version, nil
 }
 
 // Close closes the gNMI connection
