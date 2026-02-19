@@ -140,21 +140,39 @@ func main() {
 				Str("device", name).
 				Str("address", addr).
 				Msg("Starting connection goroutine")
-		connectionLoop:
+
+			reconnectDelay := 5 * time.Second
+			const maxReconnectDelay = 120 * time.Second
+
 			for {
 				if err := c.Connect(); err != nil {
 					logger.Error().
 						Err(err).
 						Str("device", name).
-						Msg("Failed to connect, retrying in 10s")
-					time.Sleep(10 * time.Second)
+						Dur("retry_in", reconnectDelay).
+						Msg("Failed to connect, will retry")
+
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(reconnectDelay):
+					}
+
+					// Exponential backoff for outer reconnect loop
+					reconnectDelay = reconnectDelay * 2
+					if reconnectDelay > maxReconnectDelay {
+						reconnectDelay = maxReconnectDelay
+					}
 					continue
 				}
-				
+
+				// Connection succeeded, reset reconnect delay
+				reconnectDelay = 5 * time.Second
+
 				logger.Info().
 					Str("device", name).
 					Msg("Connection established, monitoring for errors")
-				
+
 				// Monitor connection health and reconnect if lost
 				select {
 				case <-ctx.Done():
@@ -164,9 +182,14 @@ func main() {
 						logger.Warn().
 							Err(err).
 							Str("device", name).
-							Msg("Connection lost, reconnecting...")
-						// Break to outer loop to reconnect
-						continue connectionLoop
+							Msg("Connection lost, will reconnect after cooldown")
+
+						// Wait before reconnecting to avoid hammering the switch
+						select {
+						case <-ctx.Done():
+							return
+						case <-time.After(5 * time.Second):
+						}
 					}
 				}
 			}

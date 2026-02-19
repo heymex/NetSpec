@@ -2,7 +2,7 @@
 
 global:
   default_credentials: vault://network/gnmi-creds
-  gnmi_port: 9339
+  gnmi_port: 9338
   collection_interval: 10s
 
 devices:

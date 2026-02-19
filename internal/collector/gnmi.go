@@ -22,8 +22,8 @@ import (
 
 const (
 	defaultDialTimeout   = 10 * time.Second
-	defaultBackoffMin    = 1 * time.Second
-	defaultBackoffMax    = 30 * time.Second
+	defaultBackoffMin    = 2 * time.Second
+	defaultBackoffMax    = 120 * time.Second
 	defaultUpdatesBuffer = 256
 )
 
@@ -109,6 +109,10 @@ func (c *Collector) Health() DeviceHealth {
 
 // Connect establishes a gNMI connection to the device with retry logic
 func (c *Collector) Connect() error {
+	// Close any existing connection before reconnecting to prevent
+	// stale gRPC sessions from accumulating on the switch
+	c.closeExisting()
+
 	attempt := 0
 	for {
 		if c.ctx.Err() != nil {
@@ -144,6 +148,19 @@ func (c *Collector) Connect() error {
 		case <-c.ctx.Done():
 			return c.ctx.Err()
 		}
+	}
+}
+
+// closeExisting tears down any existing gRPC connection and subscription
+// to prevent stale sessions from accumulating on the switch
+func (c *Collector) closeExisting() {
+	if c.client != nil {
+		c.client.CloseSend()
+		c.client = nil
+	}
+	if c.conn != nil {
+		c.conn.Close()
+		c.conn = nil
 	}
 }
 
