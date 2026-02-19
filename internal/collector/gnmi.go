@@ -357,7 +357,7 @@ func (c *Collector) startSubscription() error {
 			Subscribe: &gnmi.SubscriptionList{
 				Subscription: subscriptions,
 				Mode:         gnmi.SubscriptionList_STREAM,
-				UpdatesOnly:  true,
+				UpdatesOnly:  false, // IOS-XE does not support updates_only
 			},
 		},
 	}
