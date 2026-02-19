@@ -326,10 +326,10 @@ func (c *Collector) backoffDuration(attempt int) time.Duration {
 
 // startSubscription sets up the gNMI subscription
 func (c *Collector) startSubscription() error {
-	// Subscribe to interface state paths using OpenConfig structure:
-	// /interfaces/interface[name=*]/state/oper-status
-	// /interfaces/interface[name=*]/state/admin-status
-	// IOS-XE requires the /state/ container in the path.
+	// Subscribe to interface state container using SAMPLE mode.
+	// IOS-XE does not support ON_CHANGE for interface state leaves,
+	// and does not support subscribing to individual leaves like oper-status.
+	// Subscribe to the /state container and filter updates in the handler.
 	subscriptions := []*gnmi.Subscription{
 		{
 			Path: &gnmi.Path{
@@ -337,21 +337,10 @@ func (c *Collector) startSubscription() error {
 					{Name: "interfaces"},
 					{Name: "interface", Key: map[string]string{"name": "*"}},
 					{Name: "state"},
-					{Name: "oper-status"},
 				},
 			},
-			Mode: gnmi.SubscriptionMode_ON_CHANGE,
-		},
-		{
-			Path: &gnmi.Path{
-				Elem: []*gnmi.PathElem{
-					{Name: "interfaces"},
-					{Name: "interface", Key: map[string]string{"name": "*"}},
-					{Name: "state"},
-					{Name: "admin-status"},
-				},
-			},
-			Mode: gnmi.SubscriptionMode_ON_CHANGE,
+			Mode:           gnmi.SubscriptionMode_SAMPLE,
+			SampleInterval: 10000000000, // 10 seconds in nanoseconds
 		},
 	}
 
