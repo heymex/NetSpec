@@ -326,15 +326,17 @@ func (c *Collector) backoffDuration(attempt int) time.Duration {
 
 // startSubscription sets up the gNMI subscription
 func (c *Collector) startSubscription() error {
-	// Subscribe to interface state paths
-	// Support both OpenConfig format (/state/oper-status) and vendor-specific format (/oper-status)
-	// Try OpenConfig format first, fallback to vendor format if needed
+	// Subscribe to interface state paths using OpenConfig structure:
+	// /interfaces/interface[name=*]/state/oper-status
+	// /interfaces/interface[name=*]/state/admin-status
+	// IOS-XE requires the /state/ container in the path.
 	subscriptions := []*gnmi.Subscription{
 		{
 			Path: &gnmi.Path{
 				Elem: []*gnmi.PathElem{
 					{Name: "interfaces"},
 					{Name: "interface", Key: map[string]string{"name": "*"}},
+					{Name: "state"},
 					{Name: "oper-status"},
 				},
 			},
@@ -345,6 +347,7 @@ func (c *Collector) startSubscription() error {
 				Elem: []*gnmi.PathElem{
 					{Name: "interfaces"},
 					{Name: "interface", Key: map[string]string{"name": "*"}},
+					{Name: "state"},
 					{Name: "admin-status"},
 				},
 			},
