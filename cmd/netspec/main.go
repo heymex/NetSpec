@@ -92,25 +92,25 @@ func main() {
 		logger.Fatal().Msg("GNMI_PASSWORD environment variable is required")
 	}
 
-	// Helper function to start a collector (defined before first use)
+	// Helper function to start a collector (defined before first use).
+	// Launches both the connection-management goroutine and the
+	// update-processing goroutine so that reloaded collectors also
+	// have their updates consumed.
 	startCollector := func(deviceName string, deviceCfg config.DeviceConfig, cfg *config.Config, username, password string) {
 		collectorsMu.Lock()
 		defer collectorsMu.Unlock()
-		
-		// Check if collector already exists
-		if existing, ok := collectors[deviceName]; ok {
-			// Close old collector if it exists
-			if existing != nil {
-				existing.Close()
-			}
+
+		// Close old collector if one exists for this device
+		if existing, ok := collectors[deviceName]; ok && existing != nil {
+			existing.Close()
 		}
-		
+
 		logger.Info().
 			Str("device", deviceName).
 			Str("address", deviceCfg.Address).
 			Int("port", cfg.DesiredState.Global.GNMIPort).
 			Msg("Creating collector")
-		
+
 		cred := cfg.ResolveCredentials(deviceName)
 		credUsername := cred.Username
 		credPassword := ""
@@ -134,7 +134,9 @@ func main() {
 
 		collectors[deviceName] = col
 
-		// Connect in goroutine with retry and auto-reconnect
+		// Connection goroutine: connect with retry and auto-reconnect.
+		// Exits when either the main ctx or the collector's own ctx is
+		// cancelled (the latter happens on Close() during reload).
 		go func(name string, addr string, c *collector.Collector) {
 			logger.Info().
 				Str("device", name).
@@ -146,6 +148,16 @@ func main() {
 
 			for {
 				if err := c.Connect(); err != nil {
+					// If the collector was intentionally closed, exit silently
+					if c.Done() != nil {
+						select {
+						case <-c.Done():
+							logger.Debug().Str("device", name).Msg("Collector closed, exiting connection goroutine")
+							return
+						default:
+						}
+					}
+
 					logger.Error().
 						Err(err).
 						Str("device", name).
@@ -155,10 +167,12 @@ func main() {
 					select {
 					case <-ctx.Done():
 						return
+					case <-c.Done():
+						logger.Debug().Str("device", name).Msg("Collector closed during backoff, exiting")
+						return
 					case <-time.After(reconnectDelay):
 					}
 
-					// Exponential backoff for outer reconnect loop
 					reconnectDelay = reconnectDelay * 2
 					if reconnectDelay > maxReconnectDelay {
 						reconnectDelay = maxReconnectDelay
@@ -177,16 +191,28 @@ func main() {
 				select {
 				case <-ctx.Done():
 					return
+				case <-c.Done():
+					logger.Debug().Str("device", name).Msg("Collector closed while connected, exiting")
+					return
 				case err := <-c.Errors():
 					if err != nil {
+						// Check if this error is from an intentional close
+						select {
+						case <-c.Done():
+							logger.Debug().Str("device", name).Msg("Collector closed (error during shutdown), exiting")
+							return
+						default:
+						}
+
 						logger.Warn().
 							Err(err).
 							Str("device", name).
 							Msg("Connection lost, will reconnect after cooldown")
 
-						// Wait before reconnecting to avoid hammering the switch
 						select {
 						case <-ctx.Done():
+							return
+						case <-c.Done():
 							return
 						case <-time.After(5 * time.Second):
 						}
@@ -194,6 +220,24 @@ func main() {
 				}
 			}
 		}(deviceName, deviceCfg.Address, col)
+
+		// Update-processing goroutine: evaluates telemetry against desired
+		// state and feeds changes into the alert engine.
+		go func(name string, c *collector.Collector) {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-c.Done():
+					return
+				case notification := <-c.Updates():
+					changes := eval.EvaluateNotification(name, notification)
+					for _, change := range changes {
+						alertEngine.ProcessStateChange(change)
+					}
+				}
+			}
+		}(deviceName, col)
 	}
 
 	// Start collectors
@@ -287,27 +331,6 @@ func main() {
 	logger.Info().
 		Str("port", apiPort).
 		Msg("Web UI available")
-
-	// Process updates from collectors
-	for deviceName, col := range collectors {
-		go func(name string, c *collector.Collector) {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case notification := <-c.Updates():
-					// Evaluate state changes
-					changes := eval.EvaluateNotification(name, notification)
-
-					// Process each change
-					for _, change := range changes {
-						// Send to alert engine via event channel
-						alertEngine.ProcessStateChange(change)
-					}
-				}
-			}
-		}(deviceName, col)
-	}
 
 	// Setup graceful shutdown
 	sigChan := make(chan os.Signal, 1)

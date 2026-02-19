@@ -452,6 +452,12 @@ func (c *Collector) Updates() <-chan *gnmi.Notification {
 	return c.updateChan
 }
 
+// Done returns a channel that is closed when the collector is shut down.
+// Goroutines should select on this to exit when Close() is called.
+func (c *Collector) Done() <-chan struct{} {
+	return c.ctx.Done()
+}
+
 // TestConnection performs a one-shot gNMI Capabilities request to verify
 // the device is reachable and responding. Returns the supported models count
 // and any error encountered.
