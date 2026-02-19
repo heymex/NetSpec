@@ -179,15 +179,18 @@ func (c *Collector) connectOnce() error {
 		Str("address", addr).
 		Msg("Connecting to gNMI device")
 
-	dialCtx, cancel := context.WithTimeout(c.ctx, c.dialTimeout)
-	defer cancel()
+	dialCtx, dialCancel := context.WithTimeout(c.ctx, c.dialTimeout)
+	defer dialCancel()
 
 	opts, err := c.dialOptions()
 	if err != nil {
 		return fmt.Errorf("dial options: %w", err)
 	}
 
-	conn, err := grpc.DialContext(dialCtx, addr, opts...)
+	// WithBlock ensures the connection is fully established before returning.
+	// Without it, DialContext returns immediately and the deferred context
+	// cancellation tears down the in-progress connection.
+	conn, err := grpc.DialContext(dialCtx, addr, append(opts, grpc.WithBlock())...)
 	if err != nil {
 		return fmt.Errorf("failed to dial gNMI server: %w", err)
 	}
