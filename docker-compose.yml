@@ -5,20 +5,20 @@ services:
     image: ghcr.io/heymex/netspec:${NETSPEC_IMAGE_TAG:-latest}
     container_name: netspec
     restart: unless-stopped
+    # Use host networking so the collector can reach devices on management VLANs.
+    # Bridge networking isolates the container and prevents gNMI connections.
+    network_mode: host
     volumes:
       - ${NETSPEC_DATA_DIR:-/opt/netspec}/config:/config:ro
       - ${NETSPEC_DATA_DIR:-/opt/netspec}/data:/data
     environment:
       - GNMI_USERNAME=${GNMI_USERNAME:-gnmi-monitor}
       - GNMI_PASSWORD=${GNMI_PASSWORD}
-      - APPRISE_API_URL=${APPRISE_API_URL:-http://apprise:8086}
+      # With host networking, use localhost instead of Docker DNS name
+      - APPRISE_API_URL=${APPRISE_API_URL:-http://localhost:8086}
       - LOG_LEVEL=${LOG_LEVEL:-info}
-    ports:
-      - "8088:8088"
     depends_on:
       - apprise
-    networks:
-      - monitoring
 
   apprise:
     # Alternative registries if lscr.io is unavailable:
