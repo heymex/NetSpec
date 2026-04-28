@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -88,8 +89,15 @@ func main() {
 		username = "gnmi-monitor"
 	}
 	password := os.Getenv("GNMI_PASSWORD")
-	if password == "" {
+	if password == "" && cfg.DesiredState.Global.TelemetryMode == "gnmi_pull" {
 		logger.Fatal().Msg("GNMI_PASSWORD environment variable is required")
+	}
+
+	snmpCommunity := os.Getenv(cfg.DesiredState.Global.SNMP.CommunityEnv)
+	if cfg.DesiredState.Global.TelemetryMode == "snmp_validate_only" && snmpCommunity == "" {
+		logger.Fatal().
+			Str("env_var", cfg.DesiredState.Global.SNMP.CommunityEnv).
+			Msg("SNMP mode requires community environment variable")
 	}
 
 	// Helper function to start a collector (defined before first use).
@@ -240,13 +248,54 @@ func main() {
 		}(deviceName, col)
 	}
 
-	// Start collectors
-	logger.Info().
-		Int("device_count", len(cfg.DesiredState.Devices)).
-		Msg("Starting collectors for devices")
-	
-	for deviceName, deviceCfg := range cfg.DesiredState.Devices {
-		startCollector(deviceName, deviceCfg, cfg, username, password)
+	switch strings.ToLower(cfg.DesiredState.Global.TelemetryMode) {
+	case "gnmi_pull":
+		logger.Info().
+			Int("device_count", len(cfg.DesiredState.Devices)).
+			Msg("Starting gNMI collectors for devices")
+
+		for deviceName, deviceCfg := range cfg.DesiredState.Devices {
+			startCollector(deviceName, deviceCfg, cfg, username, password)
+		}
+	case "snmp_validate_only":
+		logger.Info().
+			Int("device_count", len(cfg.DesiredState.Devices)).
+			Msg("Starting SNMP validation loops for devices")
+		validator := collector.NewSNMPValidator(
+			cfg.DesiredState.Global.SNMP,
+			snmpCommunity,
+			logger.With().Str("component", "snmp-validator").Logger(),
+		)
+		for deviceName, deviceCfg := range cfg.DesiredState.Devices {
+			go func(name string, dc config.DeviceConfig) {
+				ticker := time.NewTicker(cfg.DesiredState.Global.SNMP.ValidationInterval)
+				defer ticker.Stop()
+
+				for {
+					snapshots, err := validator.PollDevice(name, dc)
+					if err != nil {
+						logger.Warn().Err(err).Str("device", name).Msg("SNMP validation poll failed")
+					} else {
+						for _, snap := range snapshots {
+							changes := eval.EvaluateInterfaceSnapshot(name, snap.Interface, snap.OperStatus, snap.AdminStatus)
+							for _, change := range changes {
+								alertEngine.ProcessStateChange(change)
+							}
+						}
+					}
+
+					select {
+					case <-ctx.Done():
+						return
+					case <-ticker.C:
+					}
+				}
+			}(deviceName, deviceCfg)
+		}
+	default:
+		logger.Fatal().
+			Str("telemetry_mode", cfg.DesiredState.Global.TelemetryMode).
+			Msg("Unsupported telemetry mode")
 	}
 
 	// Start API server with Web UI

@@ -45,6 +45,18 @@ type GlobalConfig struct {
 	DefaultCredentials string        `yaml:"default_credentials,omitempty"`
 	GNMIPort           int           `yaml:"gnmi_port,omitempty"`
 	CollectionInterval time.Duration `yaml:"collection_interval,omitempty"`
+	TelemetryMode      string        `yaml:"telemetry_mode,omitempty"` // "gnmi_pull" or "snmp_validate_only"
+	SNMP               SNMPConfig    `yaml:"snmp,omitempty"`
+}
+
+// SNMPConfig contains SNMP polling configuration.
+type SNMPConfig struct {
+	Port               uint16        `yaml:"port,omitempty"`
+	Version            string        `yaml:"version,omitempty"` // currently supports "2c"
+	CommunityEnv       string        `yaml:"community_env,omitempty"`
+	ValidationInterval time.Duration `yaml:"validation_interval,omitempty"`
+	Timeout            time.Duration `yaml:"timeout,omitempty"`
+	Retries            int           `yaml:"retries,omitempty"`
 }
 
 // DeviceConfig defines a device to monitor
@@ -60,6 +72,7 @@ type InterfaceConfig struct {
 	Description   string            `yaml:"description,omitempty"`
 	DesiredState  string            `yaml:"desired_state"` // "up" or "down"
 	AdminState    string            `yaml:"admin_state,omitempty"` // "enabled" or "disabled"
+	SNMPIfIndex   int               `yaml:"snmp_ifindex,omitempty"`
 	Members       *MemberConfig     `yaml:"members,omitempty"`
 	MemberPolicy  *MemberPolicy     `yaml:"member_policy,omitempty"`
 	Alerts        AlertSeverity     `yaml:"alerts,omitempty"`

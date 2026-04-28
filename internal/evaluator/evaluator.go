@@ -65,6 +65,45 @@ func NewEvaluator(cfg *config.Config, logger zerolog.Logger) *Evaluator {
 	}
 }
 
+// EvaluateInterfaceSnapshot evaluates interface state from non-gNMI sources
+// (for example SNMP validation).
+func (e *Evaluator) EvaluateInterfaceSnapshot(deviceName, ifaceName, operStatus, adminStatus string) []StateChange {
+	deviceCfg, ok := e.config.DesiredState.Devices[deviceName]
+	if !ok {
+		return nil
+	}
+	ifCfg, ok := deviceCfg.Interfaces[ifaceName]
+	if !ok {
+		return nil
+	}
+
+	e.mu.Lock()
+	cacheKey := fmt.Sprintf("%s:%s", deviceName, ifaceName)
+	prevState := e.stateCache[cacheKey]
+	newState := prevState
+	newState.Device = deviceName
+	newState.Interface = ifaceName
+	newState.UpdatedAt = time.Now()
+	if operStatus != "" {
+		newState.OperStatus = normalizeState(operStatus)
+	}
+	if adminStatus != "" {
+		newState.AdminStatus = normalizeState(adminStatus)
+	}
+	e.stateCache[cacheKey] = newState
+	e.mu.Unlock()
+
+	var changes []StateChange
+	if adminChange := e.evaluateAdminChange(deviceName, ifaceName, ifCfg, prevState, newState); adminChange != nil {
+		changes = append(changes, *adminChange)
+	}
+	if operChange := e.evaluateOperChange(deviceName, ifaceName, ifCfg, newState); operChange != nil {
+		changes = append(changes, *operChange)
+	}
+	changes = append(changes, e.evaluatePortChannel(deviceName, ifaceName, deviceCfg, newState)...)
+	return changes
+}
+
 // EvaluateNotification processes a gNMI notification and returns state changes
 func (e *Evaluator) EvaluateNotification(deviceName string, notification *gnmi.Notification) []StateChange {
 	var changes []StateChange

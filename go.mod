@@ -3,6 +3,7 @@ module github.com/netspec/netspec
 go 1.21
 
 require (
+	github.com/gosnmp/gosnmp v1.38.0
 	github.com/openconfig/gnmi v0.10.0
 	github.com/rs/zerolog v1.31.0
 	google.golang.org/grpc v1.60.1

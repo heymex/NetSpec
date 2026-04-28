@@ -30,6 +30,7 @@ cp .env.example .env
 The `.env` file should contain:
 - `GNMI_PASSWORD` - Required password for gNMI connections
 - `GNMI_USERNAME` - gNMI username (defaults to `gnmi-monitor`)
+- `SNMP_COMMUNITY` - SNMPv2c community when using `snmp_validate_only` mode
 - `APPRISE_SLACK_WEBHOOK` - Slack notification URL (set in alerts.yaml)
 - `APPRISE_TEAMS_WEBHOOK` - Teams notification URL (set in alerts.yaml)
 - `APPRISE_API_URL` - Apprise API URL (defaults to `http://apprise:8000`)
@@ -40,6 +41,10 @@ The `config/alerts.yaml` file configures:
 - Alert routing rules by severity
 - Deduplication and flap detection settings
 - State persistence configuration
+
+`config/desired-state.yaml` also supports a telemetry mode switch in `global.telemetry_mode`:
+- `gnmi_pull` (default): current direct gNMI collection
+- `snmp_validate_only`: targeted SNMP `GET` validation polling for configured interfaces
 
 ### Running
 

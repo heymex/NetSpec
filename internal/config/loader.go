@@ -54,6 +54,27 @@ func LoadConfigDir(dir string) (*Config, error) {
 	if cfg.DesiredState.Global.CollectionInterval == 0 {
 		cfg.DesiredState.Global.CollectionInterval = 10 * time.Second
 	}
+	if cfg.DesiredState.Global.TelemetryMode == "" {
+		cfg.DesiredState.Global.TelemetryMode = "gnmi_pull"
+	}
+	if cfg.DesiredState.Global.SNMP.Port == 0 {
+		cfg.DesiredState.Global.SNMP.Port = 161
+	}
+	if cfg.DesiredState.Global.SNMP.Version == "" {
+		cfg.DesiredState.Global.SNMP.Version = "2c"
+	}
+	if cfg.DesiredState.Global.SNMP.CommunityEnv == "" {
+		cfg.DesiredState.Global.SNMP.CommunityEnv = "SNMP_COMMUNITY"
+	}
+	if cfg.DesiredState.Global.SNMP.ValidationInterval == 0 {
+		cfg.DesiredState.Global.SNMP.ValidationInterval = cfg.DesiredState.Global.CollectionInterval
+	}
+	if cfg.DesiredState.Global.SNMP.Timeout == 0 {
+		cfg.DesiredState.Global.SNMP.Timeout = 3 * time.Second
+	}
+	if cfg.DesiredState.Global.SNMP.Retries == 0 {
+		cfg.DesiredState.Global.SNMP.Retries = 1
+	}
 	if cfg.Alerts.AlertBehavior.DeduplicationWindow == 0 {
 		cfg.Alerts.AlertBehavior.DeduplicationWindow = 5 * time.Minute
 	}
@@ -135,6 +156,9 @@ func ValidateConfig(cfg *Config) error {
 			if ifCfg.AdminState != "" && ifCfg.AdminState != "enabled" && ifCfg.AdminState != "disabled" {
 				return fmt.Errorf("device %s, interface %s: admin_state must be 'enabled' or 'disabled'", name, ifName)
 			}
+			if ifCfg.SNMPIfIndex < 0 {
+				return fmt.Errorf("device %s, interface %s: snmp_ifindex must be >= 0", name, ifName)
+			}
 
 			// Validate member policy if members are defined
 			if ifCfg.Members != nil && len(ifCfg.Members.Required) > 0 {
@@ -151,6 +175,15 @@ func ValidateConfig(cfg *Config) error {
 				}
 			}
 		}
+	}
+
+	if cfg.DesiredState.Global.TelemetryMode != "gnmi_pull" &&
+		cfg.DesiredState.Global.TelemetryMode != "snmp_validate_only" {
+		return fmt.Errorf("global.telemetry_mode must be 'gnmi_pull' or 'snmp_validate_only'")
+	}
+
+	if cfg.DesiredState.Global.SNMP.Version != "2c" {
+		return fmt.Errorf("global.snmp.version currently only supports '2c'")
 	}
 
 	// Validate alert channels
