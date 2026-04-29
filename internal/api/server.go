@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/netspec/netspec/internal/alerter"
 	"github.com/netspec/netspec/internal/collector"
 	"github.com/netspec/netspec/internal/config"
+	"github.com/netspec/netspec/internal/evaluator"
 	"github.com/netspec/netspec/internal/webui"
 	"github.com/rs/zerolog"
 )
@@ -19,24 +21,27 @@ type ConfigReloadFunc func() (*config.Config, error)
 
 // CollectorGetter is a function that returns a collector by device name
 type CollectorGetter func(deviceName string) *collector.Collector
+type EvaluatorGetter func() *evaluator.Evaluator
 
 // Server provides HTTP API endpoints and web UI
 type Server struct {
-	alertEngine    *alerter.Engine
-	logger         zerolog.Logger
-	port           string
-	logBuffer      *webui.LogBuffer
-	config         *config.Config
-	configPath     string
-	startTime      time.Time
-	reloadFunc     ConfigReloadFunc
-	reloadMu       sync.RWMutex
-	version        string
-	commit         string
-	buildDate      string
-	versionMu      sync.RWMutex
+	alertEngine     *alerter.Engine
+	logger          zerolog.Logger
+	port            string
+	logBuffer       *webui.LogBuffer
+	config          *config.Config
+	configPath      string
+	startTime       time.Time
+	reloadFunc      ConfigReloadFunc
+	reloadMu        sync.RWMutex
+	version         string
+	commit          string
+	buildDate       string
+	versionMu       sync.RWMutex
 	collectorGetter CollectorGetter
 	collectorMu     sync.RWMutex
+	evaluatorGetter EvaluatorGetter
+	evaluatorMu     sync.RWMutex
 }
 
 // NewServer creates a new API server
@@ -83,6 +88,13 @@ func (s *Server) SetCollectorGetter(getter CollectorGetter) {
 	s.collectorGetter = getter
 }
 
+// SetEvaluatorGetter sets function to access evaluator runtime state.
+func (s *Server) SetEvaluatorGetter(getter EvaluatorGetter) {
+	s.evaluatorMu.Lock()
+	defer s.evaluatorMu.Unlock()
+	s.evaluatorGetter = getter
+}
+
 // Start starts the HTTP server
 func (s *Server) Start() error {
 	mux := http.NewServeMux()
@@ -96,7 +108,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/devices", s.handleDevicesAPI)
 	mux.HandleFunc("/api/devices/", s.handleDeviceDetailAPI)
 	mux.HandleFunc("/api/test/", s.handleTestConnection)
-	
+
 	// Web UI routes
 	mux.HandleFunc("/device/", s.handleDevicePage)
 
@@ -185,8 +197,15 @@ func (s *Server) handleDevicesAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	devices := make([]map[string]interface{}, 0)
-	for name, dev := range cfg.DesiredState.Devices {
+	deviceNames := make([]string, 0, len(cfg.DesiredState.Devices))
+	for name := range cfg.DesiredState.Devices {
+		deviceNames = append(deviceNames, name)
+	}
+	sort.Strings(deviceNames)
+
+	devices := make([]map[string]interface{}, 0, len(deviceNames))
+	for _, name := range deviceNames {
+		dev := cfg.DesiredState.Devices[name]
 		devices = append(devices, map[string]interface{}{
 			"name":            name,
 			"address":         dev.Address,
@@ -241,14 +260,38 @@ func (s *Server) handleDeviceDetailAPI(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build interface list
-	interfaces := make([]map[string]interface{}, 0)
-	for ifaceName, ifaceCfg := range deviceCfg.Interfaces {
+	ifaceNames := make([]string, 0, len(deviceCfg.Interfaces))
+	for ifaceName := range deviceCfg.Interfaces {
+		ifaceNames = append(ifaceNames, ifaceName)
+	}
+	sort.Strings(ifaceNames)
+
+	interfaces := make([]map[string]interface{}, 0, len(ifaceNames))
+	for _, ifaceName := range ifaceNames {
+		ifaceCfg := deviceCfg.Interfaces[ifaceName]
+		var runtime map[string]interface{}
+		s.evaluatorMu.RLock()
+		evalGetter := s.evaluatorGetter
+		s.evaluatorMu.RUnlock()
+		if evalGetter != nil {
+			if eval := evalGetter(); eval != nil {
+				if state, ok := eval.GetInterfaceState(deviceName, ifaceName); ok {
+					runtime = map[string]interface{}{
+						"oper_status":                  state.OperStatus,
+						"admin_status":                 state.AdminStatus,
+						"last_snmp_validation_at":      state.LastSNMPValidation,
+						"last_telemetry_validation_at": state.LastTelemetryValidation,
+					}
+				}
+			}
+		}
 		interfaces = append(interfaces, map[string]interface{}{
 			"name":          ifaceName,
 			"description":   ifaceCfg.Description,
 			"desired_state": ifaceCfg.DesiredState,
 			"admin_state":   ifaceCfg.AdminState,
 			"alerts":        ifaceCfg.Alerts,
+			"runtime":       runtime,
 		})
 	}
 
@@ -274,15 +317,15 @@ func (s *Server) handleDeviceDetailAPI(w http.ResponseWriter, r *http.Request) {
 		"address":     deviceCfg.Address,
 		"description": deviceCfg.Description,
 		"health": map[string]interface{}{
-			"connected":        health.Connected,
-			"last_update":       health.LastUpdate,
-			"last_error":        health.LastError,
-			"reconnect_count":   health.ReconnectCount,
-			"update_count":      health.UpdateCount,
-			"sync_received":     health.SyncReceived,
-			"last_path":         health.LastPath,
-			"last_value":        health.LastValue,
-			"connected_since":   health.ConnectedSince,
+			"connected":       health.Connected,
+			"last_update":     health.LastUpdate,
+			"last_error":      health.LastError,
+			"reconnect_count": health.ReconnectCount,
+			"update_count":    health.UpdateCount,
+			"sync_received":   health.SyncReceived,
+			"last_path":       health.LastPath,
+			"last_value":      health.LastValue,
+			"connected_since": health.ConnectedSince,
 		},
 		"interfaces": interfaces,
 		"logs":       deviceLogs,
@@ -468,7 +511,14 @@ func (s *Server) handleWebUI(w http.ResponseWriter, r *http.Request) {
 		data.Config.DedupWindow = cfg.Alerts.AlertBehavior.DeduplicationWindow.String()
 
 		// Build device list
-		for name, dev := range cfg.DesiredState.Devices {
+		deviceNames := make([]string, 0, len(cfg.DesiredState.Devices))
+		for name := range cfg.DesiredState.Devices {
+			deviceNames = append(deviceNames, name)
+		}
+		sort.Strings(deviceNames)
+
+		for _, name := range deviceNames {
+			dev := cfg.DesiredState.Devices[name]
 			data.Devices = append(data.Devices, DeviceInfo{
 				Name:           name,
 				Address:        dev.Address,
@@ -505,10 +555,10 @@ func (s *Server) handleWebUI(w http.ResponseWriter, r *http.Request) {
 
 // DevicePageData holds data for the device detail page
 type DevicePageData struct {
-	Device      DeviceDetailInfo
-	Version     string
-	Commit      string
-	BuildDate   string
+	Device    DeviceDetailInfo
+	Version   string
+	Commit    string
+	BuildDate string
 }
 
 // DeviceDetailInfo holds detailed device information
@@ -531,11 +581,14 @@ type DeviceDetailInfo struct {
 
 // InterfaceInfo holds interface configuration
 type InterfaceInfo struct {
-	Name          string
-	Description   string
-	DesiredState  string
-	AdminState    string
-	Alerts        config.AlertSeverity
+	Name                      string
+	Description               string
+	DesiredState              string
+	AdminState                string
+	Alerts                    config.AlertSeverity
+	OperStatus                string
+	LastSNMPValidationAt      time.Time
+	LastTelemetryValidationAt time.Time
 }
 
 // handleDevicePage renders the device detail page
@@ -584,14 +637,39 @@ func (s *Server) handleDevicePage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build interface list
-	interfaces := make([]InterfaceInfo, 0)
-	for ifaceName, ifaceCfg := range deviceCfg.Interfaces {
+	ifaceNames := make([]string, 0, len(deviceCfg.Interfaces))
+	for ifaceName := range deviceCfg.Interfaces {
+		ifaceNames = append(ifaceNames, ifaceName)
+	}
+	sort.Strings(ifaceNames)
+
+	interfaces := make([]InterfaceInfo, 0, len(ifaceNames))
+	for _, ifaceName := range ifaceNames {
+		ifaceCfg := deviceCfg.Interfaces[ifaceName]
+		var operStatus string
+		var lastSNMP time.Time
+		var lastTelemetry time.Time
+		s.evaluatorMu.RLock()
+		evalGetter := s.evaluatorGetter
+		s.evaluatorMu.RUnlock()
+		if evalGetter != nil {
+			if eval := evalGetter(); eval != nil {
+				if state, ok := eval.GetInterfaceState(deviceName, ifaceName); ok {
+					operStatus = state.OperStatus
+					lastSNMP = state.LastSNMPValidation
+					lastTelemetry = state.LastTelemetryValidation
+				}
+			}
+		}
 		interfaces = append(interfaces, InterfaceInfo{
-			Name:         ifaceName,
-			Description:  ifaceCfg.Description,
-			DesiredState: ifaceCfg.DesiredState,
-			AdminState:   ifaceCfg.AdminState,
-			Alerts:       ifaceCfg.Alerts,
+			Name:                      ifaceName,
+			Description:               ifaceCfg.Description,
+			DesiredState:              ifaceCfg.DesiredState,
+			AdminState:                ifaceCfg.AdminState,
+			Alerts:                    ifaceCfg.Alerts,
+			OperStatus:                operStatus,
+			LastSNMPValidationAt:      lastSNMP,
+			LastTelemetryValidationAt: lastTelemetry,
 		})
 	}
 

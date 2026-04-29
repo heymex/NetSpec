@@ -75,6 +75,12 @@ func LoadConfigDir(dir string) (*Config, error) {
 	if cfg.DesiredState.Global.SNMP.Retries == 0 {
 		cfg.DesiredState.Global.SNMP.Retries = 1
 	}
+	if cfg.DesiredState.Global.Ingest.ListenAddress == "" {
+		cfg.DesiredState.Global.Ingest.ListenAddress = "0.0.0.0"
+	}
+	if cfg.DesiredState.Global.Ingest.Port == 0 {
+		cfg.DesiredState.Global.Ingest.Port = 57500
+	}
 	if cfg.Alerts.AlertBehavior.DeduplicationWindow == 0 {
 		cfg.Alerts.AlertBehavior.DeduplicationWindow = 5 * time.Minute
 	}
@@ -178,8 +184,9 @@ func ValidateConfig(cfg *Config) error {
 	}
 
 	if cfg.DesiredState.Global.TelemetryMode != "gnmi_pull" &&
-		cfg.DesiredState.Global.TelemetryMode != "snmp_validate_only" {
-		return fmt.Errorf("global.telemetry_mode must be 'gnmi_pull' or 'snmp_validate_only'")
+		cfg.DesiredState.Global.TelemetryMode != "snmp_validate_only" &&
+		cfg.DesiredState.Global.TelemetryMode != "telemetry_ingest_push" {
+		return fmt.Errorf("global.telemetry_mode must be 'gnmi_pull', 'snmp_validate_only', or 'telemetry_ingest_push'")
 	}
 
 	if cfg.DesiredState.Global.SNMP.Version != "2c" {

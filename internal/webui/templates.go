@@ -869,9 +869,21 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
             list-style: none;
         }
 
+        .interface-header {
+            display: grid;
+            grid-template-columns: 2.2fr 0.8fr 1fr 1fr;
+            gap: 1rem;
+            padding: 0.75rem 1.25rem;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            background: var(--bg-tertiary);
+            border-bottom: 1px solid var(--border-color);
+        }
+
         .interface-item {
-            display: flex;
-            justify-content: space-between;
+            display: grid;
+            grid-template-columns: 2.2fr 0.8fr 1fr 1fr;
+            gap: 1rem;
             align-items: center;
             padding: 1rem 1.25rem;
             border-bottom: 1px solid var(--border-color);
@@ -910,6 +922,17 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
         .interface-state.down {
             background: rgba(248, 81, 73, 0.15);
             color: var(--accent-red);
+        }
+
+        .interface-state.unknown {
+            background: rgba(210, 153, 34, 0.15);
+            color: var(--accent-yellow);
+        }
+
+        .iface-ts {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
         }
 
         .log-container {
@@ -1049,6 +1072,12 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
             </div>
             <div class="card-body" style="padding: 0;">
                 {{if .Device.Interfaces}}
+                <div class="interface-header">
+                    <span>Interface</span>
+                    <span>Live State</span>
+                    <span>Last SNMP Validation</span>
+                    <span>Last Telemetry Validation</span>
+                </div>
                 <ul class="interface-list">
                     {{range .Device.Interfaces}}
                     <li class="interface-item">
@@ -1060,7 +1089,15 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                                 <span>Admin: {{.AdminState}}</span>
                             </div>
                         </div>
-                        <span class="interface-state {{.DesiredState}}">{{.DesiredState}}</span>
+                        <span class="interface-state {{if .OperStatus}}{{.OperStatus}}{{else}}unknown{{end}}">
+                            {{if .OperStatus}}{{.OperStatus}}{{else}}unknown{{end}}
+                        </span>
+                        <span class="iface-ts">
+                            {{if .LastSNMPValidationAt.IsZero}}-{{else}}{{.LastSNMPValidationAt.Format "2006-01-02 15:04:05"}}{{end}}
+                        </span>
+                        <span class="iface-ts">
+                            {{if .LastTelemetryValidationAt.IsZero}}-{{else}}{{.LastTelemetryValidationAt.Format "2006-01-02 15:04:05"}}{{end}}
+                        </span>
                     </li>
                     {{end}}
                 </ul>

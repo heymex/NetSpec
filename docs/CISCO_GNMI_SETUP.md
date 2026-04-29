@@ -2,6 +2,25 @@
 
 This guide provides step-by-step instructions for configuring gNMI (gRPC Network Management Interface) on Cisco IOS-XE devices to work with NetSpec.
 
+## Important: IOS-XE 17.12.x Behavior
+
+On newer IOS-XE releases (including 17.12.x), Cisco may show:
+
+- `gnmi-yang` CLI as deprecated (`Use 'gnxi' instead`)
+- inconsistent gNMI pull listener behavior across seemingly similar switches
+
+For this reason, NetSpec supports an SNMP validation mode today and is moving toward push-first telemetry ingestion.
+
+## NetSpec Deployment Patterns
+
+### Pattern A: gNMI Pull (legacy/current)
+
+NetSpec dials each switch gNMI server directly.
+
+### Pattern B: gNMI Push + SNMP Validation (recommended)
+
+Switches stream telemetry out to a receiver, and NetSpec validates state with targeted SNMP GETs. This avoids relying on unstable inbound gNMI server behavior on IOS-XE.
+
 ## Prerequisites
 
 - Cisco IOS-XE device running version **17.x or later** (recommended for full gNMI support)
@@ -32,7 +51,22 @@ Look for `gnmi` in the output. If it's not present, you may need to enable it or
 
 ### Basic Configuration (Insecure - Testing Only)
 
-For initial testing and development, you can enable gNMI without TLS:
+For initial testing and development, you can enable gNMI without TLS.
+
+### CLI note: `gnmi-yang` vs `gnxi`
+
+If your switch says `gnmi-yang` is deprecated, use `gnxi` commands instead. Equivalent insecure examples:
+
+```cisco
+configure terminal
+gnxi
+ gnxi server
+ gnxi port 9338
+end
+write memory
+```
+
+Legacy syntax (still accepted on some releases):
 
 ```cisco
 configure terminal
@@ -125,13 +159,14 @@ write memory
 ### Check gNMI Server Status
 
 ```cisco
-show gnmi-yang server status
+show gnmi-yang state
+show platform software yang-management process
 ```
 
 Expected output should show:
-- Server status: `Running`
-- Port: `9339` (or your configured port)
-- Secure mode: `Enabled` (if TLS configured)
+- gNMI subsystem enabled/up
+- `gnmib` process running
+- configured listener reachable from your NetSpec path
 
 ### Verify NETCONF/YANG
 
@@ -146,11 +181,11 @@ Using `gnmic` CLI tool (install from https://gnmic.openconfig.net/):
 
 ```bash
 # Test capabilities
-gnmic -a <device-ip>:9339 -u netspec-monitor -p <password> --insecure \
+gnmic -a <device-ip>:9338 -u netspec-monitor -p <password> --insecure \
   capabilities
 
 # Subscribe to interface state (test subscription)
-gnmic -a <device-ip>:9339 -u netspec-monitor -p <password> --insecure \
+gnmic -a <device-ip>:9338 -u netspec-monitor -p <password> --insecure \
   subscribe --path "/interfaces/interface/state/oper-status"
 ```
 
@@ -232,7 +267,48 @@ Set environment variables in your `.env` file:
 ```bash
 GNMI_USERNAME=netspec-monitor
 GNMI_PASSWORD=your-password-here
+SNMP_COMMUNITY=your-snmp-community
 ```
+
+Use telemetry mode explicitly in `config/desired-state.yaml`:
+
+```yaml
+global:
+  telemetry_mode: gnmi_pull            # or snmp_validate_only
+  gnmi_port: 9338
+  snmp:
+    version: 2c
+    port: 161
+    community_env: SNMP_COMMUNITY
+    validation_interval: 10s
+    timeout: 3s
+    retries: 1
+```
+
+## Step 8 (Recommended): Configure IOS-XE Dial-Out Telemetry (Push)
+
+If pull mode is unstable, configure model-driven telemetry dial-out from switch to your receiver:
+
+```cisco
+configure terminal
+!
+telemetry ietf subscription 100
+ encoding encode-kvgpb
+ stream yang-push
+ update-policy periodic 1000
+ filter xpath /interfaces/interface/state
+ receiver ip address <receiver-ip> 57500 protocol grpc-tcp
+!
+end
+write memory
+```
+
+Notes:
+- Exact telemetry CLI can vary by IOS-XE train/platform; use `telemetry ietf ?` and `subscription ?` to discover valid syntax.
+- Start with a narrow XPath/filter and low receiver count, then expand.
+- Keep SNMP targeted validation enabled in NetSpec to confirm telemetry events.
+- NetSpec `telemetry_ingest_push` currently accepts newline-delimited JSON on `tcp/57500`; use a lightweight translator/collector to convert IOS-XE `grpc-tcp` telemetry into NetSpec ingest events.
+- In isolated management VRF/firewall environments, token-based payload auth can be omitted and transport isolation can be the primary control.
 
 ## Troubleshooting
 

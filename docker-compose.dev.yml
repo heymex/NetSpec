@@ -1,0 +1,27 @@
+services:
+  telegraf-mdt:
+    image: telegraf:1.31
+    container_name: telegraf-mdt
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./tools/sidecar/telegraf-mdt.conf:/etc/telegraf/telegraf.conf:ro
+      - ${NETSPEC_DATA_DIR:-/opt/netspec}/mdt-sidecar:/sidecar
+
+  mdt-translator:
+    image: python:3.12-alpine
+    container_name: mdt-translator
+    restart: unless-stopped
+    network_mode: host
+    command: ["python", "/app/mdt_to_netspec.py"]
+    depends_on:
+      - telegraf-mdt
+    environment:
+      - MDT_DECODED_FILE=/sidecar/decoded.json
+      - MDT_FORWARDER_LOG=/sidecar/forwarder.log
+      - NETSPEC_INGEST_HOST=${NETSPEC_INGEST_HOST:-127.0.0.1}
+      - NETSPEC_INGEST_PORT=${NETSPEC_INGEST_PORT:-57500}
+      - MDT_ALLOWED_DEVICES=${MDT_ALLOWED_DEVICES:-}
+    volumes:
+      - ./tools/sidecar/mdt_to_netspec.py:/app/mdt_to_netspec.py:ro
+      - ${NETSPEC_DATA_DIR:-/opt/netspec}/mdt-sidecar:/sidecar

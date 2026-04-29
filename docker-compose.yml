@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   netspec:
     image: ghcr.io/heymex/netspec:${NETSPEC_IMAGE_TAG:-latest}

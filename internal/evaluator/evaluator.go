@@ -21,19 +21,30 @@ type Evaluator struct {
 
 // interfaceState represents the current state of an interface
 type interfaceState struct {
-	Device      string
-	Interface   string
-	OperStatus  string
-	AdminStatus string
-	Members     []string
-	UpdatedAt   time.Time
+	Device                  string
+	Interface               string
+	OperStatus              string
+	AdminStatus             string
+	Members                 []string
+	UpdatedAt               time.Time
+	LastSNMPValidation      time.Time
+	LastTelemetryValidation time.Time
+}
+
+// InterfaceRuntimeState is the current runtime state for one interface.
+type InterfaceRuntimeState struct {
+	OperStatus              string
+	AdminStatus             string
+	UpdatedAt               time.Time
+	LastSNMPValidation      time.Time
+	LastTelemetryValidation time.Time
 }
 
 var (
-	alertTypeInterfaceMismatch = "interface_state_mismatch"
+	alertTypeInterfaceMismatch  = "interface_state_mismatch"
 	alertTypeInterfaceAdminDown = "interface_admin_down"
-	alertTypeChannelDown       = "port_channel_down"
-	alertTypeMemberDown        = "port_channel_member_down"
+	alertTypeChannelDown        = "port_channel_down"
+	alertTypeMemberDown         = "port_channel_member_down"
 )
 
 var supportedOperStates = map[string]struct{}{
@@ -48,11 +59,11 @@ var supportedAdminStates = map[string]struct{}{
 
 // StateChange represents a detected state change
 type StateChange struct {
-	Device      string
-	Interface   string
-	AlertType   string
-	Severity    string
-	Message     string
+	Device       string
+	Interface    string
+	AlertType    string
+	Severity     string
+	Message      string
 	RelatedState map[string]string
 }
 
@@ -68,6 +79,16 @@ func NewEvaluator(cfg *config.Config, logger zerolog.Logger) *Evaluator {
 // EvaluateInterfaceSnapshot evaluates interface state from non-gNMI sources
 // (for example SNMP validation).
 func (e *Evaluator) EvaluateInterfaceSnapshot(deviceName, ifaceName, operStatus, adminStatus string) []StateChange {
+	return e.evaluateInterfaceSnapshotWithSource(deviceName, ifaceName, operStatus, adminStatus, "snmp")
+}
+
+// EvaluateInterfaceSnapshotWithSource evaluates interface state with explicit source.
+// Supported sources: "snmp", "telemetry".
+func (e *Evaluator) EvaluateInterfaceSnapshotWithSource(deviceName, ifaceName, operStatus, adminStatus, source string) []StateChange {
+	return e.evaluateInterfaceSnapshotWithSource(deviceName, ifaceName, operStatus, adminStatus, source)
+}
+
+func (e *Evaluator) evaluateInterfaceSnapshotWithSource(deviceName, ifaceName, operStatus, adminStatus, source string) []StateChange {
 	deviceCfg, ok := e.config.DesiredState.Devices[deviceName]
 	if !ok {
 		return nil
@@ -88,7 +109,13 @@ func (e *Evaluator) EvaluateInterfaceSnapshot(deviceName, ifaceName, operStatus,
 		newState.OperStatus = normalizeState(operStatus)
 	}
 	if adminStatus != "" {
-		newState.AdminStatus = normalizeState(adminStatus)
+		newState.AdminStatus = normalizeAdminState(adminStatus)
+	}
+	switch normalizeState(source) {
+	case "snmp":
+		newState.LastSNMPValidation = time.Now()
+	case "telemetry":
+		newState.LastTelemetryValidation = time.Now()
 	}
 	e.stateCache[cacheKey] = newState
 	e.mu.Unlock()
@@ -104,6 +131,24 @@ func (e *Evaluator) EvaluateInterfaceSnapshot(deviceName, ifaceName, operStatus,
 	return changes
 }
 
+// GetInterfaceState returns the current runtime state for a device/interface.
+func (e *Evaluator) GetInterfaceState(deviceName, ifaceName string) (InterfaceRuntimeState, bool) {
+	cacheKey := fmt.Sprintf("%s:%s", deviceName, ifaceName)
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	s, ok := e.stateCache[cacheKey]
+	if !ok {
+		return InterfaceRuntimeState{}, false
+	}
+	return InterfaceRuntimeState{
+		OperStatus:              s.OperStatus,
+		AdminStatus:             s.AdminStatus,
+		UpdatedAt:               s.UpdatedAt,
+		LastSNMPValidation:      s.LastSNMPValidation,
+		LastTelemetryValidation: s.LastTelemetryValidation,
+	}, true
+}
+
 // EvaluateNotification processes a gNMI notification and returns state changes
 func (e *Evaluator) EvaluateNotification(deviceName string, notification *gnmi.Notification) []StateChange {
 	var changes []StateChange
@@ -111,7 +156,7 @@ func (e *Evaluator) EvaluateNotification(deviceName string, notification *gnmi.N
 	// Extract interface information from notification
 	for _, update := range notification.Update {
 		path := update.Path
-		
+
 		// Parse interface path: /interfaces/interface[name="X"]/state/oper-status
 		ifaceName, stateType, err := e.parseInterfacePath(path)
 		if err != nil {
@@ -128,7 +173,7 @@ func (e *Evaluator) EvaluateNotification(deviceName string, notification *gnmi.N
 					}
 				}
 			}
-			
+
 			if err != nil || ifaceName == "" {
 				e.logger.Debug().
 					Err(err).
@@ -171,8 +216,10 @@ func (e *Evaluator) EvaluateNotification(deviceName string, notification *gnmi.N
 		switch stateType {
 		case "oper-status":
 			state.OperStatus = normalizeState(stateValue)
+			state.LastTelemetryValidation = time.Now()
 		case "admin-status":
-			state.AdminStatus = normalizeState(stateValue)
+			state.AdminStatus = normalizeAdminState(stateValue)
+			state.LastTelemetryValidation = time.Now()
 		}
 
 		e.stateCache[cacheKey] = state
@@ -239,7 +286,7 @@ func (e *Evaluator) parseInterfacePath(path *gnmi.Path) (ifaceName string, state
 		}
 		stateTypeIndex = 2
 	}
-	
+
 	stateType = path.Elem[stateTypeIndex].Name
 	if stateType != "oper-status" && stateType != "admin-status" {
 		return "", "", fmt.Errorf("unknown state type: %s", stateType)
@@ -420,6 +467,17 @@ func (e *Evaluator) channelNamesForMember(deviceCfg config.DeviceConfig, member 
 // normalizeState normalizes state values to lowercase
 func normalizeState(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func normalizeAdminState(value string) string {
+	switch normalizeState(value) {
+	case "up", "enabled":
+		return "enabled"
+	case "down", "disabled", "administratively-down":
+		return "disabled"
+	default:
+		return normalizeState(value)
+	}
 }
 
 // severityForAlert gets severity from config or returns fallback

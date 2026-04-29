@@ -2,7 +2,7 @@
 
 global:
   default_credentials: vault://network/gnmi-creds
-  telemetry_mode: gnmi_pull # gnmi_pull | snmp_validate_only
+  telemetry_mode: gnmi_pull # gnmi_pull | snmp_validate_only | telemetry_ingest_push
   gnmi_port: 9338
   collection_interval: 10s
   snmp:
@@ -12,6 +12,9 @@ global:
     validation_interval: 10s
     timeout: 3s
     retries: 1
+  ingest:
+    listen_address: 0.0.0.0
+    port: 57500
 
 devices:
   core-sw-stack:

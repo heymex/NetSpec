@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	ifNameOID       = ".1.3.6.1.2.1.31.1.1.1.1"
+	ifNameOID        = ".1.3.6.1.2.1.31.1.1.1.1"
 	ifAdminStatusOID = ".1.3.6.1.2.1.2.2.1.7"
 	ifOperStatusOID  = ".1.3.6.1.2.1.2.2.1.8"
 )
@@ -26,10 +26,10 @@ type InterfaceSnapshot struct {
 
 // SNMPValidator polls targeted interface OIDs and returns normalized state.
 type SNMPValidator struct {
-	logger      zerolog.Logger
-	globalCfg   config.SNMPConfig
-	community   string
-	mu          sync.Mutex
+	logger       zerolog.Logger
+	globalCfg    config.SNMPConfig
+	community    string
+	mu           sync.Mutex
 	ifIndexByDev map[string]map[string]int
 }
 
@@ -77,6 +77,37 @@ func (v *SNMPValidator) PollDevice(deviceName string, deviceCfg config.DeviceCon
 	return snapshots, nil
 }
 
+// PollInterface performs a targeted SNMP GET for a single interface.
+func (v *SNMPValidator) PollInterface(deviceName string, deviceCfg config.DeviceConfig, ifaceName string, ifaceCfg config.InterfaceConfig) (InterfaceSnapshot, error) {
+	client := &gosnmp.GoSNMP{
+		Target:    deviceCfg.Address,
+		Port:      v.globalCfg.Port,
+		Version:   gosnmp.Version2c,
+		Community: v.community,
+		Timeout:   v.globalCfg.Timeout,
+		Retries:   v.globalCfg.Retries,
+	}
+	if err := client.Connect(); err != nil {
+		return InterfaceSnapshot{}, fmt.Errorf("snmp connect failed: %w", err)
+	}
+	defer client.Conn.Close()
+
+	ifIndex, err := v.interfaceIndex(client, deviceName, ifaceName, ifaceCfg.SNMPIfIndex)
+	if err != nil {
+		return InterfaceSnapshot{}, err
+	}
+	admin, oper, err := v.getStatuses(client, ifIndex)
+	if err != nil {
+		return InterfaceSnapshot{}, err
+	}
+
+	return InterfaceSnapshot{
+		Interface:   ifaceName,
+		OperStatus:  oper,
+		AdminStatus: admin,
+	}, nil
+}
+
 func (v *SNMPValidator) interfaceIndex(client *gosnmp.GoSNMP, deviceName, ifaceName string, configured int) (int, error) {
 	if configured > 0 {
 		return configured, nil
@@ -109,6 +140,14 @@ func (v *SNMPValidator) interfaceIndex(client *gosnmp.GoSNMP, deviceName, ifaceN
 
 	if ifIndex, ok := walk[ifaceName]; ok {
 		return ifIndex, nil
+	}
+	normalizedTarget := normalizeInterfaceName(ifaceName)
+	if normalizedTarget != "" {
+		for name, idx := range walk {
+			if normalizeInterfaceName(name) == normalizedTarget {
+				return idx, nil
+			}
+		}
 	}
 	return 0, fmt.Errorf("interface %s not found in ifName table", ifaceName)
 }
@@ -182,4 +221,27 @@ func intFromPDU(pdu gosnmp.SnmpPDU) int {
 	default:
 		return 0
 	}
+}
+
+func normalizeInterfaceName(name string) string {
+	s := strings.ToLower(strings.TrimSpace(name))
+	if s == "" {
+		return ""
+	}
+
+	replacements := map[string]string{
+		"gigabitethernet":        "gi",
+		"tengigabitethernet":     "te",
+		"twentyfivegige":         "tw",
+		"twentyfivegigabite":     "tw",
+		"fortygigabitethernet":   "fo",
+		"hundredgigabitethernet": "hu",
+		"port-channel":           "po",
+		"portchannel":            "po",
+	}
+	for old, newVal := range replacements {
+		s = strings.ReplaceAll(s, old, newVal)
+	}
+	s = strings.ReplaceAll(s, " ", "")
+	return s
 }

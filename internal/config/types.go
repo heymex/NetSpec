@@ -5,9 +5,9 @@ import "time"
 // Config represents the complete NetSpec configuration
 type Config struct {
 	DesiredState DesiredStateConfig `yaml:"desired_state"`
-	Alerts       AlertsConfig      `yaml:"alerts"`
-	Credentials  CredentialsConfig `yaml:"credentials"`
-	Maintenance  MaintenanceConfig `yaml:"maintenance"`
+	Alerts       AlertsConfig       `yaml:"alerts"`
+	Credentials  CredentialsConfig  `yaml:"credentials"`
+	Maintenance  MaintenanceConfig  `yaml:"maintenance"`
 }
 
 // DesiredStateConfig contains device and interface monitoring configuration
@@ -19,8 +19,8 @@ type DesiredStateConfig struct {
 // AlertsConfig defines alert routing and behavior
 type AlertsConfig struct {
 	Channels      map[string]ChannelConfig `yaml:"channels"`
-	AlertRules    map[string]AlertRule    `yaml:"alert_rules"`
-	AlertBehavior AlertBehavior           `yaml:"alert_behavior"`
+	AlertRules    map[string]AlertRule     `yaml:"alert_rules"`
+	AlertBehavior AlertBehavior            `yaml:"alert_behavior"`
 }
 
 // CredentialsConfig defines credential storage
@@ -30,8 +30,8 @@ type CredentialsConfig struct {
 
 // CredentialEntry defines a credential set
 type CredentialEntry struct {
-	Username     string `yaml:"username"`
-	PasswordEnv  string `yaml:"password_env,omitempty"`
+	Username      string `yaml:"username"`
+	PasswordEnv   string `yaml:"password_env,omitempty"`
 	PasswordVault string `yaml:"password_vault,omitempty"`
 }
 
@@ -45,8 +45,9 @@ type GlobalConfig struct {
 	DefaultCredentials string        `yaml:"default_credentials,omitempty"`
 	GNMIPort           int           `yaml:"gnmi_port,omitempty"`
 	CollectionInterval time.Duration `yaml:"collection_interval,omitempty"`
-	TelemetryMode      string        `yaml:"telemetry_mode,omitempty"` // "gnmi_pull" or "snmp_validate_only"
+	TelemetryMode      string        `yaml:"telemetry_mode,omitempty"` // "gnmi_pull", "snmp_validate_only", or "telemetry_ingest_push"
 	SNMP               SNMPConfig    `yaml:"snmp,omitempty"`
+	Ingest             IngestConfig  `yaml:"ingest,omitempty"`
 }
 
 // SNMPConfig contains SNMP polling configuration.
@@ -59,23 +60,30 @@ type SNMPConfig struct {
 	Retries            int           `yaml:"retries,omitempty"`
 }
 
+// IngestConfig contains push telemetry ingest listener configuration.
+type IngestConfig struct {
+	ListenAddress string `yaml:"listen_address,omitempty"`
+	Port          uint16 `yaml:"port,omitempty"`
+	TokenEnv      string `yaml:"token_env,omitempty"`
+}
+
 // DeviceConfig defines a device to monitor
 type DeviceConfig struct {
-	Address       string                 `yaml:"address"`
-	Description   string                 `yaml:"description,omitempty"`
-	CredentialsRef string                `yaml:"credentials_ref,omitempty"`
-	Interfaces    map[string]InterfaceConfig `yaml:"interfaces,omitempty"`
+	Address        string                     `yaml:"address"`
+	Description    string                     `yaml:"description,omitempty"`
+	CredentialsRef string                     `yaml:"credentials_ref,omitempty"`
+	Interfaces     map[string]InterfaceConfig `yaml:"interfaces,omitempty"`
 }
 
 // InterfaceConfig defines interface monitoring requirements
 type InterfaceConfig struct {
-	Description   string            `yaml:"description,omitempty"`
-	DesiredState  string            `yaml:"desired_state"` // "up" or "down"
-	AdminState    string            `yaml:"admin_state,omitempty"` // "enabled" or "disabled"
-	SNMPIfIndex   int               `yaml:"snmp_ifindex,omitempty"`
-	Members       *MemberConfig     `yaml:"members,omitempty"`
-	MemberPolicy  *MemberPolicy     `yaml:"member_policy,omitempty"`
-	Alerts        AlertSeverity     `yaml:"alerts,omitempty"`
+	Description  string        `yaml:"description,omitempty"`
+	DesiredState string        `yaml:"desired_state"`         // "up" or "down"
+	AdminState   string        `yaml:"admin_state,omitempty"` // "enabled" or "disabled"
+	SNMPIfIndex  int           `yaml:"snmp_ifindex,omitempty"`
+	Members      *MemberConfig `yaml:"members,omitempty"`
+	MemberPolicy *MemberPolicy `yaml:"member_policy,omitempty"`
+	Alerts       AlertSeverity `yaml:"alerts,omitempty"`
 }
 
 // MemberConfig defines port-channel member requirements
@@ -107,10 +115,10 @@ type AlertConfig struct {
 
 // ChannelConfig defines a notification channel
 type ChannelConfig struct {
-	Type           string   `yaml:"type"`
-	URLEnv         string   `yaml:"url_env"`
-	SeverityFilter []string `yaml:"severity_filter,omitempty"`
-	EscalationDelay int     `yaml:"escalation_delay,omitempty"`
+	Type            string   `yaml:"type"`
+	URLEnv          string   `yaml:"url_env"`
+	SeverityFilter  []string `yaml:"severity_filter,omitempty"`
+	EscalationDelay int      `yaml:"escalation_delay,omitempty"`
 }
 
 // AlertRule defines routing rules for alerts
@@ -127,15 +135,15 @@ type AlertBehavior struct {
 
 // FlapDetection defines flap detection settings
 type FlapDetection struct {
-	Enabled  bool          `yaml:"enabled"`
-	Threshold int          `yaml:"threshold"`
-	Window   time.Duration `yaml:"window"`
+	Enabled   bool          `yaml:"enabled"`
+	Threshold int           `yaml:"threshold"`
+	Window    time.Duration `yaml:"window"`
 }
 
 // StatePersistence defines state persistence settings
 type StatePersistence struct {
-	Enabled  bool   `yaml:"enabled"`
-	Path     string `yaml:"path"`
+	Enabled   bool   `yaml:"enabled"`
+	Path      string `yaml:"path"`
 	OnRestart string `yaml:"on_restart"` // "warn_unknown" or "silent"
 }
 

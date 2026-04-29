@@ -94,7 +94,8 @@ func main() {
 	}
 
 	snmpCommunity := os.Getenv(cfg.DesiredState.Global.SNMP.CommunityEnv)
-	if cfg.DesiredState.Global.TelemetryMode == "snmp_validate_only" && snmpCommunity == "" {
+	if (cfg.DesiredState.Global.TelemetryMode == "snmp_validate_only" ||
+		cfg.DesiredState.Global.TelemetryMode == "telemetry_ingest_push") && snmpCommunity == "" {
 		logger.Fatal().
 			Str("env_var", cfg.DesiredState.Global.SNMP.CommunityEnv).
 			Msg("SNMP mode requires community environment variable")
@@ -277,7 +278,7 @@ func main() {
 						logger.Warn().Err(err).Str("device", name).Msg("SNMP validation poll failed")
 					} else {
 						for _, snap := range snapshots {
-							changes := eval.EvaluateInterfaceSnapshot(name, snap.Interface, snap.OperStatus, snap.AdminStatus)
+							changes := eval.EvaluateInterfaceSnapshotWithSource(name, snap.Interface, snap.OperStatus, snap.AdminStatus, "snmp")
 							for _, change := range changes {
 								alertEngine.ProcessStateChange(change)
 							}
@@ -292,6 +293,74 @@ func main() {
 				}
 			}(deviceName, deviceCfg)
 		}
+	case "telemetry_ingest_push":
+		logger.Info().
+			Str("listen_address", cfg.DesiredState.Global.Ingest.ListenAddress).
+			Uint16("listen_port", cfg.DesiredState.Global.Ingest.Port).
+			Msg("Starting push telemetry ingest listener")
+
+		validator := collector.NewSNMPValidator(
+			cfg.DesiredState.Global.SNMP,
+			snmpCommunity,
+			logger.With().Str("component", "snmp-validator").Logger(),
+		)
+
+		ingestToken := ""
+		if cfg.DesiredState.Global.Ingest.TokenEnv != "" {
+			ingestToken = os.Getenv(cfg.DesiredState.Global.Ingest.TokenEnv)
+		}
+
+		ingestor := collector.NewPushIngestor(
+			cfg.DesiredState.Global.Ingest.ListenAddress,
+			cfg.DesiredState.Global.Ingest.Port,
+			ingestToken,
+			logger.With().Str("component", "push-ingestor").Logger(),
+			func(event collector.PushTelemetryEvent) {
+				deviceCfg, ok := cfg.DesiredState.Devices[event.Device]
+				if !ok {
+					logger.Warn().Str("device", event.Device).Msg("Ignoring push telemetry for unknown device")
+					return
+				}
+				ifaceCfg, ok := deviceCfg.Interfaces[event.Interface]
+				if !ok {
+					logger.Debug().
+						Str("device", event.Device).
+						Str("interface", event.Interface).
+						Msg("Ignoring push telemetry for untracked interface")
+					return
+				}
+
+				snapshot, err := validator.PollInterface(event.Device, deviceCfg, event.Interface, ifaceCfg)
+				if err != nil {
+					logger.Warn().
+						Err(err).
+						Str("device", event.Device).
+						Str("interface", event.Interface).
+						Msg("SNMP validation failed for push event; using ingested status")
+					snapshot = collector.InterfaceSnapshot{
+						Interface:   event.Interface,
+						OperStatus:  event.OperStatus,
+						AdminStatus: event.AdminStatus,
+					}
+				}
+
+				validationSource := "snmp"
+				if err != nil {
+					validationSource = "telemetry"
+				}
+				changes := eval.EvaluateInterfaceSnapshotWithSource(event.Device, snapshot.Interface, snapshot.OperStatus, snapshot.AdminStatus, validationSource)
+				for _, change := range changes {
+					alertEngine.ProcessStateChange(change)
+				}
+			},
+		)
+
+		go func() {
+			if err := ingestor.Start(ctx); err != nil {
+				logger.Error().Err(err).Msg("Push telemetry ingestor stopped")
+				cancel()
+			}
+		}()
 	default:
 		logger.Fatal().
 			Str("telemetry_mode", cfg.DesiredState.Global.TelemetryMode).
@@ -314,6 +383,9 @@ func main() {
 		defer collectorsMu.RUnlock()
 		return collectors[deviceName]
 	})
+	apiServer.SetEvaluatorGetter(func() *evaluator.Evaluator {
+		return eval
+	})
 
 	// Set up config reload function
 	apiServer.SetReloadFunc(func() (*config.Config, error) {
@@ -322,50 +394,64 @@ func main() {
 		if err != nil {
 			return nil, err
 		}
-		
+
 		// Note: We can't easily update evaluator and alert engine without
 		// more complex state management. For now, collectors are restarted
 		// which is the main issue (IP address changes).
 		go alertEngine.Run()
-		
-		// Stop collectors for removed devices
-		collectorsMu.Lock()
-		for name, col := range collectors {
-			if _, exists := newCfg.DesiredState.Devices[name]; !exists {
-				logger.Info().Str("device", name).Msg("Device removed from config, stopping collector")
+
+		if strings.ToLower(newCfg.DesiredState.Global.TelemetryMode) == "gnmi_pull" {
+			// Stop collectors for removed devices
+			collectorsMu.Lock()
+			for name, col := range collectors {
+				if _, exists := newCfg.DesiredState.Devices[name]; !exists {
+					logger.Info().Str("device", name).Msg("Device removed from config, stopping collector")
+					if col != nil {
+						col.Close()
+					}
+					delete(collectors, name)
+				}
+			}
+			collectorsMu.Unlock()
+
+			// Start/restart collectors for all devices (handles new devices and IP changes)
+			for deviceName, deviceCfg := range newCfg.DesiredState.Devices {
+				collectorsMu.RLock()
+				existing := collectors[deviceName]
+				collectorsMu.RUnlock()
+
+				// Check if device is new or address changed
+				needsRestart := existing == nil
+				if existing != nil {
+					// For existing collectors, always restart to pick up any config changes
+					// (we can't easily compare addresses, so restart is safer)
+					logger.Info().Str("device", deviceName).Msg("Restarting collector for device")
+					existing.Close()
+					needsRestart = true
+				}
+
+				if needsRestart {
+					startCollector(deviceName, deviceCfg, newCfg, username, password)
+				}
+			}
+		} else {
+			// In non-gNMI modes, ensure no existing gNMI collector goroutines continue
+			// running after a config reload.
+			collectorsMu.Lock()
+			for name, col := range collectors {
+				logger.Info().Str("device", name).Msg("Stopping collector for non-gNMI telemetry mode")
 				if col != nil {
 					col.Close()
 				}
 				delete(collectors, name)
 			}
+			collectorsMu.Unlock()
 		}
-		collectorsMu.Unlock()
-		
-		// Start/restart collectors for all devices (handles new devices and IP changes)
-		for deviceName, deviceCfg := range newCfg.DesiredState.Devices {
-			collectorsMu.RLock()
-			existing := collectors[deviceName]
-			collectorsMu.RUnlock()
-			
-			// Check if device is new or address changed
-			needsRestart := existing == nil
-			if existing != nil {
-				// For existing collectors, always restart to pick up any config changes
-				// (we can't easily compare addresses, so restart is safer)
-				logger.Info().Str("device", deviceName).Msg("Restarting collector for device")
-				existing.Close()
-				needsRestart = true
-			}
-			
-			if needsRestart {
-				startCollector(deviceName, deviceCfg, newCfg, username, password)
-			}
-		}
-		
+
 		logger.Info().
 			Int("device_count", len(newCfg.DesiredState.Devices)).
 			Msg("Configuration reloaded and collectors updated")
-		
+
 		return newCfg, nil
 	})
 

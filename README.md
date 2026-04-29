@@ -45,6 +45,7 @@ The `config/alerts.yaml` file configures:
 `config/desired-state.yaml` also supports a telemetry mode switch in `global.telemetry_mode`:
 - `gnmi_pull` (default): current direct gNMI collection
 - `snmp_validate_only`: targeted SNMP `GET` validation polling for configured interfaces
+- `telemetry_ingest_push`: line-delimited JSON push ingest on `tcp/57500` with targeted SNMP confirmation per event
 
 ### Running
 
@@ -59,6 +60,18 @@ Then start the services:
 ```bash
 docker-compose up -d
 ```
+
+For IOS-XE dial-out telemetry (`grpc-tcp`) into `telemetry_ingest_push`, run the sidecar overlay:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+```
+
+This starts:
+- `telegraf-mdt` to decode Cisco MDT on `tcp/57500`
+- `mdt-translator` to convert decoded records into NetSpec newline-delimited JSON ingest events
+
+The sidecar writes runtime artifacts under `${NETSPEC_DATA_DIR}/mdt-sidecar` (`decoded.json`, `forwarder.log`).
 
 To use a specific image tag instead of `latest`, set the `NETSPEC_IMAGE_TAG` environment variable:
 ```bash
@@ -114,6 +127,35 @@ NetSpec includes a built-in web UI accessible at `http://localhost:8088` (or you
 ```
 gNMI Stream → State Evaluator → Alert Engine → Apprise
 ```
+
+### Current Telemetry Modes
+
+NetSpec currently supports three runtime collection modes:
+
+- `gnmi_pull` - NetSpec connects directly to each device's gNMI server and evaluates streamed updates.
+- `snmp_validate_only` - NetSpec polls targeted SNMP interface OIDs (`ifAdminStatus`/`ifOperStatus`) for configured interfaces and evaluates those snapshots.
+- `telemetry_ingest_push` - NetSpec listens on `global.ingest.listen_address:global.ingest.port` (default `0.0.0.0:57500`) for newline-delimited JSON events. Each event can be SNMP-confirmed before entering the evaluator.
+
+### Push-First Direction (Recommended for IOS-XE 17.12.x)
+
+For unstable IOS-XE gNMI pull behavior, the preferred operating model is:
+
+```
+IOS-XE Dial-Out Telemetry → NetSpec Ingest Receiver → SNMP Targeted Validation → Evaluator → Alert Engine
+```
+
+This keeps telemetry event-driven while using targeted SNMP `GET` calls for confirmation. Dial-out telemetry configuration details are documented in `docs/CISCO_GNMI_SETUP.md`.
+
+For `telemetry_ingest_push`, each TCP line must be valid JSON:
+
+```json
+{"device":"csw-mcd-01","interface":"GigabitEthernet1/0/1","oper_status":"down","admin_status":"up"}
+```
+
+Optional: set `global.ingest.token_env` if you want payload-level shared-token validation.
+
+When using the sidecar overlay, set `NETSPEC_INGEST_PORT` in `.env` to match your
+`global.ingest.port` value in `desired-state.yaml`.
 
 ## Configuration
 
