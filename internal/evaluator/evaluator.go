@@ -97,6 +97,9 @@ func (e *Evaluator) evaluateInterfaceSnapshotWithSource(deviceName, ifaceName, o
 	if !ok {
 		return nil
 	}
+	if !ifCfg.Monitor {
+		return nil
+	}
 
 	e.mu.Lock()
 	cacheKey := fmt.Sprintf("%s:%s", deviceName, ifaceName)
@@ -190,9 +193,12 @@ func (e *Evaluator) EvaluateNotification(deviceName string, notification *gnmi.N
 		}
 
 		// Check if interface is in desired state config
-		_, hasInterfaceConfig := deviceCfg.Interfaces[ifaceName]
+		ifCfg, hasInterfaceConfig := deviceCfg.Interfaces[ifaceName]
 		if !hasInterfaceConfig {
 			// Interface not in desired state config, skip
+			continue
+		}
+		if !ifCfg.Monitor {
 			continue
 		}
 
@@ -227,16 +233,14 @@ func (e *Evaluator) EvaluateNotification(deviceName string, notification *gnmi.N
 		e.mu.Unlock()
 
 		// Evaluate state against desired state
-		if ifCfg, ok := deviceCfg.Interfaces[ifaceName]; ok {
-			if stateType == "admin-status" {
-				if adminChange := e.evaluateAdminChange(deviceName, ifaceName, ifCfg, prevState, state); adminChange != nil {
-					changes = append(changes, *adminChange)
-				}
+		if stateType == "admin-status" {
+			if adminChange := e.evaluateAdminChange(deviceName, ifaceName, ifCfg, prevState, state); adminChange != nil {
+				changes = append(changes, *adminChange)
 			}
-			if stateType == "oper-status" {
-				if operChange := e.evaluateOperChange(deviceName, ifaceName, ifCfg, state); operChange != nil {
-					changes = append(changes, *operChange)
-				}
+		}
+		if stateType == "oper-status" {
+			if operChange := e.evaluateOperChange(deviceName, ifaceName, ifCfg, state); operChange != nil {
+				changes = append(changes, *operChange)
 			}
 		}
 

@@ -80,10 +80,43 @@ type InterfaceConfig struct {
 	Description  string        `yaml:"description,omitempty"`
 	DesiredState string        `yaml:"desired_state"`         // "up" or "down"
 	AdminState   string        `yaml:"admin_state,omitempty"` // "enabled" or "disabled"
+	Monitor      bool          `yaml:"monitor"`
 	SNMPIfIndex  int           `yaml:"snmp_ifindex,omitempty"`
 	Members      *MemberConfig `yaml:"members,omitempty"`
 	MemberPolicy *MemberPolicy `yaml:"member_policy,omitempty"`
 	Alerts       AlertSeverity `yaml:"alerts,omitempty"`
+}
+
+// UnmarshalYAML ensures monitor defaults to true when omitted.
+func (i *InterfaceConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	type rawInterfaceConfig struct {
+		Description  string        `yaml:"description,omitempty"`
+		DesiredState string        `yaml:"desired_state"`
+		AdminState   string        `yaml:"admin_state,omitempty"`
+		Monitor      *bool         `yaml:"monitor"`
+		SNMPIfIndex  int           `yaml:"snmp_ifindex,omitempty"`
+		Members      *MemberConfig `yaml:"members,omitempty"`
+		MemberPolicy *MemberPolicy `yaml:"member_policy,omitempty"`
+		Alerts       AlertSeverity `yaml:"alerts,omitempty"`
+	}
+
+	var raw rawInterfaceConfig
+	if err := unmarshal(&raw); err != nil {
+		return err
+	}
+
+	i.Description = raw.Description
+	i.DesiredState = raw.DesiredState
+	i.AdminState = raw.AdminState
+	i.SNMPIfIndex = raw.SNMPIfIndex
+	i.Members = raw.Members
+	i.MemberPolicy = raw.MemberPolicy
+	i.Alerts = raw.Alerts
+	i.Monitor = true
+	if raw.Monitor != nil {
+		i.Monitor = *raw.Monitor
+	}
+	return nil
 }
 
 // MemberConfig defines port-channel member requirements

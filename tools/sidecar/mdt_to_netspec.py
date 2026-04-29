@@ -9,6 +9,7 @@ SRC_FILE = Path(os.getenv("MDT_DECODED_FILE", "/sidecar/decoded.json"))
 DEST_HOST = os.getenv("NETSPEC_INGEST_HOST", "127.0.0.1")
 DEST_PORT = int(os.getenv("NETSPEC_INGEST_PORT", "57500"))
 LOG_FILE = Path(os.getenv("MDT_FORWARDER_LOG", "/sidecar/forwarder.log"))
+RESEND_INTERVAL_SECONDS = int(os.getenv("MDT_RESEND_INTERVAL_SECONDS", "60"))
 
 allowed_env = os.getenv("MDT_ALLOWED_DEVICES", "").strip()
 ALLOWED_DEVICES = {d.strip() for d in allowed_env.split(",") if d.strip()} if allowed_env else set()
@@ -60,6 +61,7 @@ def main():
     sock = connect_sock()
     sent = 0
     last_state = {}
+    last_sent_at = {}
 
     with SRC_FILE.open("r", encoding="utf-8") as f:
         f.seek(0, 2)
@@ -95,9 +97,14 @@ def main():
                 }
                 key = (device, iface)
                 state_key = (oper, admin)
-                if last_state.get(key) == state_key:
+                now = time.time()
+                if (
+                    last_state.get(key) == state_key
+                    and (now - last_sent_at.get(key, 0)) < RESEND_INTERVAL_SECONDS
+                ):
                     continue
                 last_state[key] = state_key
+                last_sent_at[key] = now
 
                 payload = (json.dumps(event) + "\n").encode("utf-8")
                 try:

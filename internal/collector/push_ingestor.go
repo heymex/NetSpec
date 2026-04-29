@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -30,6 +32,23 @@ type PushIngestor struct {
 	authToken     string
 	logger        zerolog.Logger
 	onEvent       func(PushTelemetryEvent)
+	statsMu       sync.Mutex
+	stats         PushIngestorStats
+}
+
+type PushIngestorStats struct {
+	Received            uint64
+	Accepted            uint64
+	RejectedInvalidJSON uint64
+	RejectedAuth        uint64
+	RejectedMissing     uint64
+	ByDevice            map[string]uint64
+	LastEventAt         time.Time
+}
+
+type DeviceTelemetryStat struct {
+	Device string `json:"device"`
+	Count  uint64 `json:"count"`
 }
 
 func NewPushIngestor(listenAddress string, port uint16, authToken string, logger zerolog.Logger, onEvent func(PushTelemetryEvent)) *PushIngestor {
@@ -39,6 +58,9 @@ func NewPushIngestor(listenAddress string, port uint16, authToken string, logger
 		authToken:     authToken,
 		logger:        logger,
 		onEvent:       onEvent,
+		stats: PushIngestorStats{
+			ByDevice: make(map[string]uint64),
+		},
 	}
 }
 
@@ -91,26 +113,32 @@ func (i *PushIngestor) handleConn(ctx context.Context, conn net.Conn) {
 		if raw == "" {
 			continue
 		}
+		i.incReceived()
 
 		var event PushTelemetryEvent
 		if err := json.Unmarshal([]byte(raw), &event); err != nil {
+			i.incRejectedInvalidJSON()
 			i.logger.Warn().Err(err).Str("remote", remote).Msg("Invalid push telemetry JSON payload")
 			continue
 		}
 
 		if i.authToken != "" && event.Token != i.authToken {
+			i.incRejectedAuth()
 			i.logger.Warn().Str("remote", remote).Msg("Rejected push telemetry payload due to invalid token")
 			continue
 		}
 		if event.Device == "" || event.Interface == "" {
+			i.incRejectedMissing()
 			i.logger.Warn().Str("remote", remote).Msg("Rejected push telemetry payload missing device/interface")
 			continue
 		}
 		if event.OperStatus == "" && event.AdminStatus == "" {
+			i.incRejectedMissing()
 			i.logger.Warn().Str("remote", remote).Msg("Rejected push telemetry payload missing status fields")
 			continue
 		}
 
+		i.incAccepted(event.Device)
 		i.onEvent(event)
 	}
 
@@ -119,4 +147,71 @@ func (i *PushIngestor) handleConn(ctx context.Context, conn net.Conn) {
 	}
 
 	i.logger.Debug().Str("remote", remote).Time("closed_at", time.Now()).Msg("Push telemetry client disconnected")
+}
+
+func (i *PushIngestor) incReceived() {
+	i.statsMu.Lock()
+	defer i.statsMu.Unlock()
+	i.stats.Received++
+}
+
+func (i *PushIngestor) incRejectedInvalidJSON() {
+	i.statsMu.Lock()
+	defer i.statsMu.Unlock()
+	i.stats.RejectedInvalidJSON++
+}
+
+func (i *PushIngestor) incRejectedAuth() {
+	i.statsMu.Lock()
+	defer i.statsMu.Unlock()
+	i.stats.RejectedAuth++
+}
+
+func (i *PushIngestor) incRejectedMissing() {
+	i.statsMu.Lock()
+	defer i.statsMu.Unlock()
+	i.stats.RejectedMissing++
+}
+
+func (i *PushIngestor) incAccepted(device string) {
+	i.statsMu.Lock()
+	defer i.statsMu.Unlock()
+	i.stats.Accepted++
+	i.stats.LastEventAt = time.Now()
+	i.stats.ByDevice[device]++
+}
+
+func (i *PushIngestor) Stats() PushIngestorStats {
+	i.statsMu.Lock()
+	defer i.statsMu.Unlock()
+	out := PushIngestorStats{
+		Received:            i.stats.Received,
+		Accepted:            i.stats.Accepted,
+		RejectedInvalidJSON: i.stats.RejectedInvalidJSON,
+		RejectedAuth:        i.stats.RejectedAuth,
+		RejectedMissing:     i.stats.RejectedMissing,
+		ByDevice:            make(map[string]uint64, len(i.stats.ByDevice)),
+		LastEventAt:         i.stats.LastEventAt,
+	}
+	for k, v := range i.stats.ByDevice {
+		out.ByDevice[k] = v
+	}
+	return out
+}
+
+func TopDeviceStats(byDevice map[string]uint64, limit int) []DeviceTelemetryStat {
+	out := make([]DeviceTelemetryStat, 0, len(byDevice))
+	for k, v := range byDevice {
+		out = append(out, DeviceTelemetryStat{Device: k, Count: v})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count == out[j].Count {
+			return out[i].Device < out[j].Device
+		}
+		return out[i].Count > out[j].Count
+	})
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out
 }

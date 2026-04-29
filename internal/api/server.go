@@ -22,6 +22,25 @@ type ConfigReloadFunc func() (*config.Config, error)
 // CollectorGetter is a function that returns a collector by device name
 type CollectorGetter func(deviceName string) *collector.Collector
 type EvaluatorGetter func() *evaluator.Evaluator
+type TelemetryStatsGetter func() TelemetryStats
+
+type TelemetryStats struct {
+	Received            uint64                          `json:"received"`
+	Accepted            uint64                          `json:"accepted"`
+	RejectedInvalidJSON uint64                          `json:"rejected_invalid_json"`
+	RejectedAuth        uint64                          `json:"rejected_auth"`
+	RejectedMissing     uint64                          `json:"rejected_missing"`
+	LastEventAt         time.Time                       `json:"last_event_at"`
+	TopDevices          []collector.DeviceTelemetryStat `json:"top_devices"`
+	UnknownDevices      []UnknownTelemetryDevice        `json:"unknown_devices"`
+}
+
+type UnknownTelemetryDevice struct {
+	Device     string    `json:"device"`
+	Count      uint64    `json:"count"`
+	LastSeenAt time.Time `json:"last_seen_at"`
+	WizardURL  string    `json:"wizard_url"`
+}
 
 // Server provides HTTP API endpoints and web UI
 type Server struct {
@@ -42,6 +61,8 @@ type Server struct {
 	collectorMu     sync.RWMutex
 	evaluatorGetter EvaluatorGetter
 	evaluatorMu     sync.RWMutex
+	telemetryGetter TelemetryStatsGetter
+	telemetryMu     sync.RWMutex
 }
 
 // NewServer creates a new API server
@@ -95,6 +116,12 @@ func (s *Server) SetEvaluatorGetter(getter EvaluatorGetter) {
 	s.evaluatorGetter = getter
 }
 
+func (s *Server) SetTelemetryStatsGetter(getter TelemetryStatsGetter) {
+	s.telemetryMu.Lock()
+	defer s.telemetryMu.Unlock()
+	s.telemetryGetter = getter
+}
+
 // Start starts the HTTP server
 func (s *Server) Start() error {
 	mux := http.NewServeMux()
@@ -108,9 +135,14 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/devices", s.handleDevicesAPI)
 	mux.HandleFunc("/api/devices/", s.handleDeviceDetailAPI)
 	mux.HandleFunc("/api/test/", s.handleTestConnection)
+	mux.HandleFunc("/api/telemetry/stats", s.handleTelemetryStatsAPI)
+	mux.HandleFunc("/api/discovery/probe", s.handleDiscoveryProbe)
+	mux.HandleFunc("/api/discovery/walk", s.handleDiscoveryWalk)
+	mux.HandleFunc("/api/discovery/commit", s.handleDiscoveryCommit)
 
 	// Web UI routes
 	mux.HandleFunc("/device/", s.handleDevicePage)
+	mux.HandleFunc("/wizard", s.handleWizardPage)
 
 	// Web UI
 	mux.HandleFunc("/", s.handleWebUI)
@@ -471,6 +503,7 @@ type PageData struct {
 	Version        string
 	Commit         string
 	BuildDate      string
+	Telemetry      TelemetryStats
 }
 
 // handleWebUI renders the main web interface
@@ -501,6 +534,13 @@ func (s *Server) handleWebUI(w http.ResponseWriter, r *http.Request) {
 		Version:   version,
 		Commit:    commit,
 		BuildDate: buildDate,
+	}
+
+	s.telemetryMu.RLock()
+	tg := s.telemetryGetter
+	s.telemetryMu.RUnlock()
+	if tg != nil {
+		data.Telemetry = tg()
 	}
 
 	// Add config details
@@ -551,6 +591,18 @@ func (s *Server) handleWebUI(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error().Err(err).Msg("Failed to render template")
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
+}
+
+func (s *Server) handleTelemetryStatsAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	s.telemetryMu.RLock()
+	tg := s.telemetryGetter
+	s.telemetryMu.RUnlock()
+	if tg == nil {
+		_ = json.NewEncoder(w).Encode(TelemetryStats{})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(tg())
 }
 
 // DevicePageData holds data for the device detail page

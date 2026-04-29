@@ -4,9 +4,12 @@ import (
 	"context"
 	"flag"
 	"io"
+	"net"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -80,6 +83,10 @@ func main() {
 	// Create collectors for each device
 	collectors := make(map[string]*collector.Collector)
 	collectorsMu := sync.RWMutex{}
+	var pushIngestor *collector.PushIngestor
+	unknownTelemetryMu := sync.Mutex{}
+	unknownTelemetryCount := map[string]uint64{}
+	unknownTelemetryLast := map[string]time.Time{}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -318,10 +325,14 @@ func main() {
 			func(event collector.PushTelemetryEvent) {
 				deviceCfg, ok := cfg.DesiredState.Devices[event.Device]
 				if !ok {
+					unknownTelemetryMu.Lock()
+					unknownTelemetryCount[event.Device]++
+					unknownTelemetryLast[event.Device] = time.Now()
+					unknownTelemetryMu.Unlock()
 					logger.Warn().Str("device", event.Device).Msg("Ignoring push telemetry for unknown device")
 					return
 				}
-				ifaceCfg, ok := deviceCfg.Interfaces[event.Interface]
+				matchedIface, ifaceCfg, ok := resolveInterfaceConfig(deviceCfg.Interfaces, event.Interface)
 				if !ok {
 					logger.Debug().
 						Str("device", event.Device).
@@ -330,15 +341,15 @@ func main() {
 					return
 				}
 
-				snapshot, err := validator.PollInterface(event.Device, deviceCfg, event.Interface, ifaceCfg)
+				snapshot, err := validator.PollInterface(event.Device, deviceCfg, matchedIface, ifaceCfg)
 				if err != nil {
 					logger.Warn().
 						Err(err).
 						Str("device", event.Device).
-						Str("interface", event.Interface).
+						Str("interface", matchedIface).
 						Msg("SNMP validation failed for push event; using ingested status")
 					snapshot = collector.InterfaceSnapshot{
-						Interface:   event.Interface,
+						Interface:   matchedIface,
 						OperStatus:  event.OperStatus,
 						AdminStatus: event.AdminStatus,
 					}
@@ -354,6 +365,7 @@ func main() {
 				}
 			},
 		)
+		pushIngestor = ingestor
 
 		go func() {
 			if err := ingestor.Start(ctx); err != nil {
@@ -386,6 +398,46 @@ func main() {
 	apiServer.SetEvaluatorGetter(func() *evaluator.Evaluator {
 		return eval
 	})
+	apiServer.SetTelemetryStatsGetter(func() api.TelemetryStats {
+		stats := api.TelemetryStats{}
+		if pushIngestor != nil {
+			s := pushIngestor.Stats()
+			stats.Received = s.Received
+			stats.Accepted = s.Accepted
+			stats.RejectedInvalidJSON = s.RejectedInvalidJSON
+			stats.RejectedAuth = s.RejectedAuth
+			stats.RejectedMissing = s.RejectedMissing
+			stats.LastEventAt = s.LastEventAt
+			stats.TopDevices = collector.TopDeviceStats(s.ByDevice, 10)
+		}
+
+		unknownTelemetryMu.Lock()
+		unknown := make([]api.UnknownTelemetryDevice, 0, len(unknownTelemetryCount))
+		for dev, cnt := range unknownTelemetryCount {
+			wizardURL := "/wizard?device_key=" + url.QueryEscape(dev)
+			if net.ParseIP(dev) != nil {
+				wizardURL = "/wizard?address=" + url.QueryEscape(dev) + "&device_key=" + url.QueryEscape(dev)
+			}
+			unknown = append(unknown, api.UnknownTelemetryDevice{
+				Device:     dev,
+				Count:      cnt,
+				LastSeenAt: unknownTelemetryLast[dev],
+				WizardURL:  wizardURL,
+			})
+		}
+		unknownTelemetryMu.Unlock()
+		sort.Slice(unknown, func(i, j int) bool {
+			if unknown[i].Count == unknown[j].Count {
+				return unknown[i].Device < unknown[j].Device
+			}
+			return unknown[i].Count > unknown[j].Count
+		})
+		if len(unknown) > 10 {
+			unknown = unknown[:10]
+		}
+		stats.UnknownDevices = unknown
+		return stats
+	})
 
 	// Set up config reload function
 	apiServer.SetReloadFunc(func() (*config.Config, error) {
@@ -395,9 +447,10 @@ func main() {
 			return nil, err
 		}
 
-		// Note: We can't easily update evaluator and alert engine without
-		// more complex state management. For now, collectors are restarted
-		// which is the main issue (IP address changes).
+		// Swap in the latest config/evaluator so newly added devices/interfaces
+		// are evaluated immediately after reload.
+		cfg = newCfg
+		eval = evaluator.NewEvaluator(cfg, logger)
 		go alertEngine.Run()
 
 		if strings.ToLower(newCfg.DesiredState.Global.TelemetryMode) == "gnmi_pull" {
@@ -489,4 +542,39 @@ func main() {
 
 	cancel()
 	logger.Info().Msg("NetSpec stopped")
+}
+
+func resolveInterfaceConfig(
+	ifaces map[string]config.InterfaceConfig,
+	eventIface string,
+) (string, config.InterfaceConfig, bool) {
+	if cfg, ok := ifaces[eventIface]; ok {
+		return eventIface, cfg, true
+	}
+	target := canonicalInterfaceName(eventIface)
+	for name, cfg := range ifaces {
+		if canonicalInterfaceName(name) == target {
+			return name, cfg, true
+		}
+	}
+	return "", config.InterfaceConfig{}, false
+}
+
+func canonicalInterfaceName(name string) string {
+	s := strings.ToLower(strings.TrimSpace(name))
+	if s == "" {
+		return ""
+	}
+	replacer := strings.NewReplacer(
+		"gigabitethernet", "gi",
+		"tengigabitethernet", "te",
+		"twentyfivegige", "tw",
+		"twentyfivegigabite", "tw",
+		"hundredgige", "hu",
+		"hundredgigabitethernet", "hu",
+		"port-channel", "po",
+		"portchannel", "po",
+		" ", "",
+	)
+	return replacer.Replace(s)
 }
