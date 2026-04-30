@@ -262,8 +262,10 @@ func main() {
 		for dev, cnt := range unknownTelemetryCount {
 			wizardURL := "/wizard?device_key=" + url.QueryEscape(dev)
 			addr := strings.TrimSpace(unknownTelemetryAddress[dev])
-			if addr == "" && net.ParseIP(dev) != nil {
-				addr = dev
+			if addr == "" {
+				// Fall back to the unknown device token itself so wizard launches
+				// with a prefilled address for both IPs and hostnames.
+				addr = strings.TrimSpace(dev)
 			}
 			if addr != "" {
 				wizardURL = "/wizard?address=" + url.QueryEscape(addr) + "&device_key=" + url.QueryEscape(dev)
