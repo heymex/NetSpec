@@ -259,6 +259,20 @@ func ValidateConfig(cfg *Config) error {
 				if ifCfg.MemberPolicy == nil {
 					return fmt.Errorf("device %s, interface %s: has members but no member_policy", name, ifName)
 				}
+				seenMembers := make(map[string]struct{}, len(ifCfg.Members.Required))
+				for _, member := range ifCfg.Members.Required {
+					member = strings.TrimSpace(member)
+					if member == "" {
+						return fmt.Errorf("device %s, interface %s: members.required cannot contain empty entries", name, ifName)
+					}
+					if member == ifName {
+						return fmt.Errorf("device %s, interface %s: cannot reference itself in members.required", name, ifName)
+					}
+					if _, exists := seenMembers[member]; exists {
+						return fmt.Errorf("device %s, interface %s: duplicate member %s", name, ifName, member)
+					}
+					seenMembers[member] = struct{}{}
+				}
 				if ifCfg.MemberPolicy.Mode != "all_active" &&
 					ifCfg.MemberPolicy.Mode != "min_active" &&
 					ifCfg.MemberPolicy.Mode != "per_stack_minimum" {
@@ -266,6 +280,23 @@ func ValidateConfig(cfg *Config) error {
 				}
 				if ifCfg.MemberPolicy.Mode == "min_active" && ifCfg.MemberPolicy.Minimum <= 0 {
 					return fmt.Errorf("device %s, interface %s: member_policy.minimum must be > 0 for min_active mode", name, ifName)
+				}
+				if ifCfg.MemberPolicy.Mode == "min_active" && ifCfg.MemberPolicy.Minimum > len(ifCfg.Members.Required) {
+					return fmt.Errorf("device %s, interface %s: member_policy.minimum cannot exceed required member count", name, ifName)
+				}
+				if ifCfg.MemberPolicy.CriticalThresholdPct != nil {
+					if *ifCfg.MemberPolicy.CriticalThresholdPct <= 0 || *ifCfg.MemberPolicy.CriticalThresholdPct > 100 {
+						return fmt.Errorf("device %s, interface %s: member_policy.critical_threshold_pct must be > 0 and <= 100", name, ifName)
+					}
+				}
+				if ifCfg.MemberPolicy.WarningThresholdPct != nil {
+					if *ifCfg.MemberPolicy.WarningThresholdPct <= 0 || *ifCfg.MemberPolicy.WarningThresholdPct >= 100 {
+						return fmt.Errorf("device %s, interface %s: member_policy.warning_threshold_pct must be > 0 and < 100", name, ifName)
+					}
+				}
+				if ifCfg.MemberPolicy.CriticalThresholdPct != nil && ifCfg.MemberPolicy.WarningThresholdPct != nil &&
+					*ifCfg.MemberPolicy.WarningThresholdPct >= *ifCfg.MemberPolicy.CriticalThresholdPct {
+					return fmt.Errorf("device %s, interface %s: member_policy.warning_threshold_pct must be less than critical_threshold_pct", name, ifName)
 				}
 			}
 		}
