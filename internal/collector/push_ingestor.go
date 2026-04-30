@@ -23,6 +23,7 @@ type PushTelemetryEvent struct {
 	AdminStatus string `json:"admin_status,omitempty"`
 	Token       string `json:"token,omitempty"`
 	Source      string `json:"source,omitempty"`
+	SourceIP    string `json:"source_ip,omitempty"`
 }
 
 // PushIngestor receives line-delimited JSON telemetry over TCP.

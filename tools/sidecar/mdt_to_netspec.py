@@ -82,6 +82,21 @@ def main():
                 iface = tags.get("name", "")
                 oper = norm_oper(fields.get("oper_status", ""))
                 admin = norm_admin(fields.get("admin_status", ""))
+                source_ip = (
+                    tags.get("source_ip")
+                    or tags.get("source-address")
+                    or tags.get("source_address")
+                    or fields.get("source_ip")
+                    or fields.get("source-address")
+                    or fields.get("source_address")
+                    or ""
+                )
+                source_hint = (
+                    tags.get("source")
+                    or tags.get("host")
+                    or source_ip
+                    or "mdt-sidecar"
+                )
 
                 if not device or not iface or (not oper and not admin):
                     continue
@@ -93,7 +108,8 @@ def main():
                     "interface": iface,
                     "oper_status": oper,
                     "admin_status": admin,
-                    "source": "mdt-sidecar",
+                    "source": source_hint,
+                    "source_ip": source_ip,
                 }
                 key = (device, iface)
                 state_key = (oper, admin)

@@ -362,6 +362,9 @@ func resolveDeviceForEvent(cfg *config.Config, event collector.PushTelemetryEven
 }
 
 func eventAddressHint(event collector.PushTelemetryEvent) string {
+	if ip := net.ParseIP(strings.TrimSpace(event.SourceIP)); ip != nil {
+		return ip.String()
+	}
 	if ip := net.ParseIP(strings.TrimSpace(event.Device)); ip != nil {
 		return ip.String()
 	}
