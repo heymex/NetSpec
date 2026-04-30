@@ -341,7 +341,7 @@ func main() {
 func loadDotEnvIfPresent(configDir string) {
 	candidates := []string{
 		filepath.Join(configDir, ".env"),
-		filepath.Join(".", ".env"),
+		filepath.Join(configDir, "netspec.env"),
 	}
 	seen := map[string]struct{}{}
 	for _, p := range candidates {
