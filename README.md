@@ -13,14 +13,7 @@ NetSpec is a next-generation, declarative network monitoring system designed for
 
 1. Edit `config/desired-state.yaml` with global settings.
 2. Define devices either in `config/desired-state.yaml` (monolithic) or as split files in `config/devices/*.yaml`.
-3. Copy `config/alerts.yaml.example` to `config/alerts.yaml` and configure notification channels:
-
-```bash
-cp config/alerts.yaml.example config/alerts.yaml
-# Edit config/alerts.yaml with your notification channels
-```
-
-4. Copy `.env.example` to `.env` and update with your credentials:
+3. Copy `.env.example` to `.env` and update with your credentials:
 
 ```bash
 cp .env.example .env
@@ -28,17 +21,10 @@ cp .env.example .env
 ```
 
 The `.env` file should contain:
-- `SNMP_COMMUNITY` - SNMPv2c community when using `snmp_validate_only` mode
-- `APPRISE_SLACK_WEBHOOK` - Slack notification URL (set in alerts.yaml)
-- `APPRISE_TEAMS_WEBHOOK` - Teams notification URL (set in alerts.yaml)
-- `APPRISE_API_URL` - Apprise API URL (defaults to `http://apprise:8000`)
+- `SNMP_COMMUNITY` - SNMPv2c community (used by SNMP validation and push-confirmation paths)
+- `APPRISE_API_URL` - Apprise API URL (defaults to `http://apprise:8000` for API use, `localhost:8086` in host-network docker compose)
+- `NETSPEC_IMAGE_TAG` - optional container image tag override
 - Other optional settings as documented in `.env.example`
-
-The `config/alerts.yaml` file configures:
-- Notification channels (Slack, Teams, OpsGenie, Email, etc.)
-- Alert routing rules by severity
-- Deduplication and flap detection settings
-- State persistence configuration
 
 `config/desired-state.yaml` supports a telemetry mode switch in `global.telemetry_mode`:
 - `snmp_validate_only`: targeted SNMP `GET` validation polling for configured interfaces
@@ -157,9 +143,7 @@ NetSpec uses multiple configuration files:
 
 - **`config/desired-state.yaml`** - Global monitoring configuration and optional monolithic device definitions
 - **`config/devices/*.yaml`** - (Optional) Split device definitions for large deployments
-- **`config/alerts.yaml`** - Alert routing and notification channel configuration (see `config/alerts.yaml.example`)
-- **`config/credentials.yaml`** - (Optional) Credential management
-- **`config/maintenance.yaml`** - (Optional) Maintenance window definitions
+- **`config/desired-state.yaml`** + **`config/devices/*.yaml`** are the only required runtime config files in the current project state
 
 When using `config/devices/*.yaml`, each file can be either:
 
@@ -185,7 +169,7 @@ core-sw-01:
 Device keys must be unique across all files and `desired-state.yaml`.
 On startup, NetSpec logs `monolithic_device_count` and `split_device_count` to show how devices were sourced.
 
-See `config/desired-state.yaml` and `config/alerts.yaml.example` for configuration examples.
+See `config/desired-state.yaml` and `config/devices/example-device.yaml` for configuration examples.
 
 ### Cisco IOS-XE Telemetry Setup
 
@@ -210,6 +194,7 @@ docker pull ghcr.io/OWNER/REPO:latest
 docker pull ghcr.io/OWNER/REPO:v1.0.0
 ```
 
-## License
+## Notes
 
-See LICENSE file for details.
+- Use `/wizard` in the web UI to discover and add devices/interfaces.
+- Interface policies can be edited inline from each device page (monitor flag, desired/admin state, alert level).
