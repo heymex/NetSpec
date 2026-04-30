@@ -228,20 +228,49 @@ func normalizeInterfaceName(name string) string {
 	if s == "" {
 		return ""
 	}
-
-	replacements := map[string]string{
-		"gigabitethernet":        "gi",
-		"tengigabitethernet":     "te",
-		"twentyfivegige":         "tw",
-		"twentyfivegigabite":     "tw",
-		"fortygigabitethernet":   "fo",
-		"hundredgigabitethernet": "hu",
-		"port-channel":           "po",
-		"portchannel":            "po",
-	}
-	for old, newVal := range replacements {
-		s = strings.ReplaceAll(s, old, newVal)
-	}
 	s = strings.ReplaceAll(s, " ", "")
+
+	// Prefer explicit prefix normalization so long names are handled before
+	// shorter aliases (for example, TenGigabitEthernet before GigabitEthernet).
+	prefixes := []struct {
+		old string
+		new string
+	}{
+		{"twentyfivegigabitethernet", "tw"},
+		{"twentyfivegige", "tw"},
+		{"tengigabitethernet", "te"},
+		{"hundredgigabitethernet", "hu"},
+		{"hundredgige", "hu"},
+		{"fortygigabitethernet", "fo"},
+		{"gigabitethernet", "gi"},
+		{"port-channel", "po"},
+		{"portchannel", "po"},
+		// Keep compatibility with previously accepted typo variant.
+		{"twentyfivegigabite", "tw"},
+	}
+	for _, p := range prefixes {
+		if strings.HasPrefix(s, p.old) {
+			return p.new + strings.TrimPrefix(s, p.old)
+		}
+	}
+
+	// Common IOS-XE short aliases.
+	shortPrefixes := []struct {
+		old string
+		new string
+	}{
+		{"twe", "tw"},
+		{"hu", "hu"},
+		{"te", "te"},
+		{"gi", "gi"},
+		{"fo", "fo"},
+		{"po", "po"},
+	}
+	for _, p := range shortPrefixes {
+		if strings.HasPrefix(s, p.old) {
+			return p.new + strings.TrimPrefix(s, p.old)
+		}
+	}
+
 	return s
 }
