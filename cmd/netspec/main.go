@@ -262,10 +262,8 @@ func main() {
 		for dev, cnt := range unknownTelemetryCount {
 			wizardURL := "/wizard?device_key=" + url.QueryEscape(dev)
 			addr := strings.TrimSpace(unknownTelemetryAddress[dev])
-			if addr == "" {
-				// Fall back to the unknown device token itself so wizard launches
-				// with a prefilled address for both IPs and hostnames.
-				addr = strings.TrimSpace(dev)
+			if addr == "" && net.ParseIP(dev) != nil {
+				addr = dev
 			}
 			if addr != "" {
 				wizardURL = "/wizard?address=" + url.QueryEscape(addr) + "&device_key=" + url.QueryEscape(dev)
@@ -362,9 +360,6 @@ func resolveDeviceForEvent(cfg *config.Config, event collector.PushTelemetryEven
 }
 
 func eventAddressHint(event collector.PushTelemetryEvent) string {
-	if ip := net.ParseIP(strings.TrimSpace(event.SourceIP)); ip != nil {
-		return ip.String()
-	}
 	if ip := net.ParseIP(strings.TrimSpace(event.Device)); ip != nil {
 		return ip.String()
 	}
