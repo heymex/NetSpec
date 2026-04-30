@@ -398,6 +398,47 @@ func UpdateDeviceInterface(configPath, deviceKey, ifaceName string, patch Interf
 	return writeDesiredState(configPath, desired)
 }
 
+func DeleteDevice(configPath, deviceKey string) error {
+	deviceKey = strings.TrimSpace(deviceKey)
+	if deviceKey == "" {
+		return errors.New("device key is required")
+	}
+
+	desired, err := loadDesiredState(configPath)
+	if err != nil {
+		return err
+	}
+	devicesDir := filepath.Join(filepath.Dir(configPath), "devices")
+	splitIndex, err := indexSplitDeviceFiles(devicesDir)
+	if err != nil {
+		return err
+	}
+
+	if splitPath := splitIndex[deviceKey]; splitPath != "" {
+		fileDevices, err := loadSplitFile(splitPath)
+		if err != nil {
+			return err
+		}
+		if _, ok := fileDevices[deviceKey]; !ok {
+			return errNotFound("device key not found")
+		}
+		delete(fileDevices, deviceKey)
+		if len(fileDevices) == 0 {
+			if err := os.Remove(splitPath); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("remove empty split device file: %w", err)
+			}
+			return nil
+		}
+		return writeSplitFile(splitPath, fileDevices)
+	}
+
+	if _, ok := desired.Devices[deviceKey]; !ok {
+		return errNotFound("device key not found")
+	}
+	delete(desired.Devices, deviceKey)
+	return writeDesiredState(configPath, desired)
+}
+
 func applyInterfacePatch(dev *config.DeviceConfig, ifaceName string, patch InterfaceUpdate) error {
 	if dev.Interfaces == nil {
 		return errNotFound("interface not found")

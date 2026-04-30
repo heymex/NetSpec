@@ -247,6 +247,10 @@ func (s *Server) handleDeviceDetailAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleInterfacePatch(w, r)
 		return
 	}
+	if r.Method == http.MethodDelete {
+		s.handleDeviceDelete(w, r)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 
 	// Extract device name from path: /api/devices/{name}
@@ -761,5 +765,46 @@ func (s *Server) handleInterfacePatch(w http.ResponseWriter, r *http.Request) {
 		"success":   true,
 		"device":    deviceName,
 		"interface": ifaceName,
+	})
+}
+
+func (s *Server) handleDeviceDelete(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/devices/")
+	if path == "" || path == "/api/devices" {
+		http.Error(w, "device name required", http.StatusBadRequest)
+		return
+	}
+	deviceName, err := url.PathUnescape(path)
+	if err != nil || strings.TrimSpace(deviceName) == "" {
+		http.Error(w, "invalid device name", http.StatusBadRequest)
+		return
+	}
+
+	s.reloadMu.RLock()
+	configPath := s.configPath
+	reloadFn := s.reloadFunc
+	s.reloadMu.RUnlock()
+	desiredPath := discovery.DesiredStatePathFrom(configPath)
+	if err := discovery.DeleteDevice(desiredPath, deviceName); err != nil {
+		status := discovery.StatusCodeFor(err)
+		if status < 400 {
+			status = http.StatusBadRequest
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	if reloadFn != nil {
+		if newCfg, err := reloadFn(); err == nil {
+			s.reloadMu.Lock()
+			s.config = newCfg
+			s.reloadMu.Unlock()
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"device":  deviceName,
 	})
 }

@@ -169,6 +169,14 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
         .btn-secondary:hover {
             background: var(--border-color);
         }
+        .btn-danger {
+            background: rgba(248, 81, 73, 0.15);
+            color: var(--accent-red);
+            border: 1px solid var(--accent-red);
+        }
+        .btn-danger:hover {
+            background: rgba(248, 81, 73, 0.25);
+        }
 
         .grid {
             display: grid;
@@ -1420,6 +1428,7 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                 </div>
             </div>
             <div>
+                <button class="btn btn-danger" onclick="deleteDevice()">Delete Device</button>
                 <a href="/" class="btn btn-secondary">← Back to Dashboard</a>
             </div>
         </header>
@@ -1649,6 +1658,21 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                 return;
             }
             location.reload();
+        }
+
+        async function deleteDevice() {
+            const deviceName = '{{.Device.Name}}';
+            const ok = confirm('Delete device "' + deviceName + '" from monitoring? This removes it from config.');
+            if (!ok) return;
+            const res = await fetch('/api/devices/' + encodeURIComponent(deviceName), {
+                method: 'DELETE'
+            });
+            if (!res.ok) {
+                const txt = await res.text();
+                alert('Delete failed: ' + txt);
+                return;
+            }
+            window.location.href = '/';
         }
     </script>
 </body>
