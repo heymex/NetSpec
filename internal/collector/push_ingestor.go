@@ -138,6 +138,18 @@ func (i *PushIngestor) handleConn(ctx context.Context, conn net.Conn) {
 			i.logger.Warn().Str("remote", remote).Msg("Rejected push telemetry payload missing status fields")
 			continue
 		}
+		if strings.TrimSpace(event.SourceIP) == "" {
+			host, _, err := net.SplitHostPort(remote)
+			if err == nil {
+				if ip := net.ParseIP(strings.TrimSpace(host)); ip != nil {
+					event.SourceIP = ip.String()
+				}
+			} else {
+				if ip := net.ParseIP(strings.TrimSpace(remote)); ip != nil {
+					event.SourceIP = ip.String()
+				}
+			}
+		}
 
 		i.incAccepted(event.Device)
 		i.onEvent(event)
