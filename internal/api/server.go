@@ -184,6 +184,18 @@ func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	alerts := s.alertEngine.GetActiveAlerts()
+	sort.SliceStable(alerts, func(i, j int) bool {
+		if alerts[i].Device != alerts[j].Device {
+			return alerts[i].Device < alerts[j].Device
+		}
+		if alerts[i].Entity != alerts[j].Entity {
+			return alerts[i].Entity < alerts[j].Entity
+		}
+		if alerts[i].Severity != alerts[j].Severity {
+			return alerts[i].Severity < alerts[j].Severity
+		}
+		return alerts[i].Message < alerts[j].Message
+	})
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"alerts": alerts,
 		"count":  len(alerts),
@@ -197,6 +209,7 @@ func (s *Server) handleLogsAPI(w http.ResponseWriter, r *http.Request) {
 	var entries []webui.LogEntry
 	if s.logBuffer != nil {
 		entries = s.logBuffer.GetRecentEntries(200)
+		reverseLogEntries(entries)
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -318,6 +331,7 @@ func (s *Server) handleDeviceDetailAPI(w http.ResponseWriter, r *http.Request) {
 	var deviceLogs []webui.LogEntry
 	if s.logBuffer != nil {
 		allLogs := s.logBuffer.GetRecentEntries(500)
+		reverseLogEntries(allLogs)
 		for _, entry := range allLogs {
 			// Check if log entry is for this device
 			if strings.Contains(strings.ToLower(entry.Message), strings.ToLower(deviceName)) ||
@@ -327,7 +341,7 @@ func (s *Server) handleDeviceDetailAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		// Limit to most recent 100
 		if len(deviceLogs) > 100 {
-			deviceLogs = deviceLogs[len(deviceLogs)-100:]
+			deviceLogs = deviceLogs[:100]
 		}
 	}
 
@@ -490,6 +504,18 @@ func (s *Server) handleWebUI(w http.ResponseWriter, r *http.Request) {
 	// Get active alerts
 	alerts := s.alertEngine.GetActiveAlerts()
 	data.AlertCount = len(alerts)
+	sort.SliceStable(alerts, func(i, j int) bool {
+		if alerts[i].Device != alerts[j].Device {
+			return alerts[i].Device < alerts[j].Device
+		}
+		if alerts[i].Entity != alerts[j].Entity {
+			return alerts[i].Entity < alerts[j].Entity
+		}
+		if alerts[i].Severity != alerts[j].Severity {
+			return alerts[i].Severity < alerts[j].Severity
+		}
+		return alerts[i].Message < alerts[j].Message
+	})
 	for _, alert := range alerts {
 		data.Alerts = append(data.Alerts, AlertInfo{
 			Device:   alert.Device,
@@ -502,6 +528,7 @@ func (s *Server) handleWebUI(w http.ResponseWriter, r *http.Request) {
 	// Get recent logs
 	if s.logBuffer != nil {
 		data.Logs = s.logBuffer.GetRecentEntries(100)
+		reverseLogEntries(data.Logs)
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -638,6 +665,7 @@ func (s *Server) handleDevicePage(w http.ResponseWriter, r *http.Request) {
 	var deviceLogs []webui.LogEntry
 	if s.logBuffer != nil {
 		allLogs := s.logBuffer.GetRecentEntries(500)
+		reverseLogEntries(allLogs)
 		for _, entry := range allLogs {
 			// Check if log entry is for this device
 			if strings.Contains(strings.ToLower(entry.Message), strings.ToLower(deviceName)) ||
@@ -647,7 +675,7 @@ func (s *Server) handleDevicePage(w http.ResponseWriter, r *http.Request) {
 		}
 		// Limit to most recent 100
 		if len(deviceLogs) > 100 {
-			deviceLogs = deviceLogs[len(deviceLogs)-100:]
+			deviceLogs = deviceLogs[:100]
 		}
 	}
 
@@ -693,6 +721,12 @@ func formatDuration(d time.Duration) string {
 		return string(rune('0'+days)) + "d"
 	}
 	return string(rune('0'+days)) + "d " + string(rune('0'+hours)) + "h"
+}
+
+func reverseLogEntries(entries []webui.LogEntry) {
+	for i, j := 0, len(entries)-1; i < j; i, j = i+1, j-1 {
+		entries[i], entries[j] = entries[j], entries[i]
+	}
 }
 
 type interfacePatchRequest struct {
