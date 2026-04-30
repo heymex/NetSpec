@@ -801,10 +801,18 @@ func (s *Server) handleDeviceDelete(w http.ResponseWriter, r *http.Request) {
 			s.reloadMu.Unlock()
 		}
 	}
+	cleared := s.alertEngine.ClearAlertsForDevice(deviceName)
+	if cleared > 0 {
+		s.logger.Info().
+			Str("device", deviceName).
+			Int("cleared_alerts", cleared).
+			Msg("Cleared active alerts for deleted device")
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"success": true,
-		"device":  deviceName,
+		"success":        true,
+		"device":         deviceName,
+		"cleared_alerts": cleared,
 	})
 }

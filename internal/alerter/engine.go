@@ -2,6 +2,7 @@ package alerter
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -361,4 +362,36 @@ func (e *Engine) GetActiveAlerts() []*types.Alert {
 		}
 	}
 	return alerts
+}
+
+// ClearAlertsForDevice removes all in-memory active/dedup alert state for a device.
+// Use this when a device is removed from monitoring config.
+func (e *Engine) ClearAlertsForDevice(device string) int {
+	device = strings.TrimSpace(device)
+	if device == "" {
+		return 0
+	}
+	prefix := device + "|"
+	flapPrefix := "flap|" + prefix
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	removed := 0
+	for key, alert := range e.activeAlerts {
+		if strings.HasPrefix(key, prefix) || strings.HasPrefix(key, flapPrefix) {
+			if e.escalation != nil {
+				e.escalation.CancelEscalation(alert.Device, alert.Entity, alert.AlertType)
+			}
+			delete(e.activeAlerts, key)
+			removed++
+		}
+	}
+	for key := range e.lastFired {
+		if strings.HasPrefix(key, prefix) {
+			delete(e.lastFired, key)
+		}
+	}
+
+	return removed
 }
