@@ -31,6 +31,7 @@ type TelemetryStats struct {
 	RejectedAuth        uint64                          `json:"rejected_auth"`
 	RejectedMissing     uint64                          `json:"rejected_missing"`
 	LastEventAt         time.Time                       `json:"last_event_at"`
+	EventsPerSecond     float64                         `json:"events_per_second"`
 	TopDevices          []collector.DeviceTelemetryStat `json:"top_devices"`
 	UnknownDevices      []UnknownTelemetryDevice        `json:"unknown_devices"`
 }

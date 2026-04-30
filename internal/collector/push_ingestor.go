@@ -34,6 +34,7 @@ type PushIngestor struct {
 	onEvent       func(PushTelemetryEvent)
 	statsMu       sync.Mutex
 	stats         PushIngestorStats
+	eventsBySec   map[int64]uint64
 }
 
 type PushIngestorStats struct {
@@ -44,6 +45,7 @@ type PushIngestorStats struct {
 	RejectedMissing     uint64
 	ByDevice            map[string]uint64
 	LastEventAt         time.Time
+	EventsPerSecond     float64
 }
 
 type DeviceTelemetryStat struct {
@@ -61,6 +63,7 @@ func NewPushIngestor(listenAddress string, port uint16, authToken string, logger
 		stats: PushIngestorStats{
 			ByDevice: make(map[string]uint64),
 		},
+		eventsBySec: make(map[int64]uint64),
 	}
 }
 
@@ -176,13 +179,28 @@ func (i *PushIngestor) incAccepted(device string) {
 	i.statsMu.Lock()
 	defer i.statsMu.Unlock()
 	i.stats.Accepted++
-	i.stats.LastEventAt = time.Now()
+	now := time.Now()
+	i.stats.LastEventAt = now
 	i.stats.ByDevice[device]++
+	i.eventsBySec[now.Unix()]++
 }
 
 func (i *PushIngestor) Stats() PushIngestorStats {
 	i.statsMu.Lock()
 	defer i.statsMu.Unlock()
+
+	nowSec := time.Now().Unix()
+	var totalRecent uint64
+	for sec, count := range i.eventsBySec {
+		age := nowSec - sec
+		if age >= 0 && age < 10 {
+			totalRecent += count
+		}
+		if age > 120 {
+			delete(i.eventsBySec, sec)
+		}
+	}
+
 	out := PushIngestorStats{
 		Received:            i.stats.Received,
 		Accepted:            i.stats.Accepted,
@@ -191,6 +209,7 @@ func (i *PushIngestor) Stats() PushIngestorStats {
 		RejectedMissing:     i.stats.RejectedMissing,
 		ByDevice:            make(map[string]uint64, len(i.stats.ByDevice)),
 		LastEventAt:         i.stats.LastEventAt,
+		EventsPerSecond:     float64(totalRecent) / 10.0,
 	}
 	for k, v := range i.stats.ByDevice {
 		out.ByDevice[k] = v

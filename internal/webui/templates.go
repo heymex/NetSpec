@@ -411,7 +411,7 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
 
         .telemetry-mini {
             display: grid;
-            grid-template-columns: repeat(3, minmax(0, 1fr));
+            grid-template-columns: repeat(4, minmax(0, 1fr));
             gap: 0.5rem;
             margin-bottom: 0.75rem;
         }
@@ -671,6 +671,7 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                             <div class="telemetry-pill"><div class="k">Received</div><div class="v">{{.Telemetry.Received}}</div></div>
                             <div class="telemetry-pill"><div class="k">Accepted</div><div class="v">{{.Telemetry.Accepted}}</div></div>
                             <div class="telemetry-pill"><div class="k">Rejected</div><div class="v">{{add .Telemetry.RejectedInvalidJSON .Telemetry.RejectedAuth .Telemetry.RejectedMissing}}</div></div>
+                            <div class="telemetry-pill"><div class="k">Events/Sec</div><div class="v">{{printf "%.1f" .Telemetry.EventsPerSecond}}</div></div>
                         </div>
                         {{if .Telemetry.LastEventAt.IsZero}}
                         <div style="font-size:0.75rem;color:var(--accent-yellow);">No accepted telemetry events yet.</div>

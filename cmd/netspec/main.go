@@ -256,6 +256,7 @@ func main() {
 			stats.RejectedAuth = s.RejectedAuth
 			stats.RejectedMissing = s.RejectedMissing
 			stats.LastEventAt = s.LastEventAt
+			stats.EventsPerSecond = s.EventsPerSecond
 			stats.TopDevices = collector.TopDeviceStats(s.ByDevice, 10)
 		}
 
