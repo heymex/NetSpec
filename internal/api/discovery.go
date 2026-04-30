@@ -52,7 +52,7 @@ func (s *Server) handleDiscoveryProbe(w http.ResponseWriter, r *http.Request) {
 		writeDiscoveryError(w, http.StatusBadRequest, err)
 		return
 	}
-	req = applyDiscoveryDefaults(req)
+	req = s.applyDiscoveryDefaults(req)
 	result, err := discovery.ProbeDevice(req.Address, req.Port, req.Community, 3*time.Second)
 	if err != nil {
 		writeDiscoverySNMPError(w, err)
@@ -87,7 +87,7 @@ func (s *Server) handleDiscoveryWalk(w http.ResponseWriter, r *http.Request) {
 		writeDiscoveryError(w, http.StatusBadRequest, err)
 		return
 	}
-	req = applyDiscoveryDefaults(req)
+	req = s.applyDiscoveryDefaults(req)
 	result, err := discovery.WalkInterfaces(req.Address, req.Port, req.Community, 15*time.Second)
 	if err != nil {
 		writeDiscoverySNMPError(w, err)
@@ -150,11 +150,22 @@ func (s *Server) handleDiscoveryCommit(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(result)
 }
 
-func applyDiscoveryDefaults(req discoveryRequest) discoveryRequest {
+func (s *Server) applyDiscoveryDefaults(req discoveryRequest) discoveryRequest {
 	req.Address = strings.TrimSpace(req.Address)
 	req.Community = strings.TrimSpace(req.Community)
 	if req.Community == "" {
-		req.Community = strings.TrimSpace(os.Getenv("SNMP_COMMUNITY"))
+		envName := "SNMP_COMMUNITY"
+		s.reloadMu.RLock()
+		if s.config != nil {
+			if configured := strings.TrimSpace(s.config.DesiredState.Global.SNMP.CommunityEnv); configured != "" {
+				envName = configured
+			}
+		}
+		s.reloadMu.RUnlock()
+		req.Community = strings.TrimSpace(os.Getenv(envName))
+		if req.Community == "" && envName != "SNMP_COMMUNITY" {
+			req.Community = strings.TrimSpace(os.Getenv("SNMP_COMMUNITY"))
+		}
 	}
 	if req.Port == 0 {
 		req.Port = 161

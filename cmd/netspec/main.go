@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"io"
@@ -54,6 +55,7 @@ func main() {
 
 	// Resolve config directory
 	configDir := filepath.Dir(*configPath)
+	loadDotEnvIfPresent(configDir)
 
 	// Load configuration
 	cfg, err := config.LoadConfig(*configPath)
@@ -334,6 +336,56 @@ func main() {
 
 	cancel()
 	logger.Info().Msg("NetSpec stopped")
+}
+
+func loadDotEnvIfPresent(configDir string) {
+	candidates := []string{
+		filepath.Join(configDir, ".env"),
+		filepath.Join(".", ".env"),
+	}
+	seen := map[string]struct{}{}
+	for _, p := range candidates {
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		loadEnvFileNoOverride(p)
+	}
+}
+
+func loadEnvFileNoOverride(path string) {
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		kv := strings.SplitN(line, "=", 2)
+		if len(kv) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(kv[0])
+		if key == "" {
+			continue
+		}
+		if _, exists := os.LookupEnv(key); exists {
+			continue
+		}
+		val := strings.TrimSpace(kv[1])
+		if len(val) >= 2 {
+			if (strings.HasPrefix(val, "\"") && strings.HasSuffix(val, "\"")) ||
+				(strings.HasPrefix(val, "'") && strings.HasSuffix(val, "'")) {
+				val = val[1 : len(val)-1]
+			}
+		}
+		_ = os.Setenv(key, val)
+	}
 }
 
 func resolveDeviceForEvent(cfg *config.Config, event collector.PushTelemetryEvent) (string, config.DeviceConfig, bool) {
