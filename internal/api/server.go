@@ -185,6 +185,11 @@ func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 
 	alerts := s.alertEngine.GetActiveAlerts()
 	sort.SliceStable(alerts, func(i, j int) bool {
+		iSeverity := alertSeverityRank(alerts[i].Severity)
+		jSeverity := alertSeverityRank(alerts[j].Severity)
+		if iSeverity != jSeverity {
+			return iSeverity < jSeverity
+		}
 		if alerts[i].Device != alerts[j].Device {
 			return alerts[i].Device < alerts[j].Device
 		}
@@ -505,6 +510,11 @@ func (s *Server) handleWebUI(w http.ResponseWriter, r *http.Request) {
 	alerts := s.alertEngine.GetActiveAlerts()
 	data.AlertCount = len(alerts)
 	sort.SliceStable(alerts, func(i, j int) bool {
+		iSeverity := alertSeverityRank(alerts[i].Severity)
+		jSeverity := alertSeverityRank(alerts[j].Severity)
+		if iSeverity != jSeverity {
+			return iSeverity < jSeverity
+		}
 		if alerts[i].Device != alerts[j].Device {
 			return alerts[i].Device < alerts[j].Device
 		}
@@ -726,6 +736,19 @@ func formatDuration(d time.Duration) string {
 func reverseLogEntries(entries []webui.LogEntry) {
 	for i, j := 0, len(entries)-1; i < j; i, j = i+1, j-1 {
 		entries[i], entries[j] = entries[j], entries[i]
+	}
+}
+
+func alertSeverityRank(severity string) int {
+	switch strings.ToLower(strings.TrimSpace(severity)) {
+	case "critical":
+		return 0
+	case "warning":
+		return 1
+	case "info":
+		return 2
+	default:
+		return 3
 	}
 }
 
