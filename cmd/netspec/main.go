@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -23,7 +24,6 @@ import (
 	"github.com/netspec/netspec/internal/version"
 	"github.com/netspec/netspec/internal/webui"
 	"github.com/rs/zerolog"
-	"sync"
 )
 
 func main() {
@@ -65,7 +65,9 @@ func main() {
 	}
 
 	logger.Info().
-		Int("device_count", len(cfg.DesiredState.Devices)).
+		Int("device_count", cfg.TotalDeviceCount()).
+		Int("monolithic_device_count", cfg.MonolithicDeviceCount).
+		Int("split_device_count", cfg.SplitDeviceCount).
 		Msg("Configuration loaded")
 
 	// Create notifier
@@ -80,25 +82,13 @@ func main() {
 	// Create evaluator
 	eval := evaluator.NewEvaluator(cfg, logger)
 
-	// Create collectors for each device
-	collectors := make(map[string]*collector.Collector)
-	collectorsMu := sync.RWMutex{}
 	var pushIngestor *collector.PushIngestor
-	unknownTelemetryMu := sync.Mutex{}
+	var unknownTelemetryMu sync.Mutex
 	unknownTelemetryCount := map[string]uint64{}
 	unknownTelemetryLast := map[string]time.Time{}
+	unknownTelemetryAddress := map[string]string{}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
-	// Get credentials (simplified for MVP - in production, use vault integration)
-	username := os.Getenv("GNMI_USERNAME")
-	if username == "" {
-		username = "gnmi-monitor"
-	}
-	password := os.Getenv("GNMI_PASSWORD")
-	if password == "" && cfg.DesiredState.Global.TelemetryMode == "gnmi_pull" {
-		logger.Fatal().Msg("GNMI_PASSWORD environment variable is required")
-	}
 
 	snmpCommunity := os.Getenv(cfg.DesiredState.Global.SNMP.CommunityEnv)
 	if (cfg.DesiredState.Global.TelemetryMode == "snmp_validate_only" ||
@@ -108,163 +98,7 @@ func main() {
 			Msg("SNMP mode requires community environment variable")
 	}
 
-	// Helper function to start a collector (defined before first use).
-	// Launches both the connection-management goroutine and the
-	// update-processing goroutine so that reloaded collectors also
-	// have their updates consumed.
-	startCollector := func(deviceName string, deviceCfg config.DeviceConfig, cfg *config.Config, username, password string) {
-		collectorsMu.Lock()
-		defer collectorsMu.Unlock()
-
-		// Close old collector if one exists for this device
-		if existing, ok := collectors[deviceName]; ok && existing != nil {
-			existing.Close()
-		}
-
-		logger.Info().
-			Str("device", deviceName).
-			Str("address", deviceCfg.Address).
-			Int("port", cfg.DesiredState.Global.GNMIPort).
-			Msg("Creating collector")
-
-		cred := cfg.ResolveCredentials(deviceName)
-		credUsername := cred.Username
-		credPassword := ""
-		if cred.PasswordEnv != "" {
-			credPassword = os.Getenv(cred.PasswordEnv)
-		}
-		if credUsername == "" {
-			credUsername = username
-		}
-		if credPassword == "" {
-			credPassword = password
-		}
-
-		col := collector.NewCollector(
-			deviceCfg.Address,
-			credUsername,
-			credPassword,
-			cfg.DesiredState.Global.GNMIPort,
-			logger.With().Str("device", deviceName).Logger(),
-		)
-
-		collectors[deviceName] = col
-
-		// Connection goroutine: connect with retry and auto-reconnect.
-		// Exits when either the main ctx or the collector's own ctx is
-		// cancelled (the latter happens on Close() during reload).
-		go func(name string, addr string, c *collector.Collector) {
-			logger.Info().
-				Str("device", name).
-				Str("address", addr).
-				Msg("Starting connection goroutine")
-
-			reconnectDelay := 5 * time.Second
-			const maxReconnectDelay = 120 * time.Second
-
-			for {
-				if err := c.Connect(); err != nil {
-					// If the collector was intentionally closed, exit silently
-					if c.Done() != nil {
-						select {
-						case <-c.Done():
-							logger.Debug().Str("device", name).Msg("Collector closed, exiting connection goroutine")
-							return
-						default:
-						}
-					}
-
-					logger.Error().
-						Err(err).
-						Str("device", name).
-						Dur("retry_in", reconnectDelay).
-						Msg("Failed to connect, will retry")
-
-					select {
-					case <-ctx.Done():
-						return
-					case <-c.Done():
-						logger.Debug().Str("device", name).Msg("Collector closed during backoff, exiting")
-						return
-					case <-time.After(reconnectDelay):
-					}
-
-					reconnectDelay = reconnectDelay * 2
-					if reconnectDelay > maxReconnectDelay {
-						reconnectDelay = maxReconnectDelay
-					}
-					continue
-				}
-
-				// Connection succeeded, reset reconnect delay
-				reconnectDelay = 5 * time.Second
-
-				logger.Info().
-					Str("device", name).
-					Msg("Connection established, monitoring for errors")
-
-				// Monitor connection health and reconnect if lost
-				select {
-				case <-ctx.Done():
-					return
-				case <-c.Done():
-					logger.Debug().Str("device", name).Msg("Collector closed while connected, exiting")
-					return
-				case err := <-c.Errors():
-					if err != nil {
-						// Check if this error is from an intentional close
-						select {
-						case <-c.Done():
-							logger.Debug().Str("device", name).Msg("Collector closed (error during shutdown), exiting")
-							return
-						default:
-						}
-
-						logger.Warn().
-							Err(err).
-							Str("device", name).
-							Msg("Connection lost, will reconnect after cooldown")
-
-						select {
-						case <-ctx.Done():
-							return
-						case <-c.Done():
-							return
-						case <-time.After(5 * time.Second):
-						}
-					}
-				}
-			}
-		}(deviceName, deviceCfg.Address, col)
-
-		// Update-processing goroutine: evaluates telemetry against desired
-		// state and feeds changes into the alert engine.
-		go func(name string, c *collector.Collector) {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-c.Done():
-					return
-				case notification := <-c.Updates():
-					changes := eval.EvaluateNotification(name, notification)
-					for _, change := range changes {
-						alertEngine.ProcessStateChange(change)
-					}
-				}
-			}
-		}(deviceName, col)
-	}
-
 	switch strings.ToLower(cfg.DesiredState.Global.TelemetryMode) {
-	case "gnmi_pull":
-		logger.Info().
-			Int("device_count", len(cfg.DesiredState.Devices)).
-			Msg("Starting gNMI collectors for devices")
-
-		for deviceName, deviceCfg := range cfg.DesiredState.Devices {
-			startCollector(deviceName, deviceCfg, cfg, username, password)
-		}
 	case "snmp_validate_only":
 		logger.Info().
 			Int("device_count", len(cfg.DesiredState.Devices)).
@@ -323,29 +157,46 @@ func main() {
 			ingestToken,
 			logger.With().Str("component", "push-ingestor").Logger(),
 			func(event collector.PushTelemetryEvent) {
-				deviceCfg, ok := cfg.DesiredState.Devices[event.Device]
+				deviceName, deviceCfg, ok := resolveDeviceForEvent(cfg, event)
 				if !ok {
 					unknownTelemetryMu.Lock()
 					unknownTelemetryCount[event.Device]++
 					unknownTelemetryLast[event.Device] = time.Now()
+					if addr := eventAddressHint(event); addr != "" {
+						unknownTelemetryAddress[event.Device] = addr
+					}
 					unknownTelemetryMu.Unlock()
 					logger.Warn().Str("device", event.Device).Msg("Ignoring push telemetry for unknown device")
 					return
 				}
+				unknownTelemetryMu.Lock()
+				delete(unknownTelemetryCount, event.Device)
+				delete(unknownTelemetryLast, event.Device)
+				delete(unknownTelemetryAddress, event.Device)
+				delete(unknownTelemetryCount, deviceName)
+				delete(unknownTelemetryLast, deviceName)
+				delete(unknownTelemetryAddress, deviceName)
+				if addr := strings.TrimSpace(deviceCfg.Address); addr != "" {
+					delete(unknownTelemetryCount, addr)
+					delete(unknownTelemetryLast, addr)
+					delete(unknownTelemetryAddress, addr)
+				}
+				unknownTelemetryMu.Unlock()
+
 				matchedIface, ifaceCfg, ok := resolveInterfaceConfig(deviceCfg.Interfaces, event.Interface)
 				if !ok {
 					logger.Debug().
-						Str("device", event.Device).
+						Str("device", deviceName).
 						Str("interface", event.Interface).
 						Msg("Ignoring push telemetry for untracked interface")
 					return
 				}
 
-				snapshot, err := validator.PollInterface(event.Device, deviceCfg, matchedIface, ifaceCfg)
+				snapshot, err := validator.PollInterface(deviceName, deviceCfg, matchedIface, ifaceCfg)
 				if err != nil {
 					logger.Warn().
 						Err(err).
-						Str("device", event.Device).
+						Str("device", deviceName).
 						Str("interface", matchedIface).
 						Msg("SNMP validation failed for push event; using ingested status")
 					snapshot = collector.InterfaceSnapshot{
@@ -359,7 +210,7 @@ func main() {
 				if err != nil {
 					validationSource = "telemetry"
 				}
-				changes := eval.EvaluateInterfaceSnapshotWithSource(event.Device, snapshot.Interface, snapshot.OperStatus, snapshot.AdminStatus, validationSource)
+				changes := eval.EvaluateInterfaceSnapshotWithSource(deviceName, snapshot.Interface, snapshot.OperStatus, snapshot.AdminStatus, validationSource)
 				for _, change := range changes {
 					alertEngine.ProcessStateChange(change)
 				}
@@ -390,11 +241,6 @@ func main() {
 	apiServer.SetLogBuffer(logBuffer)
 	apiServer.SetConfig(cfg, *configPath)
 	apiServer.SetVersion(version.GetVersion(), version.GetCommit(), version.GetBuildDate())
-	apiServer.SetCollectorGetter(func(deviceName string) *collector.Collector {
-		collectorsMu.RLock()
-		defer collectorsMu.RUnlock()
-		return collectors[deviceName]
-	})
 	apiServer.SetEvaluatorGetter(func() *evaluator.Evaluator {
 		return eval
 	})
@@ -415,8 +261,12 @@ func main() {
 		unknown := make([]api.UnknownTelemetryDevice, 0, len(unknownTelemetryCount))
 		for dev, cnt := range unknownTelemetryCount {
 			wizardURL := "/wizard?device_key=" + url.QueryEscape(dev)
-			if net.ParseIP(dev) != nil {
-				wizardURL = "/wizard?address=" + url.QueryEscape(dev) + "&device_key=" + url.QueryEscape(dev)
+			addr := strings.TrimSpace(unknownTelemetryAddress[dev])
+			if addr == "" && net.ParseIP(dev) != nil {
+				addr = dev
+			}
+			if addr != "" {
+				wizardURL = "/wizard?address=" + url.QueryEscape(addr) + "&device_key=" + url.QueryEscape(dev)
 			}
 			unknown = append(unknown, api.UnknownTelemetryDevice{
 				Device:     dev,
@@ -453,57 +303,9 @@ func main() {
 		eval = evaluator.NewEvaluator(cfg, logger)
 		go alertEngine.Run()
 
-		if strings.ToLower(newCfg.DesiredState.Global.TelemetryMode) == "gnmi_pull" {
-			// Stop collectors for removed devices
-			collectorsMu.Lock()
-			for name, col := range collectors {
-				if _, exists := newCfg.DesiredState.Devices[name]; !exists {
-					logger.Info().Str("device", name).Msg("Device removed from config, stopping collector")
-					if col != nil {
-						col.Close()
-					}
-					delete(collectors, name)
-				}
-			}
-			collectorsMu.Unlock()
-
-			// Start/restart collectors for all devices (handles new devices and IP changes)
-			for deviceName, deviceCfg := range newCfg.DesiredState.Devices {
-				collectorsMu.RLock()
-				existing := collectors[deviceName]
-				collectorsMu.RUnlock()
-
-				// Check if device is new or address changed
-				needsRestart := existing == nil
-				if existing != nil {
-					// For existing collectors, always restart to pick up any config changes
-					// (we can't easily compare addresses, so restart is safer)
-					logger.Info().Str("device", deviceName).Msg("Restarting collector for device")
-					existing.Close()
-					needsRestart = true
-				}
-
-				if needsRestart {
-					startCollector(deviceName, deviceCfg, newCfg, username, password)
-				}
-			}
-		} else {
-			// In non-gNMI modes, ensure no existing gNMI collector goroutines continue
-			// running after a config reload.
-			collectorsMu.Lock()
-			for name, col := range collectors {
-				logger.Info().Str("device", name).Msg("Stopping collector for non-gNMI telemetry mode")
-				if col != nil {
-					col.Close()
-				}
-				delete(collectors, name)
-			}
-			collectorsMu.Unlock()
-		}
-
 		logger.Info().
 			Int("device_count", len(newCfg.DesiredState.Devices)).
-			Msg("Configuration reloaded and collectors updated")
+			Msg("Configuration reloaded")
 
 		return newCfg, nil
 	})
@@ -530,18 +332,51 @@ func main() {
 	<-sigChan
 	logger.Info().Msg("Shutting down...")
 
-	// Close all collectors
-	for name, col := range collectors {
-		if err := col.Close(); err != nil {
-			logger.Error().
-				Err(err).
-				Str("device", name).
-				Msg("Error closing collector")
-		}
-	}
-
 	cancel()
 	logger.Info().Msg("NetSpec stopped")
+}
+
+func resolveDeviceForEvent(cfg *config.Config, event collector.PushTelemetryEvent) (string, config.DeviceConfig, bool) {
+	if dev, ok := cfg.DesiredState.Devices[event.Device]; ok {
+		return event.Device, dev, true
+	}
+	eventDevice := strings.TrimSpace(event.Device)
+	for name, dev := range cfg.DesiredState.Devices {
+		if strings.EqualFold(name, eventDevice) {
+			return name, dev, true
+		}
+	}
+	eventAddr := strings.TrimSpace(eventAddressHint(event))
+	for name, dev := range cfg.DesiredState.Devices {
+		addr := strings.TrimSpace(dev.Address)
+		if addr == "" {
+			continue
+		}
+		if strings.EqualFold(addr, eventDevice) || (eventAddr != "" && strings.EqualFold(addr, eventAddr)) {
+			return name, dev, true
+		}
+	}
+	return "", config.DeviceConfig{}, false
+}
+
+func eventAddressHint(event collector.PushTelemetryEvent) string {
+	if ip := net.ParseIP(strings.TrimSpace(event.Device)); ip != nil {
+		return ip.String()
+	}
+	source := strings.TrimSpace(event.Source)
+	if source == "" {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(source)
+	if err == nil {
+		if ip := net.ParseIP(host); ip != nil {
+			return ip.String()
+		}
+	}
+	if ip := net.ParseIP(source); ip != nil {
+		return ip.String()
+	}
+	return ""
 }
 
 func resolveInterfaceConfig(

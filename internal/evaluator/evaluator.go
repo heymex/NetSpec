@@ -393,17 +393,6 @@ func (e *Evaluator) evaluateChannelMembers(deviceName, channelName string, iface
 	if ifaceCfg.Members == nil || len(ifaceCfg.Members.Required) == 0 {
 		return nil
 	}
-	memberPolicy := ifaceCfg.MemberPolicy
-	mode := "all_active"
-	minimum := len(ifaceCfg.Members.Required)
-	if memberPolicy != nil {
-		if memberPolicy.Mode != "" {
-			mode = memberPolicy.Mode
-		}
-		if mode == "min_active" && memberPolicy.Minimum > 0 {
-			minimum = memberPolicy.Minimum
-		}
-	}
 
 	e.mu.RLock()
 	active := 0
@@ -419,39 +408,51 @@ func (e *Evaluator) evaluateChannelMembers(deviceName, channelName string, iface
 	}
 	e.mu.RUnlock()
 
-	if mode == "all_active" && len(downMembers) > 0 {
-		severity := severityForAlert(ifaceCfg, "member_down", "critical")
-		return []StateChange{{
-			Device:    deviceName,
-			Interface: channelName,
-			AlertType: alertTypeMemberDown,
-			Severity:  severity,
-			Message:   fmt.Sprintf("port-channel %s members down: %s", channelName, strings.Join(downMembers, ", ")),
-			RelatedState: map[string]string{
-				"down_members": strings.Join(downMembers, ","),
-			},
-		}}
-	}
+	totalMembers := len(ifaceCfg.Members.Required)
+	downCount := len(downMembers)
 
-	if mode == "min_active" && active < minimum {
+	// Logical port-channel down should always be critical.
+	if normalizeState(ifaceState.OperStatus) == "down" {
 		severity := severityForAlert(ifaceCfg, "channel_down", "critical")
 		return []StateChange{{
 			Device:    deviceName,
 			Interface: channelName,
 			AlertType: alertTypeChannelDown,
 			Severity:  severity,
-			Message:   fmt.Sprintf("port-channel %s active members %d below minimum %d", channelName, active, minimum),
+			Message:   fmt.Sprintf("port-channel %s is down", channelName),
 			RelatedState: map[string]string{
-				"active_members": fmt.Sprintf("%d", active),
-				"minimum":        fmt.Sprintf("%d", minimum),
+				"actual_state": normalizeState(ifaceState.OperStatus),
 			},
 		}}
 	}
 
-	return nil
+	if downCount == 0 {
+		return nil
+	}
+
+	severity := "warning"
+	// >=50% members down => critical.
+	if downCount*2 >= totalMembers {
+		severity = "critical"
+	}
+	if cfgSeverity := strings.TrimSpace(ifaceCfg.Alerts.MemberDown); cfgSeverity != "" {
+		severity = cfgSeverity
+	}
+
+	return []StateChange{{
+		Device:    deviceName,
+		Interface: channelName,
+		AlertType: alertTypeMemberDown,
+		Severity:  severity,
+		Message:   fmt.Sprintf("port-channel %s has %d/%d members down: %s", channelName, downCount, totalMembers, strings.Join(downMembers, ", ")),
+		RelatedState: map[string]string{
+			"active_members": fmt.Sprintf("%d", active),
+			"total_members":  fmt.Sprintf("%d", totalMembers),
+			"down_members":   strings.Join(downMembers, ","),
+		},
+	}}
 }
 
-// channelNamesForMember finds port-channels that include a given member interface
 func (e *Evaluator) channelNamesForMember(deviceCfg config.DeviceConfig, member string) []string {
 	var channels []string
 	for ifaceName, ifaceCfg := range deviceCfg.Interfaces {

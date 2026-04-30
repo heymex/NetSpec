@@ -490,6 +490,21 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
             setTimeout(() => toast.className = 'toast', 3000);
         }
 
+        function formatLocalTimestamp(value, withDate) {
+            const d = new Date(value);
+            if (Number.isNaN(d.getTime())) return value;
+            if (withDate) return d.toLocaleString();
+            return d.toLocaleTimeString();
+        }
+
+        function localizeTimestamps(root) {
+            (root || document).querySelectorAll('[data-local-ts]').forEach(el => {
+                const raw = el.getAttribute('data-local-ts');
+                const mode = el.getAttribute('data-local-ts-mode') || 'datetime';
+                el.textContent = formatLocalTimestamp(raw, mode !== 'time');
+            });
+        }
+
         async function reloadConfig() {
             const btn = event.target;
             btn.disabled = true;
@@ -510,6 +525,7 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
             btn.textContent = '↻ Reload Config';
         }
 
+        localizeTimestamps(document);
         // Auto-refresh logs every 5 seconds
         setInterval(() => {
             fetch('/api/logs')
@@ -520,7 +536,7 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                         const wasAtBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + 50;
                         container.innerHTML = data.entries.map(e => 
                             '<div class="log-entry log-' + e.level + '">' +
-                            '<span class="log-time">' + new Date(e.timestamp).toLocaleTimeString() + '</span>' +
+                            '<span class="log-time">' + formatLocalTimestamp(e.timestamp, false) + '</span>' +
                             '<span class="log-level">' + e.level + '</span>' +
                             '<span class="log-message">' + escapeHtml(e.message) + '</span>' +
                             '</div>'
@@ -651,7 +667,7 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                         {{if .Telemetry.LastEventAt.IsZero}}
                         <div style="font-size:0.75rem;color:var(--accent-yellow);">No accepted telemetry events yet.</div>
                         {{else}}
-                        <div style="font-size:0.75rem;color:var(--text-secondary);">Last accepted: {{.Telemetry.LastEventAt.Format "2006-01-02 15:04:05"}}</div>
+                        <div style="font-size:0.75rem;color:var(--text-secondary);">Last accepted: <span data-local-ts="{{.Telemetry.LastEventAt.Format "2006-01-02T15:04:05Z07:00"}}" data-local-ts-mode="datetime"></span></div>
                         {{end}}
                         {{if .Telemetry.UnknownDevices}}
                         <div style="margin-top:0.6rem; border-top:1px solid var(--border-color); padding-top:0.6rem;">
@@ -666,10 +682,6 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                         {{end}}
                     </div>
                     <div class="config-details">
-                        <div class="config-row">
-                            <span class="config-key">gNMI Port</span>
-                            <span class="config-value">{{.Config.GNMIPort}}</span>
-                        </div>
                         <div class="config-row">
                             <span class="config-key">Collection Interval</span>
                             <span class="config-value">{{.Config.CollectionInterval}}</span>
@@ -713,7 +725,7 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                     <div class="log-container">
                         {{range .Logs}}
                         <div class="log-entry {{levelClass .Level}}">
-                            <span class="log-time">{{.Timestamp.Format "15:04:05"}}</span>
+                            <span class="log-time" data-local-ts="{{.Timestamp.Format "2006-01-02T15:04:05Z07:00"}}" data-local-ts-mode="time"></span>
                             <span class="log-level">{{.Level}}</span>
                             <span class="log-message">{{.Message}}</span>
                         </div>
@@ -919,7 +931,9 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                         monitor: false, // default to monitoring nothing until explicitly selected
                         alias: it.alias || '',
                         desired_state: (it.oper_status === 'up' ? 'up' : 'down'),
-                        alert_severity: 'warning'
+                        alert_severity: 'warning',
+                        is_port_channel: !!it.is_port_channel,
+                        members: Array.isArray(it.channel_members) ? it.channel_members : []
                     };
                 });
                 renderIfRows();
@@ -936,7 +950,9 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                     monitor: false,
                     alias: it.alias || '',
                     desired_state: (it.oper_status === 'up' ? 'up' : 'down'),
-                    alert_severity: 'warning'
+                    alert_severity: 'warning',
+                    is_port_channel: !!it.is_port_channel,
+                    members: Array.isArray(it.channel_members) ? it.channel_members : []
                 };
                 var isMonitored = !!sel.monitor;
                 if(q && (it.name||'').toLowerCase().indexOf(q)===-1 && (it.alias||'').toLowerCase().indexOf(q)===-1) return;
@@ -999,7 +1015,9 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                     monitor: true,
                     desired_state: sel.desired_state || (src.oper_status === 'up' ? 'up' : 'down'),
                     admin_state: 'enabled',
-                    alert_severity: sel.alert_severity || 'warning'
+                    alert_severity: sel.alert_severity || 'warning',
+                    is_port_channel: !!sel.is_port_channel,
+                    members: Array.isArray(sel.members) ? sel.members : []
                 });
             });
             if (payload.length === 0) {
@@ -1260,7 +1278,7 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
 
         .interface-header {
             display: grid;
-            grid-template-columns: 2.2fr 0.8fr 1fr 1fr;
+            grid-template-columns: 2.1fr 0.8fr 1fr 1fr 2.2fr;
             gap: 1rem;
             padding: 0.75rem 1.25rem;
             font-size: 0.75rem;
@@ -1271,11 +1289,39 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
 
         .interface-item {
             display: grid;
-            grid-template-columns: 2.2fr 0.8fr 1fr 1fr;
+            grid-template-columns: 2.1fr 0.8fr 1fr 1fr 2.2fr;
             gap: 1rem;
             align-items: center;
             padding: 1rem 1.25rem;
             border-bottom: 1px solid var(--border-color);
+        }
+        .iface-edit {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0.35rem;
+            font-size: 0.72rem;
+        }
+        .iface-edit label {
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 0.3rem;
+            margin-right: 0.5rem;
+        }
+        .iface-edit select {
+            width: 100%;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 0.22rem 0.35rem;
+            font-size: 0.72rem;
+        }
+        .iface-edit .save-btn {
+            grid-column: 1 / span 2;
+            justify-self: start;
+            padding: 0.28rem 0.6rem;
+            font-size: 0.72rem;
         }
 
         .interface-item:last-child {
@@ -1381,13 +1427,10 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
         <div class="card">
             <div class="card-header">
                 <span class="card-title">📡 Connection Status</span>
-                <div style="display: flex; gap: 0.75rem; align-items: center;">
-                    <span class="status-badge {{if .Device.Connected}}connected{{else}}disconnected{{end}}">
-                        <span class="status-dot {{if .Device.Connected}}connected{{else}}disconnected{{end}}"></span>
-                        {{if .Device.Connected}}Connected{{else}}Disconnected{{end}}
-                    </span>
-                    <button class="btn btn-secondary" onclick="testConnection()" id="test-btn">🔍 Test Connection</button>
-                </div>
+                <span class="status-badge connected">
+                    <span class="status-dot connected"></span>
+                    Active
+                </span>
             </div>
             <div class="card-body">
                 <div class="info-grid">
@@ -1398,59 +1441,44 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                     <div class="info-item">
                         <span class="info-label">Connected Since</span>
                         <span class="info-value">
-                            {{if .Device.ConnectedSince.IsZero}}Never{{else}}{{.Device.ConnectedSince.Format "2006-01-02 15:04:05"}}{{end}}
+                            {{if .Device.LastTelemetryValidationAt.IsZero}}No telemetry yet{{else}}<span data-local-ts="{{.Device.LastTelemetryValidationAt.Format "2006-01-02T15:04:05Z07:00"}}" data-local-ts-mode="datetime"></span>{{end}}
                         </span>
                     </div>
                     <div class="info-item">
-                        <span class="info-label">Reconnect Count</span>
-                        <span class="info-value">{{.Device.ReconnectCount}}</span>
+                        <span class="info-label">SNMP-Validated Interfaces</span>
+                        <span class="info-value">{{len .Device.Interfaces}}</span>
                     </div>
                 </div>
-                {{if .Device.LastError}}
-                <div style="margin-top: 1rem; padding: 0.75rem; background: rgba(248, 81, 73, 0.1); border-left: 3px solid var(--accent-red); border-radius: 4px;">
-                    <strong style="color: var(--accent-red);">Last Error:</strong>
-                    <span style="color: var(--text-secondary); margin-left: 0.5rem;">{{.Device.LastError}}</span>
-                </div>
-                {{end}}
-                <div id="test-result" style="display: none; margin-top: 1rem; padding: 0.75rem; border-left: 3px solid var(--accent-blue); border-radius: 4px;"></div>
             </div>
         </div>
 
         <div class="card">
             <div class="card-header">
                 <span class="card-title">📊 Subscription Status</span>
-                <span class="status-badge {{if .Device.SyncReceived}}connected{{else}}disconnected{{end}}">
-                    {{if .Device.SyncReceived}}Synced{{else}}Waiting{{end}}
+                <span class="status-badge connected">
+                    Runtime State
                 </span>
             </div>
             <div class="card-body">
                 <div class="info-grid">
                     <div class="info-item">
-                        <span class="info-label">Updates Received</span>
-                        <span class="info-value" style="{{if gt .Device.UpdateCount 0}}color: var(--accent-green);{{else}}color: var(--accent-yellow);{{end}}">{{.Device.UpdateCount}}</span>
+                        <span class="info-label">Interfaces</span>
+                        <span class="info-value" style="color: var(--accent-green);">{{len .Device.Interfaces}}</span>
                     </div>
                     <div class="info-item">
-                        <span class="info-label">Last Update</span>
+                        <span class="info-label">Latest Telemetry Validation</span>
                         <span class="info-value">
-                            {{if .Device.LastUpdate.IsZero}}Never{{else}}{{.Device.LastUpdate.Format "2006-01-02 15:04:05"}}{{end}}
+                            {{if .Device.LastTelemetryValidationAt.IsZero}}Never{{else}}<span data-local-ts="{{.Device.LastTelemetryValidationAt.Format "2006-01-02T15:04:05Z07:00"}}" data-local-ts-mode="datetime"></span>{{end}}
                         </span>
                     </div>
                     <div class="info-item">
-                        <span class="info-label">Sync Received</span>
-                        <span class="info-value">{{if .Device.SyncReceived}}Yes{{else}}No{{end}}</span>
+                        <span class="info-label">Latest SNMP Validation</span>
+                        <span class="info-value">{{if .Device.LastSNMPValidationAt.IsZero}}Never{{else}}<span data-local-ts="{{.Device.LastSNMPValidationAt.Format "2006-01-02T15:04:05Z07:00"}}" data-local-ts-mode="datetime"></span>{{end}}</span>
                     </div>
                 </div>
-                {{if .Device.LastPath}}
-                <div style="margin-top: 1rem; padding: 0.75rem; background: var(--bg-primary); border-radius: 4px; font-family: 'JetBrains Mono', monospace; font-size: 0.8125rem;">
-                    <div style="color: var(--text-secondary); margin-bottom: 0.25rem;">Last received path:</div>
-                    <div style="color: var(--accent-blue);">{{.Device.LastPath}}</div>
-                    <div style="color: var(--accent-green); margin-top: 0.25rem;">= {{.Device.LastValue}}</div>
-                </div>
-                {{else}}
                 <div style="margin-top: 1rem; padding: 0.75rem; background: rgba(210, 153, 34, 0.1); border-left: 3px solid var(--accent-yellow); border-radius: 4px; color: var(--text-secondary);">
-                    No gNMI updates received yet. If the connection is established, interface state changes will appear here.
+                    Interface runtime details are sourced from SNMP validation and push telemetry events.
                 </div>
-                {{end}}
             </div>
         </div>
 
@@ -1466,10 +1494,11 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                     <span>Live State</span>
                     <span>Last SNMP Validation</span>
                     <span>Last Telemetry Validation</span>
+                    <span>Interface Policy</span>
                 </div>
                 <ul class="interface-list">
                     {{range .Device.Interfaces}}
-                    <li class="interface-item">
+                    <li class="interface-item" data-iface-name="{{.Name}}">
                         <div class="interface-info">
                             <h4>{{.Name}}</h4>
                             <div class="interface-meta">
@@ -1482,10 +1511,30 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                             {{if .OperStatus}}{{.OperStatus}}{{else}}unknown{{end}}
                         </span>
                         <span class="iface-ts">
-                            {{if .LastSNMPValidationAt.IsZero}}-{{else}}{{.LastSNMPValidationAt.Format "2006-01-02 15:04:05"}}{{end}}
+                            {{if .LastSNMPValidationAt.IsZero}}-{{else}}<span data-local-ts="{{.LastSNMPValidationAt.Format "2006-01-02T15:04:05Z07:00"}}" data-local-ts-mode="datetime"></span>{{end}}
                         </span>
                         <span class="iface-ts">
-                            {{if .LastTelemetryValidationAt.IsZero}}-{{else}}{{.LastTelemetryValidationAt.Format "2006-01-02 15:04:05"}}{{end}}
+                            {{if .LastTelemetryValidationAt.IsZero}}-{{else}}<span data-local-ts="{{.LastTelemetryValidationAt.Format "2006-01-02T15:04:05Z07:00"}}" data-local-ts-mode="datetime"></span>{{end}}
+                        </span>
+                        <span class="iface-edit">
+                            <label><input type="checkbox" class="if-mon" {{if .Monitor}}checked{{end}}>Monitored</label>
+                            <select class="if-desired">
+                                <option value="up" {{if eq .DesiredState "up"}}selected{{end}}>Desired: up</option>
+                                <option value="down" {{if eq .DesiredState "down"}}selected{{end}}>Desired: down</option>
+                            </select>
+                            <select class="if-admin">
+                                <option value="enabled" {{if eq .AdminState "enabled"}}selected{{end}}>Admin: enabled</option>
+                                <option value="disabled" {{if eq .AdminState "disabled"}}selected{{end}}>Admin: disabled</option>
+                            </select>
+                            <select class="if-severity">
+                                <option value="info" {{if eq .Alerts.StateMismatch "info"}}selected{{end}}>Alert: info</option>
+                                <option value="warning" {{if or (eq .Alerts.StateMismatch "") (eq .Alerts.StateMismatch "warning")}}selected{{end}}>Alert: warning</option>
+                                <option value="critical" {{if eq .Alerts.StateMismatch "critical"}}selected{{end}}>Alert: critical</option>
+                            </select>
+                            <button
+                                class="btn btn-secondary save-btn"
+                                onclick='saveInterfacePolicy(this)'
+                            >Save</button>
                         </span>
                     </li>
                     {{end}}
@@ -1507,7 +1556,7 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                 <div class="log-container">
                     {{range .Device.Logs}}
                     <div class="log-entry log-{{.Level}}">
-                        <span class="log-time">{{.Timestamp.Format "15:04:05"}}</span>
+                        <span class="log-time" data-local-ts="{{.Timestamp.Format "2006-01-02T15:04:05Z07:00"}}" data-local-ts-mode="time"></span>
                         <span class="log-level">{{.Level}}</span>
                         <span class="log-message">{{.Message}}</span>
                     </div>
@@ -1521,6 +1570,23 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
         </div>
     </div>
     <script>
+        function formatLocalTimestamp(value, withDate) {
+            const d = new Date(value);
+            if (Number.isNaN(d.getTime())) return value;
+            if (withDate) return d.toLocaleString();
+            return d.toLocaleTimeString();
+        }
+
+        function localizeTimestamps(root) {
+            (root || document).querySelectorAll('[data-local-ts]').forEach(el => {
+                const raw = el.getAttribute('data-local-ts');
+                const mode = el.getAttribute('data-local-ts-mode') || 'datetime';
+                el.textContent = formatLocalTimestamp(raw, mode !== 'time');
+            });
+        }
+
+        localizeTimestamps(document);
+
         // Auto-refresh device data every 5 seconds
         setInterval(() => {
             fetch('/api/devices/{{.Device.Name}}')
@@ -1532,7 +1598,7 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                         const wasAtBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + 50;
                         container.innerHTML = data.logs.map(e => 
                             '<div class="log-entry log-' + e.level + '">' +
-                            '<span class="log-time">' + new Date(e.timestamp).toLocaleTimeString() + '</span>' +
+                            '<span class="log-time">' + formatLocalTimestamp(e.timestamp, false) + '</span>' +
                             '<span class="log-level">' + e.level + '</span>' +
                             '<span class="log-message">' + escapeHtml(e.message) + '</span>' +
                             '</div>'
@@ -1553,49 +1619,36 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                 });
         }, 5000);
 
-        // Test connection button handler
-        async function testConnection() {
-            const btn = document.getElementById('test-btn');
-            const result = document.getElementById('test-result');
-            btn.disabled = true;
-            btn.textContent = '⏳ Testing...';
-            result.style.display = 'block';
-            result.style.background = 'rgba(88, 166, 255, 0.1)';
-            result.innerHTML = '<span style="color: var(--accent-blue);">Sending gNMI Capabilities request...</span>';
-
-            try {
-                const res = await fetch('/api/test/{{.Device.Name}}', { method: 'POST' });
-                const data = await res.json();
-                if (data.success) {
-                    result.style.background = 'rgba(63, 185, 80, 0.1)';
-                    result.style.borderColor = 'var(--accent-green)';
-                    result.innerHTML = '<strong style="color: var(--accent-green);">✓ Connection test passed</strong>' +
-                        '<div style="margin-top: 0.5rem; font-family: JetBrains Mono, monospace; font-size: 0.8125rem; color: var(--text-secondary);">' +
-                        'gNMI Version: ' + escapeHtml(data.gnmi_version) + '<br>' +
-                        'Supported Models: ' + data.model_count +
-                        '</div>';
-                } else {
-                    result.style.background = 'rgba(248, 81, 73, 0.1)';
-                    result.style.borderColor = 'var(--accent-red)';
-                    result.innerHTML = '<strong style="color: var(--accent-red);">✗ Connection test failed</strong>' +
-                        '<div style="margin-top: 0.5rem; font-size: 0.8125rem; color: var(--text-secondary);">' +
-                        escapeHtml(data.error) + '</div>';
-                }
-            } catch (e) {
-                result.style.background = 'rgba(248, 81, 73, 0.1)';
-                result.style.borderColor = 'var(--accent-red)';
-                result.innerHTML = '<strong style="color: var(--accent-red);">✗ Request failed</strong>' +
-                    '<div style="margin-top: 0.5rem; font-size: 0.8125rem; color: var(--text-secondary);">' +
-                    escapeHtml(e.message) + '</div>';
-            }
-            btn.disabled = false;
-            btn.textContent = '🔍 Test Connection';
-        }
-
         function escapeHtml(text) {
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
+        }
+
+        async function saveInterfacePolicy(buttonEl) {
+            const row = buttonEl.closest('[data-iface-name]');
+            if (!row) return;
+            const name = row.getAttribute('data-iface-name');
+            const nextDesired = row.querySelector('.if-desired').value;
+            const nextAdmin = row.querySelector('.if-admin').value;
+            const nextSeverity = row.querySelector('.if-severity').value;
+            const nextMonitor = row.querySelector('.if-mon').checked;
+            const res = await fetch('/api/devices/{{.Device.Name}}/interfaces/' + encodeURIComponent(name), {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    desired_state: (nextDesired || '').trim(),
+                    admin_state: (nextAdmin || '').trim(),
+                    alert_severity: (nextSeverity || '').trim(),
+                    monitor: nextMonitor
+                })
+            });
+            if (!res.ok) {
+                const txt = await res.text();
+                alert('Update failed: ' + txt);
+                return;
+            }
+            location.reload();
         }
     </script>
 </body>

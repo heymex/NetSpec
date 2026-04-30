@@ -17,6 +17,8 @@ type Interface struct {
 	Alias             string `json:"alias"`
 	Type              int    `json:"type"`
 	TypeLabel         string `json:"type_label"`
+	IsPortChannel     bool   `json:"is_port_channel"`
+	ChannelMembers    []string `json:"channel_members,omitempty"`
 	AdminStatus       string `json:"admin_status"`
 	OperStatus        string `json:"oper_status"`
 	AlreadyConfigured bool   `json:"already_configured"`
@@ -36,6 +38,8 @@ type CommitInterface struct {
 	DesiredState  string `json:"desired_state"`
 	AdminState    string `json:"admin_state"`
 	AlertSeverity string `json:"alert_severity"`
+	IsPortChannel bool   `json:"is_port_channel,omitempty"`
+	Members       []string `json:"members,omitempty"`
 }
 
 type CommitRequest struct {

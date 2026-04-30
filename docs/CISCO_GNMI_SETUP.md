@@ -265,8 +265,6 @@ devices:
 Set environment variables in your `.env` file:
 
 ```bash
-GNMI_USERNAME=netspec-monitor
-GNMI_PASSWORD=your-password-here
 SNMP_COMMUNITY=your-snmp-community
 ```
 
@@ -274,8 +272,7 @@ Use telemetry mode explicitly in `config/desired-state.yaml`:
 
 ```yaml
 global:
-  telemetry_mode: gnmi_pull            # or snmp_validate_only
-  gnmi_port: 9338
+  telemetry_mode: snmp_validate_only   # or telemetry_ingest_push
   snmp:
     version: 2c
     port: 161

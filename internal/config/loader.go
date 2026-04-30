@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -22,6 +24,15 @@ func LoadConfigDir(dir string) (*Config, error) {
 	if err := loadYAML(filepath.Join(dir, "desired-state.yaml"), &cfg.DesiredState); err != nil {
 		return nil, fmt.Errorf("loading desired-state.yaml: %w", err)
 	}
+	cfg.MonolithicDeviceCount = len(cfg.DesiredState.Devices)
+	// Optionally load additional device definitions from config/devices/*.yaml.
+	// This allows large deployments to split per-device config files while
+	// preserving backward compatibility with monolithic desired-state.yaml.
+	splitCount, err := loadDeviceFiles(filepath.Join(dir, "devices"), cfg)
+	if err != nil {
+		return nil, fmt.Errorf("loading devices directory: %w", err)
+	}
+	cfg.SplitDeviceCount = splitCount
 
 	// Load alerts.yaml (optional)
 	alertsPath := filepath.Join(dir, "alerts.yaml")
@@ -48,14 +59,11 @@ func LoadConfigDir(dir string) (*Config, error) {
 	}
 
 	// Set defaults
-	if cfg.DesiredState.Global.GNMIPort == 0 {
-		cfg.DesiredState.Global.GNMIPort = 9339
-	}
 	if cfg.DesiredState.Global.CollectionInterval == 0 {
 		cfg.DesiredState.Global.CollectionInterval = 10 * time.Second
 	}
 	if cfg.DesiredState.Global.TelemetryMode == "" {
-		cfg.DesiredState.Global.TelemetryMode = "gnmi_pull"
+		cfg.DesiredState.Global.TelemetryMode = "snmp_validate_only"
 	}
 	if cfg.DesiredState.Global.SNMP.Port == 0 {
 		cfg.DesiredState.Global.SNMP.Port = 161
@@ -100,6 +108,86 @@ func loadYAML(path string, out interface{}) error {
 		return err
 	}
 	return yaml.Unmarshal(data, out)
+}
+
+// deviceFileWrapper supports files that define devices under a top-level
+// "devices" key.
+type deviceFileWrapper struct {
+	Devices map[string]DeviceConfig `yaml:"devices"`
+}
+
+// loadDeviceFiles merges device definitions from *.yaml/*.yml files under
+// config/devices. Per-file formats supported:
+//   - top-level "devices:" map
+//   - top-level map of "<device_name>: <DeviceConfig>"
+func loadDeviceFiles(devicesDir string, cfg *Config) (int, error) {
+	entries, err := os.ReadDir(devicesDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+
+	if cfg.DesiredState.Devices == nil {
+		cfg.DesiredState.Devices = make(map[string]DeviceConfig)
+	}
+
+	fileNames := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.HasSuffix(name, ".yaml") || strings.HasSuffix(name, ".yml") {
+			fileNames = append(fileNames, name)
+		}
+	}
+	sort.Strings(fileNames)
+	added := 0
+
+	for _, name := range fileNames {
+		fullPath := filepath.Join(devicesDir, name)
+		data, err := os.ReadFile(fullPath)
+		if err != nil {
+			return 0, fmt.Errorf("reading %s: %w", fullPath, err)
+		}
+
+		devices, err := parseDeviceFile(data)
+		if err != nil {
+			return 0, fmt.Errorf("parsing %s: %w", fullPath, err)
+		}
+
+		for deviceName, deviceCfg := range devices {
+			if _, exists := cfg.DesiredState.Devices[deviceName]; exists {
+				return 0, fmt.Errorf("duplicate device %q found in %s", deviceName, fullPath)
+			}
+			cfg.DesiredState.Devices[deviceName] = deviceCfg
+			added++
+		}
+	}
+
+	return added, nil
+}
+
+func parseDeviceFile(data []byte) (map[string]DeviceConfig, error) {
+	var wrapped deviceFileWrapper
+	if err := yaml.Unmarshal(data, &wrapped); err != nil {
+		return nil, err
+	}
+	if len(wrapped.Devices) > 0 {
+		return wrapped.Devices, nil
+	}
+
+	var direct map[string]DeviceConfig
+	if err := yaml.Unmarshal(data, &direct); err != nil {
+		return nil, err
+	}
+	if len(direct) > 0 {
+		return direct, nil
+	}
+
+	return nil, fmt.Errorf("no devices defined; expected either top-level devices: map or direct device map")
 }
 
 // ResolveCredentials resolves credentials for a device
@@ -183,10 +271,9 @@ func ValidateConfig(cfg *Config) error {
 		}
 	}
 
-	if cfg.DesiredState.Global.TelemetryMode != "gnmi_pull" &&
-		cfg.DesiredState.Global.TelemetryMode != "snmp_validate_only" &&
+	if cfg.DesiredState.Global.TelemetryMode != "snmp_validate_only" &&
 		cfg.DesiredState.Global.TelemetryMode != "telemetry_ingest_push" {
-		return fmt.Errorf("global.telemetry_mode must be 'gnmi_pull', 'snmp_validate_only', or 'telemetry_ingest_push'")
+		return fmt.Errorf("global.telemetry_mode must be 'snmp_validate_only' or 'telemetry_ingest_push'")
 	}
 
 	if cfg.DesiredState.Global.SNMP.Version != "2c" {

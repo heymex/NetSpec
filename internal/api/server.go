@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -11,6 +12,7 @@ import (
 	"github.com/netspec/netspec/internal/alerter"
 	"github.com/netspec/netspec/internal/collector"
 	"github.com/netspec/netspec/internal/config"
+	"github.com/netspec/netspec/internal/discovery"
 	"github.com/netspec/netspec/internal/evaluator"
 	"github.com/netspec/netspec/internal/webui"
 	"github.com/rs/zerolog"
@@ -19,8 +21,6 @@ import (
 // ConfigReloadFunc is called when config reload is requested
 type ConfigReloadFunc func() (*config.Config, error)
 
-// CollectorGetter is a function that returns a collector by device name
-type CollectorGetter func(deviceName string) *collector.Collector
 type EvaluatorGetter func() *evaluator.Evaluator
 type TelemetryStatsGetter func() TelemetryStats
 
@@ -57,8 +57,6 @@ type Server struct {
 	commit          string
 	buildDate       string
 	versionMu       sync.RWMutex
-	collectorGetter CollectorGetter
-	collectorMu     sync.RWMutex
 	evaluatorGetter EvaluatorGetter
 	evaluatorMu     sync.RWMutex
 	telemetryGetter TelemetryStatsGetter
@@ -102,13 +100,6 @@ func (s *Server) SetVersion(version, commit, buildDate string) {
 	s.buildDate = buildDate
 }
 
-// SetCollectorGetter sets the function to get collectors by device name
-func (s *Server) SetCollectorGetter(getter CollectorGetter) {
-	s.collectorMu.Lock()
-	defer s.collectorMu.Unlock()
-	s.collectorGetter = getter
-}
-
 // SetEvaluatorGetter sets function to access evaluator runtime state.
 func (s *Server) SetEvaluatorGetter(getter EvaluatorGetter) {
 	s.evaluatorMu.Lock()
@@ -134,7 +125,6 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/reload", s.handleReload)
 	mux.HandleFunc("/api/devices", s.handleDevicesAPI)
 	mux.HandleFunc("/api/devices/", s.handleDeviceDetailAPI)
-	mux.HandleFunc("/api/test/", s.handleTestConnection)
 	mux.HandleFunc("/api/telemetry/stats", s.handleTelemetryStatsAPI)
 	mux.HandleFunc("/api/discovery/probe", s.handleDiscoveryProbe)
 	mux.HandleFunc("/api/discovery/walk", s.handleDiscoveryWalk)
@@ -253,6 +243,10 @@ func (s *Server) handleDevicesAPI(w http.ResponseWriter, r *http.Request) {
 
 // handleDeviceDetailAPI returns detailed information about a specific device
 func (s *Server) handleDeviceDetailAPI(w http.ResponseWriter, r *http.Request) {
+	if strings.Contains(strings.TrimPrefix(r.URL.Path, "/api/devices/"), "/interfaces/") {
+		s.handleInterfacePatch(w, r)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 
 	// Extract device name from path: /api/devices/{name}
@@ -277,18 +271,6 @@ func (s *Server) handleDeviceDetailAPI(w http.ResponseWriter, r *http.Request) {
 	if !exists {
 		http.Error(w, "Device not found", http.StatusNotFound)
 		return
-	}
-
-	// Get collector health
-	var health collector.DeviceHealth
-	s.collectorMu.RLock()
-	getter := s.collectorGetter
-	s.collectorMu.RUnlock()
-
-	if getter != nil {
-		if col := getter(deviceName); col != nil {
-			health = col.Health()
-		}
 	}
 
 	// Build interface list
@@ -348,78 +330,11 @@ func (s *Server) handleDeviceDetailAPI(w http.ResponseWriter, r *http.Request) {
 		"name":        deviceName,
 		"address":     deviceCfg.Address,
 		"description": deviceCfg.Description,
-		"health": map[string]interface{}{
-			"connected":       health.Connected,
-			"last_update":     health.LastUpdate,
-			"last_error":      health.LastError,
-			"reconnect_count": health.ReconnectCount,
-			"update_count":    health.UpdateCount,
-			"sync_received":   health.SyncReceived,
-			"last_path":       health.LastPath,
-			"last_value":      health.LastValue,
-			"connected_since": health.ConnectedSince,
-		},
 		"interfaces": interfaces,
 		"logs":       deviceLogs,
 	}
 
 	json.NewEncoder(w).Encode(response)
-}
-
-// handleTestConnection performs a one-shot gNMI capabilities test
-func (s *Server) handleTestConnection(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-
-	// Extract device name from path: /api/test/{name}
-	path := strings.TrimPrefix(r.URL.Path, "/api/test/")
-	if path == "" {
-		http.Error(w, "Device name required", http.StatusBadRequest)
-		return
-	}
-	deviceName := path
-
-	s.collectorMu.RLock()
-	getter := s.collectorGetter
-	s.collectorMu.RUnlock()
-
-	if getter == nil {
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": false,
-			"error":   "Collector not available",
-		})
-		return
-	}
-
-	col := getter(deviceName)
-	if col == nil {
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": false,
-			"error":   "Device not found or collector not running",
-		})
-		return
-	}
-
-	s.logger.Info().Str("device", deviceName).Msg("Testing gNMI connection")
-
-	modelCount, gnmiVersion, err := col.TestConnection()
-	if err != nil {
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": false,
-			"error":   err.Error(),
-		})
-		return
-	}
-
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success":      true,
-		"gnmi_version": gnmiVersion,
-		"model_count":  modelCount,
-	})
 }
 
 // handleReload handles config reload requests
@@ -484,7 +399,6 @@ type AlertInfo struct {
 
 // ConfigInfo holds configuration summary for the web UI
 type ConfigInfo struct {
-	GNMIPort           int
 	CollectionInterval string
 	DedupWindow        string
 	ConfigPath         string
@@ -546,7 +460,6 @@ func (s *Server) handleWebUI(w http.ResponseWriter, r *http.Request) {
 	// Add config details
 	if cfg != nil {
 		data.DeviceCount = len(cfg.DesiredState.Devices)
-		data.Config.GNMIPort = cfg.DesiredState.Global.GNMIPort
 		data.Config.CollectionInterval = cfg.DesiredState.Global.CollectionInterval.String()
 		data.Config.DedupWindow = cfg.Alerts.AlertBehavior.DeduplicationWindow.String()
 
@@ -618,15 +531,8 @@ type DeviceDetailInfo struct {
 	Name           string
 	Address        string
 	Description    string
-	Connected      bool
-	LastUpdate     time.Time
-	LastError      string
-	ReconnectCount int
-	UpdateCount    int64
-	SyncReceived   bool
-	LastPath       string
-	LastValue      string
-	ConnectedSince time.Time
+	LastSNMPValidationAt      time.Time
+	LastTelemetryValidationAt time.Time
 	Interfaces     []InterfaceInfo
 	Logs           []webui.LogEntry
 }
@@ -637,6 +543,7 @@ type InterfaceInfo struct {
 	Description               string
 	DesiredState              string
 	AdminState                string
+	Monitor                   bool
 	Alerts                    config.AlertSeverity
 	OperStatus                string
 	LastSNMPValidationAt      time.Time
@@ -676,18 +583,6 @@ func (s *Server) handleDevicePage(w http.ResponseWriter, r *http.Request) {
 	buildDate := s.buildDate
 	s.versionMu.RUnlock()
 
-	// Get collector health
-	var health collector.DeviceHealth
-	s.collectorMu.RLock()
-	getter := s.collectorGetter
-	s.collectorMu.RUnlock()
-
-	if getter != nil {
-		if col := getter(deviceName); col != nil {
-			health = col.Health()
-		}
-	}
-
 	// Build interface list
 	ifaceNames := make([]string, 0, len(deviceCfg.Interfaces))
 	for ifaceName := range deviceCfg.Interfaces {
@@ -696,6 +591,8 @@ func (s *Server) handleDevicePage(w http.ResponseWriter, r *http.Request) {
 	sort.Strings(ifaceNames)
 
 	interfaces := make([]InterfaceInfo, 0, len(ifaceNames))
+	var lastSNMPValidationAt time.Time
+	var lastTelemetryValidationAt time.Time
 	for _, ifaceName := range ifaceNames {
 		ifaceCfg := deviceCfg.Interfaces[ifaceName]
 		var operStatus string
@@ -710,6 +607,12 @@ func (s *Server) handleDevicePage(w http.ResponseWriter, r *http.Request) {
 					operStatus = state.OperStatus
 					lastSNMP = state.LastSNMPValidation
 					lastTelemetry = state.LastTelemetryValidation
+					if state.LastSNMPValidation.After(lastSNMPValidationAt) {
+						lastSNMPValidationAt = state.LastSNMPValidation
+					}
+					if state.LastTelemetryValidation.After(lastTelemetryValidationAt) {
+						lastTelemetryValidationAt = state.LastTelemetryValidation
+					}
 				}
 			}
 		}
@@ -718,6 +621,7 @@ func (s *Server) handleDevicePage(w http.ResponseWriter, r *http.Request) {
 			Description:               ifaceCfg.Description,
 			DesiredState:              ifaceCfg.DesiredState,
 			AdminState:                ifaceCfg.AdminState,
+			Monitor:                   ifaceCfg.Monitor,
 			Alerts:                    ifaceCfg.Alerts,
 			OperStatus:                operStatus,
 			LastSNMPValidationAt:      lastSNMP,
@@ -743,20 +647,13 @@ func (s *Server) handleDevicePage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	deviceDetail := DeviceDetailInfo{
-		Name:           deviceName,
-		Address:        deviceCfg.Address,
-		Description:    deviceCfg.Description,
-		Connected:      health.Connected,
-		LastUpdate:     health.LastUpdate,
-		LastError:      health.LastError,
-		ReconnectCount: health.ReconnectCount,
-		UpdateCount:    health.UpdateCount,
-		SyncReceived:   health.SyncReceived,
-		LastPath:       health.LastPath,
-		LastValue:      health.LastValue,
-		ConnectedSince: health.ConnectedSince,
-		Interfaces:     interfaces,
-		Logs:           deviceLogs,
+		Name:                      deviceName,
+		Address:                   deviceCfg.Address,
+		Description:               deviceCfg.Description,
+		LastSNMPValidationAt:      lastSNMPValidationAt,
+		LastTelemetryValidationAt: lastTelemetryValidationAt,
+		Interfaces:                interfaces,
+		Logs:                      deviceLogs,
 	}
 
 	data := DevicePageData{
@@ -791,4 +688,78 @@ func formatDuration(d time.Duration) string {
 		return string(rune('0'+days)) + "d"
 	}
 	return string(rune('0'+days)) + "d " + string(rune('0'+hours)) + "h"
+}
+
+type interfacePatchRequest struct {
+	Description   *string `json:"description"`
+	DesiredState  *string `json:"desired_state"`
+	AdminState    *string `json:"admin_state"`
+	Monitor       *bool   `json:"monitor"`
+	AlertSeverity *string `json:"alert_severity"`
+}
+
+func (s *Server) handleInterfacePatch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPatch {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	path := strings.TrimPrefix(r.URL.Path, "/api/devices/")
+	parts := strings.Split(path, "/")
+	if len(parts) < 3 || parts[1] != "interfaces" {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+	deviceName, err := url.PathUnescape(parts[0])
+	if err != nil || strings.TrimSpace(deviceName) == "" {
+		http.Error(w, "invalid device", http.StatusBadRequest)
+		return
+	}
+	ifaceName, err := url.PathUnescape(strings.Join(parts[2:], "/"))
+	if err != nil || strings.TrimSpace(ifaceName) == "" {
+		http.Error(w, "invalid interface", http.StatusBadRequest)
+		return
+	}
+
+	var req interfacePatchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid json body", http.StatusBadRequest)
+		return
+	}
+
+	s.reloadMu.RLock()
+	configPath := s.configPath
+	reloadFn := s.reloadFunc
+	s.reloadMu.RUnlock()
+	desiredPath := discovery.DesiredStatePathFrom(configPath)
+
+	err = discovery.UpdateDeviceInterface(desiredPath, deviceName, ifaceName, discovery.InterfaceUpdate{
+		Description:   req.Description,
+		DesiredState:  req.DesiredState,
+		AdminState:    req.AdminState,
+		Monitor:       req.Monitor,
+		AlertSeverity: req.AlertSeverity,
+	})
+	if err != nil {
+		status := discovery.StatusCodeFor(err)
+		if status < 400 {
+			status = http.StatusBadRequest
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	if reloadFn != nil {
+		if newCfg, err := reloadFn(); err == nil {
+			s.reloadMu.Lock()
+			s.config = newCfg
+			s.reloadMu.Unlock()
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":   true,
+		"device":    deviceName,
+		"interface": ifaceName,
+	})
 }

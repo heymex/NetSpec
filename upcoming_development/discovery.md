@@ -26,16 +26,15 @@ The Device Discovery Wizard is an interactive tool embedded in the NetSpec web U
 | `internal/config/loader.go` | Parses `desired-state.yaml` into Go structs |
 | `internal/config/validator.go` | Validates config before apply |
 | `config/desired-state.yaml` | The file this feature patches |
-| `.env` / `.env.example` | Contains `SNMP_COMMUNITY`, `GNMI_USERNAME`, etc. |
+| `.env` / `.env.example` | Contains runtime secrets such as `SNMP_COMMUNITY`. |
 | `go.mod` | Module root — add any new dependencies here |
 
 ### 2.2 Existing `desired-state.yaml` Schema (relevant excerpt)
 
 ```yaml
 global:
-  gnmi_port: 9339
   collection_interval: 10s
-  telemetry_mode: snmp_validate_only   # or gnmi_pull / telemetry_ingest_push
+  telemetry_mode: snmp_validate_only   # or telemetry_ingest_push
 
 devices:
   <device-key>:                        # arbitrary slug, e.g. "core-sw-01"

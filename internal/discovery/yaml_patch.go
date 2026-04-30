@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/netspec/netspec/internal/config"
@@ -19,39 +20,64 @@ func PatchDesiredState(configPath string, req *CommitRequest) (*CommitResult, er
 		return nil, err
 	}
 
-	data, err := os.ReadFile(configPath)
+	desired, err := loadDesiredState(configPath)
 	if err != nil {
-		return nil, fmt.Errorf("read desired-state: %w", err)
+		return nil, err
 	}
-
-	var desired config.DesiredStateConfig
-	if err := yaml.Unmarshal(data, &desired); err != nil {
-		return nil, fmt.Errorf("parse desired-state: %w", err)
-	}
-	if desired.Devices == nil {
-		desired.Devices = make(map[string]config.DeviceConfig)
+	devicesDir := filepath.Join(filepath.Dir(configPath), "devices")
+	splitIndex, err := indexSplitDeviceFiles(devicesDir)
+	if err != nil {
+		return nil, err
 	}
 
 	targetKey := req.DeviceKey
 	switch req.Action {
 	case "add":
-		if _, exists := desired.Devices[targetKey]; exists {
+		if _, exists := desired.Devices[targetKey]; exists || splitIndex[targetKey] != "" {
 			return nil, errConflict("device key already exists")
 		}
-		desired.Devices[targetKey] = config.DeviceConfig{
+		dev := config.DeviceConfig{
 			Address:     req.Address,
 			Description: req.DeviceDescription,
 			Interfaces:  make(map[string]config.InterfaceConfig),
+		}
+		applyInterfaces(&dev, req.Interfaces)
+		if err := writeSplitDeviceFile(devicesDir, targetKey, dev); err != nil {
+			return nil, err
 		}
 	case "patch":
 		if req.ExistingDeviceKey == "" {
 			req.ExistingDeviceKey = targetKey
 		}
-		dev, exists := desired.Devices[req.ExistingDeviceKey]
-		if !exists {
+		targetKey = req.ExistingDeviceKey
+		dev, exists := desired.Devices[targetKey]
+		splitPath := splitIndex[targetKey]
+		if !exists && splitPath == "" {
 			return nil, errNotFound("device key not found")
 		}
-		targetKey = req.ExistingDeviceKey
+		if splitPath != "" {
+			fileDevices, err := loadSplitFile(splitPath)
+			if err != nil {
+				return nil, err
+			}
+			dev = fileDevices[targetKey]
+			if dev.Interfaces == nil {
+				dev.Interfaces = make(map[string]config.InterfaceConfig)
+			}
+			if req.DeviceDescription != "" {
+				dev.Description = req.DeviceDescription
+			}
+			if req.Address != "" {
+				dev.Address = req.Address
+			}
+			applyInterfaces(&dev, req.Interfaces)
+			fileDevices[targetKey] = dev
+			if err := writeSplitFile(splitPath, fileDevices); err != nil {
+				return nil, err
+			}
+			break
+		}
+
 		if req.DeviceDescription != "" {
 			dev.Description = req.DeviceDescription
 		}
@@ -62,46 +88,25 @@ func PatchDesiredState(configPath string, req *CommitRequest) (*CommitResult, er
 			dev.Interfaces = make(map[string]config.InterfaceConfig)
 		}
 		desired.Devices[targetKey] = dev
+		applyInterfaces(&dev, req.Interfaces)
+		desired.Devices[targetKey] = dev
+		delete(desired.Devices, targetKey)
+		if err := writeDesiredState(configPath, desired); err != nil {
+			return nil, err
+		}
+		if err := writeSplitDeviceFile(devicesDir, targetKey, dev); err != nil {
+			return nil, err
+		}
+		break
 	default:
 		return nil, fmt.Errorf("action must be add or patch")
 	}
 
-	dev := desired.Devices[targetKey]
-	if dev.Interfaces == nil {
-		dev.Interfaces = make(map[string]config.InterfaceConfig)
-	}
-
 	monitored := 0
 	for _, iface := range req.Interfaces {
-		ifaceName := strings.TrimSpace(iface.Name)
-		if ifaceName == "" {
-			continue
-		}
 		if iface.Monitor {
 			monitored++
 		}
-		dev.Interfaces[ifaceName] = config.InterfaceConfig{
-			Description:  iface.Alias,
-			DesiredState: iface.DesiredState,
-			AdminState:   iface.AdminState,
-			Monitor:      iface.Monitor,
-			Alerts: config.AlertSeverity{
-				StateMismatch: iface.AlertSeverity,
-			},
-		}
-	}
-	desired.Devices[targetKey] = dev
-
-	out, err := yaml.Marshal(&desired)
-	if err != nil {
-		return nil, fmt.Errorf("marshal desired-state: %w", err)
-	}
-	tmp := configPath + ".tmp"
-	if err := os.WriteFile(tmp, out, 0o644); err != nil {
-		return nil, fmt.Errorf("write temp desired-state: %w", err)
-	}
-	if err := os.Rename(tmp, configPath); err != nil {
-		return nil, fmt.Errorf("replace desired-state: %w", err)
 	}
 
 	return &CommitResult{
@@ -112,6 +117,159 @@ func PatchDesiredState(configPath string, req *CommitRequest) (*CommitResult, er
 		InterfacesMonitored: monitored,
 		Message:             "Device updated successfully. Click 'Reload Config' to apply changes.",
 	}, nil
+}
+
+func applyInterfaces(dev *config.DeviceConfig, interfaces []CommitInterface) {
+	if dev.Interfaces == nil {
+		dev.Interfaces = make(map[string]config.InterfaceConfig)
+	}
+	for _, iface := range interfaces {
+		ifaceName := strings.TrimSpace(iface.Name)
+		if ifaceName == "" {
+			continue
+		}
+		cfgIface := config.InterfaceConfig{
+			Description:  iface.Alias,
+			DesiredState: iface.DesiredState,
+			AdminState:   iface.AdminState,
+			Monitor:      iface.Monitor,
+			Alerts: config.AlertSeverity{
+				StateMismatch: iface.AlertSeverity,
+			},
+		}
+		if iface.IsPortChannel && len(iface.Members) > 0 {
+			members := uniqueSorted(iface.Members)
+			cfgIface.Members = &config.MemberConfig{Required: members}
+			cfgIface.MemberPolicy = &config.MemberPolicy{
+				Mode: "min_active",
+				// >=50% members down is critical; this threshold makes <=50% active critical.
+				Minimum: (len(members) + 1) / 2,
+			}
+		}
+		dev.Interfaces[ifaceName] = cfgIface
+	}
+}
+
+func uniqueSorted(items []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		v := strings.TrimSpace(item)
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func loadDesiredState(configPath string) (*config.DesiredStateConfig, error) {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("read desired-state: %w", err)
+	}
+	var desired config.DesiredStateConfig
+	if err := yaml.Unmarshal(data, &desired); err != nil {
+		return nil, fmt.Errorf("parse desired-state: %w", err)
+	}
+	if desired.Devices == nil {
+		desired.Devices = make(map[string]config.DeviceConfig)
+	}
+	return &desired, nil
+}
+
+func writeDesiredState(configPath string, desired *config.DesiredStateConfig) error {
+	out, err := yaml.Marshal(desired)
+	if err != nil {
+		return fmt.Errorf("marshal desired-state: %w", err)
+	}
+	tmp := configPath + ".tmp"
+	if err := os.WriteFile(tmp, out, 0o644); err != nil {
+		return fmt.Errorf("write temp desired-state: %w", err)
+	}
+	if err := os.Rename(tmp, configPath); err != nil {
+		return fmt.Errorf("replace desired-state: %w", err)
+	}
+	return nil
+}
+
+type splitFile struct {
+	Devices map[string]config.DeviceConfig `yaml:"devices"`
+}
+
+func indexSplitDeviceFiles(devicesDir string) (map[string]string, error) {
+	index := map[string]string{}
+	entries, err := os.ReadDir(devicesDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return index, nil
+		}
+		return nil, fmt.Errorf("read devices dir: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".yaml") && !strings.HasSuffix(name, ".yml") {
+			continue
+		}
+		path := filepath.Join(devicesDir, name)
+		devs, err := loadSplitFile(path)
+		if err != nil {
+			return nil, err
+		}
+		for key := range devs {
+			if prev, ok := index[key]; ok {
+				return nil, fmt.Errorf("duplicate device %q in split files: %s and %s", key, prev, path)
+			}
+			index[key] = path
+		}
+	}
+	return index, nil
+}
+
+func loadSplitFile(path string) (map[string]config.DeviceConfig, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read split device file %s: %w", path, err)
+	}
+	var wrapped splitFile
+	if err := yaml.Unmarshal(data, &wrapped); err != nil {
+		return nil, fmt.Errorf("parse split device file %s: %w", path, err)
+	}
+	if wrapped.Devices == nil {
+		wrapped.Devices = map[string]config.DeviceConfig{}
+	}
+	return wrapped.Devices, nil
+}
+
+func writeSplitFile(path string, devices map[string]config.DeviceConfig) error {
+	payload, err := yaml.Marshal(&splitFile{Devices: devices})
+	if err != nil {
+		return fmt.Errorf("marshal split file: %w", err)
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, payload, 0o644); err != nil {
+		return fmt.Errorf("write temp split file: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return fmt.Errorf("replace split file: %w", err)
+	}
+	return nil
+}
+
+func writeSplitDeviceFile(devicesDir, key string, dev config.DeviceConfig) error {
+	if err := os.MkdirAll(devicesDir, 0o755); err != nil {
+		return fmt.Errorf("create devices dir: %w", err)
+	}
+	path := filepath.Join(devicesDir, key+".yaml")
+	return writeSplitFile(path, map[string]config.DeviceConfig{key: dev})
 }
 
 func validateCommitRequest(req *CommitRequest) error {
@@ -174,4 +332,95 @@ func DesiredStatePathFrom(configPath string) string {
 		return configPath
 	}
 	return filepath.Join(filepath.Dir(configPath), "desired-state.yaml")
+}
+
+type InterfaceUpdate struct {
+	Description   *string
+	DesiredState  *string
+	AdminState    *string
+	Monitor       *bool
+	AlertSeverity *string
+}
+
+func UpdateDeviceInterface(configPath, deviceKey, ifaceName string, patch InterfaceUpdate) error {
+	deviceKey = strings.TrimSpace(deviceKey)
+	ifaceName = strings.TrimSpace(ifaceName)
+	if deviceKey == "" || ifaceName == "" {
+		return errors.New("device key and interface name are required")
+	}
+	if patch.DesiredState != nil && *patch.DesiredState != "up" && *patch.DesiredState != "down" {
+		return errors.New("desired_state must be up or down")
+	}
+	if patch.AdminState != nil && *patch.AdminState != "enabled" && *patch.AdminState != "disabled" {
+		return errors.New("admin_state must be enabled or disabled")
+	}
+	if patch.AlertSeverity != nil {
+		v := strings.TrimSpace(*patch.AlertSeverity)
+		if v != "info" && v != "warning" && v != "critical" {
+			return errors.New("alert_severity must be info, warning, or critical")
+		}
+	}
+
+	desired, err := loadDesiredState(configPath)
+	if err != nil {
+		return err
+	}
+	devicesDir := filepath.Join(filepath.Dir(configPath), "devices")
+	splitIndex, err := indexSplitDeviceFiles(devicesDir)
+	if err != nil {
+		return err
+	}
+
+	if splitPath := splitIndex[deviceKey]; splitPath != "" {
+		fileDevices, err := loadSplitFile(splitPath)
+		if err != nil {
+			return err
+		}
+		dev, ok := fileDevices[deviceKey]
+		if !ok {
+			return errNotFound("device key not found")
+		}
+		if err := applyInterfacePatch(&dev, ifaceName, patch); err != nil {
+			return err
+		}
+		fileDevices[deviceKey] = dev
+		return writeSplitFile(splitPath, fileDevices)
+	}
+
+	dev, ok := desired.Devices[deviceKey]
+	if !ok {
+		return errNotFound("device key not found")
+	}
+	if err := applyInterfacePatch(&dev, ifaceName, patch); err != nil {
+		return err
+	}
+	desired.Devices[deviceKey] = dev
+	return writeDesiredState(configPath, desired)
+}
+
+func applyInterfacePatch(dev *config.DeviceConfig, ifaceName string, patch InterfaceUpdate) error {
+	if dev.Interfaces == nil {
+		return errNotFound("interface not found")
+	}
+	iface, ok := dev.Interfaces[ifaceName]
+	if !ok {
+		return errNotFound("interface not found")
+	}
+	if patch.Description != nil {
+		iface.Description = strings.TrimSpace(*patch.Description)
+	}
+	if patch.DesiredState != nil {
+		iface.DesiredState = *patch.DesiredState
+	}
+	if patch.AdminState != nil {
+		iface.AdminState = *patch.AdminState
+	}
+	if patch.Monitor != nil {
+		iface.Monitor = *patch.Monitor
+	}
+	if patch.AlertSeverity != nil {
+		iface.Alerts.StateMismatch = strings.TrimSpace(*patch.AlertSeverity)
+	}
+	dev.Interfaces[ifaceName] = iface
+	return nil
 }

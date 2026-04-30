@@ -1,0 +1,10 @@
+# Example split device file for large deployments.
+devices:
+  example-switch-01:
+    address: 10.0.0.100
+    description: "Example access switch"
+    interfaces:
+      GigabitEthernet1/0/1:
+        description: "Example monitored uplink"
+        desired_state: up
+        admin_state: enabled

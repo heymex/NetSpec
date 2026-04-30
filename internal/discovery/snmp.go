@@ -24,6 +24,7 @@ const (
 	ifOperStatusOID  = "1.3.6.1.2.1.2.2.1.8"
 	ifNameOID        = "1.3.6.1.2.1.31.1.1.1.1"
 	ifAliasOID       = "1.3.6.1.2.1.31.1.1.1.18"
+	ifStackStatusOID = "1.3.6.1.2.1.31.1.2.1.3"
 )
 
 var ifTypeLabels = map[int]string{
@@ -119,10 +120,30 @@ func WalkInterfaces(address string, port uint16, community string, timeout time.
 	})
 	_ = walk(ifAliasOID, func(idx int, pdu gosnmp.SnmpPDU) { ensure(idx).Alias = pduString(pdu) })
 
+	channelMembersByIndex := map[int][]int{}
+	_ = client.BulkWalk(ifStackStatusOID, func(pdu gosnmp.SnmpPDU) error {
+		if pduInt(pdu) != 1 {
+			return nil
+		}
+		higher, lower, err := ifStackIndexes(pdu.Name)
+		if err != nil {
+			return nil
+		}
+		channelMembersByIndex[higher] = append(channelMembersByIndex[higher], lower)
+		return nil
+	})
+
 	out := make([]Interface, 0, len(indexes))
 	filtered := 0
 	for _, it := range indexes {
 		it.TypeLabel = typeLabel(it.Type)
+		it.IsPortChannel = it.Type == 161 || strings.HasPrefix(strings.ToLower(it.Name), "port-channel") || strings.HasPrefix(strings.ToLower(it.Name), "po")
+		for _, memberIdx := range channelMembersByIndex[it.Index] {
+			if member, ok := indexes[memberIdx]; ok && member.Name != "" {
+				it.ChannelMembers = append(it.ChannelMembers, member.Name)
+			}
+		}
+		sort.Strings(it.ChannelMembers)
 		if it.Type == 24 || it.Type == 53 {
 			filtered++
 			continue
@@ -180,6 +201,23 @@ func oidIndex(oid string) (int, error) {
 		return 0, fmt.Errorf("invalid oid")
 	}
 	return strconv.Atoi(parts[len(parts)-1])
+}
+
+func ifStackIndexes(oid string) (int, int, error) {
+	trimmed := strings.TrimPrefix(oid, ".")
+	parts := strings.Split(trimmed, ".")
+	if len(parts) < 2 {
+		return 0, 0, fmt.Errorf("invalid ifStack oid")
+	}
+	higher, err := strconv.Atoi(parts[len(parts)-2])
+	if err != nil {
+		return 0, 0, err
+	}
+	lower, err := strconv.Atoi(parts[len(parts)-1])
+	if err != nil {
+		return 0, 0, err
+	}
+	return higher, lower, nil
 }
 
 func pduString(pdu gosnmp.SnmpPDU) string {

@@ -7,20 +7,20 @@ NetSpec is a next-generation, declarative network monitoring system designed for
 ### Prerequisites
 
 - Docker and Docker Compose
-- Cisco IOS-XE devices with gNMI enabled
-- gNMI credentials
+- Cisco IOS-XE devices reachable via SNMP and/or dial-out telemetry
 
 ### Configuration
 
-1. Edit `config/desired-state.yaml` with your devices and interfaces
-2. Copy `config/alerts.yaml.example` to `config/alerts.yaml` and configure notification channels:
+1. Edit `config/desired-state.yaml` with global settings.
+2. Define devices either in `config/desired-state.yaml` (monolithic) or as split files in `config/devices/*.yaml`.
+3. Copy `config/alerts.yaml.example` to `config/alerts.yaml` and configure notification channels:
 
 ```bash
 cp config/alerts.yaml.example config/alerts.yaml
 # Edit config/alerts.yaml with your notification channels
 ```
 
-3. Copy `.env.example` to `.env` and update with your credentials:
+4. Copy `.env.example` to `.env` and update with your credentials:
 
 ```bash
 cp .env.example .env
@@ -28,8 +28,6 @@ cp .env.example .env
 ```
 
 The `.env` file should contain:
-- `GNMI_PASSWORD` - Required password for gNMI connections
-- `GNMI_USERNAME` - gNMI username (defaults to `gnmi-monitor`)
 - `SNMP_COMMUNITY` - SNMPv2c community when using `snmp_validate_only` mode
 - `APPRISE_SLACK_WEBHOOK` - Slack notification URL (set in alerts.yaml)
 - `APPRISE_TEAMS_WEBHOOK` - Teams notification URL (set in alerts.yaml)
@@ -42,8 +40,7 @@ The `config/alerts.yaml` file configures:
 - Deduplication and flap detection settings
 - State persistence configuration
 
-`config/desired-state.yaml` also supports a telemetry mode switch in `global.telemetry_mode`:
-- `gnmi_pull` (default): current direct gNMI collection
+`config/desired-state.yaml` supports a telemetry mode switch in `global.telemetry_mode`:
 - `snmp_validate_only`: targeted SNMP `GET` validation polling for configured interfaces
 - `telemetry_ingest_push`: line-delimited JSON push ingest on `tcp/57500` with targeted SNMP confirmation per event
 
@@ -90,7 +87,7 @@ go build -o netspec ./cmd/netspec
 
 This MVP includes:
 
-- ✅ gNMI collector with connection handling
+- ✅ SNMP validator with targeted polling
 - ✅ Interface state evaluation
 - ✅ Basic alerting via Apprise
 - ✅ YAML configuration
@@ -107,7 +104,7 @@ NetSpec includes a built-in web UI accessible at `http://localhost:8088` (or you
 - **Device List** - All monitored devices with interface counts
 - **Active Alerts** - Current firing alerts with severity indicators
 - **Live Logs** - Auto-refreshing log stream (updates every 5 seconds)
-- **Configuration View** - Current gNMI port, collection interval, and dedup settings
+- **Configuration View** - Collection interval and dedup settings
 - **Config Reload** - Button to force re-read of `desired-state.yaml` without restart
 
 ### API Endpoints
@@ -124,21 +121,18 @@ NetSpec includes a built-in web UI accessible at `http://localhost:8088` (or you
 
 ## Architecture
 
-```
-gNMI Stream → State Evaluator → Alert Engine → Apprise
-```
+`SNMP Validation / Push Ingest → State Evaluator → Alert Engine → Apprise`
 
 ### Current Telemetry Modes
 
-NetSpec currently supports three runtime collection modes:
+NetSpec currently supports two runtime collection modes:
 
-- `gnmi_pull` - NetSpec connects directly to each device's gNMI server and evaluates streamed updates.
 - `snmp_validate_only` - NetSpec polls targeted SNMP interface OIDs (`ifAdminStatus`/`ifOperStatus`) for configured interfaces and evaluates those snapshots.
 - `telemetry_ingest_push` - NetSpec listens on `global.ingest.listen_address:global.ingest.port` (default `0.0.0.0:57500`) for newline-delimited JSON events. Each event can be SNMP-confirmed before entering the evaluator.
 
 ### Push-First Direction (Recommended for IOS-XE 17.12.x)
 
-For unstable IOS-XE gNMI pull behavior, the preferred operating model is:
+Preferred operating model:
 
 ```
 IOS-XE Dial-Out Telemetry → NetSpec Ingest Receiver → SNMP Targeted Validation → Evaluator → Alert Engine
@@ -161,16 +155,41 @@ When using the sidecar overlay, set `NETSPEC_INGEST_PORT` in `.env` to match you
 
 NetSpec uses multiple configuration files:
 
-- **`config/desired-state.yaml`** - Device and interface monitoring configuration
+- **`config/desired-state.yaml`** - Global monitoring configuration and optional monolithic device definitions
+- **`config/devices/*.yaml`** - (Optional) Split device definitions for large deployments
 - **`config/alerts.yaml`** - Alert routing and notification channel configuration (see `config/alerts.yaml.example`)
 - **`config/credentials.yaml`** - (Optional) Credential management
 - **`config/maintenance.yaml`** - (Optional) Maintenance window definitions
 
+When using `config/devices/*.yaml`, each file can be either:
+
+```yaml
+devices:
+  core-sw-01:
+    address: 10.0.0.1
+    interfaces:
+      GigabitEthernet1/0/1:
+        desired_state: up
+```
+
+or a direct map:
+
+```yaml
+core-sw-01:
+  address: 10.0.0.1
+  interfaces:
+    GigabitEthernet1/0/1:
+      desired_state: up
+```
+
+Device keys must be unique across all files and `desired-state.yaml`.
+On startup, NetSpec logs `monolithic_device_count` and `split_device_count` to show how devices were sourced.
+
 See `config/desired-state.yaml` and `config/alerts.yaml.example` for configuration examples.
 
-### Cisco IOS-XE gNMI Setup
+### Cisco IOS-XE Telemetry Setup
 
-For detailed instructions on configuring gNMI on Cisco IOS-XE devices, see the [Cisco gNMI Setup Guide](docs/CISCO_GNMI_SETUP.md).
+For detailed instructions on IOS-XE telemetry and validation patterns, see the [Cisco telemetry setup guide](docs/CISCO_GNMI_SETUP.md).
 
 ## CI/CD
 

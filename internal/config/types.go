@@ -8,6 +8,14 @@ type Config struct {
 	Alerts       AlertsConfig       `yaml:"alerts"`
 	Credentials  CredentialsConfig  `yaml:"credentials"`
 	Maintenance  MaintenanceConfig  `yaml:"maintenance"`
+	// Device source stats are runtime-only metadata for observability.
+	MonolithicDeviceCount int `yaml:"-"`
+	SplitDeviceCount      int `yaml:"-"`
+}
+
+// TotalDeviceCount returns total configured devices across all sources.
+func (c *Config) TotalDeviceCount() int {
+	return c.MonolithicDeviceCount + c.SplitDeviceCount
 }
 
 // DesiredStateConfig contains device and interface monitoring configuration
@@ -43,9 +51,8 @@ type MaintenanceConfig struct {
 // GlobalConfig contains global settings
 type GlobalConfig struct {
 	DefaultCredentials string        `yaml:"default_credentials,omitempty"`
-	GNMIPort           int           `yaml:"gnmi_port,omitempty"`
 	CollectionInterval time.Duration `yaml:"collection_interval,omitempty"`
-	TelemetryMode      string        `yaml:"telemetry_mode,omitempty"` // "gnmi_pull", "snmp_validate_only", or "telemetry_ingest_push"
+	TelemetryMode      string        `yaml:"telemetry_mode,omitempty"` // "snmp_validate_only" or "telemetry_ingest_push"
 	SNMP               SNMPConfig    `yaml:"snmp,omitempty"`
 	Ingest             IngestConfig  `yaml:"ingest,omitempty"`
 }

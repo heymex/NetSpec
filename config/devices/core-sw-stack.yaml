@@ -1,0 +1,18 @@
+devices:
+  core-sw-stack:
+    address: 10.0.0.1
+    description: "Core switch stack - Building A MDF"
+    interfaces:
+      Port-channel1:
+        description: "Uplink to Distribution"
+        desired_state: up
+        admin_state: enabled
+        alerts:
+          state_mismatch: critical
+          admin_down: warning
+      GigabitEthernet1/0/1:
+        description: "Server Room UPS"
+        desired_state: up
+        admin_state: enabled
+        alerts:
+          state_mismatch: warning
