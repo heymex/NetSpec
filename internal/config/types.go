@@ -133,9 +133,11 @@ type MemberConfig struct {
 
 // MemberPolicy defines port-channel member policies
 type MemberPolicy struct {
-	Mode            string `yaml:"mode"` // "all_active", "min_active", "per_stack_minimum"
-	Minimum         int    `yaml:"minimum,omitempty"`
-	PerStackMinimum int    `yaml:"per_stack_minimum,omitempty"`
+	Mode                 string   `yaml:"mode"` // "all_active", "min_active", "per_stack_minimum"
+	Minimum              int      `yaml:"minimum,omitempty"`
+	PerStackMinimum      int      `yaml:"per_stack_minimum,omitempty"`
+	CriticalThresholdPct *float64 `yaml:"critical_threshold_pct,omitempty"`
+	WarningThresholdPct  *float64 `yaml:"warning_threshold_pct,omitempty"`
 }
 
 // AlertSeverity defines alert severities for different conditions

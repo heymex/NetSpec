@@ -2,6 +2,7 @@ package evaluator
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -413,12 +414,11 @@ func (e *Evaluator) evaluateChannelMembers(deviceName, channelName string, iface
 
 	// Logical port-channel down should always be critical.
 	if normalizeState(ifaceState.OperStatus) == "down" {
-		severity := severityForAlert(ifaceCfg, "channel_down", "critical")
 		return []StateChange{{
 			Device:    deviceName,
 			Interface: channelName,
 			AlertType: alertTypeChannelDown,
-			Severity:  severity,
+			Severity:  "critical",
 			Message:   fmt.Sprintf("port-channel %s is down", channelName),
 			RelatedState: map[string]string{
 				"actual_state": normalizeState(ifaceState.OperStatus),
@@ -430,13 +430,22 @@ func (e *Evaluator) evaluateChannelMembers(deviceName, channelName string, iface
 		return nil
 	}
 
+	downPct := (float64(downCount) / float64(totalMembers)) * 100.0
+	criticalThreshold := 50.0
+	if ifaceCfg.MemberPolicy != nil && ifaceCfg.MemberPolicy.CriticalThresholdPct != nil {
+		criticalThreshold = *ifaceCfg.MemberPolicy.CriticalThresholdPct
+	}
+	warningThreshold := 0.0
+	if ifaceCfg.MemberPolicy != nil && ifaceCfg.MemberPolicy.WarningThresholdPct != nil {
+		warningThreshold = *ifaceCfg.MemberPolicy.WarningThresholdPct
+	}
+
 	severity := "warning"
-	// >=50% members down => critical.
-	if downCount*2 >= totalMembers {
+	if downPct >= criticalThreshold {
 		severity = "critical"
 	}
-	if cfgSeverity := strings.TrimSpace(ifaceCfg.Alerts.MemberDown); cfgSeverity != "" {
-		severity = cfgSeverity
+	if downPct <= warningThreshold {
+		return nil
 	}
 
 	return []StateChange{{
@@ -449,6 +458,8 @@ func (e *Evaluator) evaluateChannelMembers(deviceName, channelName string, iface
 			"active_members": fmt.Sprintf("%d", active),
 			"total_members":  fmt.Sprintf("%d", totalMembers),
 			"down_members":   strings.Join(downMembers, ","),
+			"down_count":     fmt.Sprintf("%d", downCount),
+			"down_pct":       fmt.Sprintf("%.1f", math.Round(downPct*10)/10),
 		},
 	}}
 }
