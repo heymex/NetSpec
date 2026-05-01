@@ -189,6 +189,48 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
             .grid { grid-template-columns: 1fr; }
         }
 
+        .hex-overview-row {
+            margin-bottom: 1.5rem;
+        }
+
+        .hex-overview-card .card-body {
+            padding: 1rem 1.25rem;
+            background: var(--bg-primary);
+        }
+
+        #hex-overview-root {
+            min-height: 120px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .hex-map-svg {
+            max-height: 280px;
+            width: 100%;
+            display: block;
+        }
+
+        .hex-link {
+            outline: none;
+        }
+
+        .hex-shape {
+            transition: filter 0.15s ease, opacity 0.15s ease;
+            cursor: pointer;
+        }
+
+        .hex-link:hover .hex-shape {
+            filter: brightness(1.12);
+        }
+
+        .hex-overview-empty {
+            text-align: center;
+            color: var(--text-muted);
+            padding: 1.5rem;
+            font-size: 0.875rem;
+        }
+
         .card {
             background: var(--bg-secondary);
             border: 1px solid var(--border-color);
@@ -604,6 +646,17 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
             </div>
         </div>
 
+        <div class="hex-overview-row">
+            <div class="card hex-overview-card">
+                <div class="card-header">
+                    <span class="card-title">⬡ Host Overview</span>
+                </div>
+                <div class="card-body">
+                    <div id="hex-overview-root">{{.HexMapSVG}}</div>
+                </div>
+            </div>
+        </div>
+
         <div class="grid">
             <div class="card">
                 <div class="card-header">
@@ -743,6 +796,121 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                 </div>
             </div>
         </div>
+        <script>
+        (function () {
+            var HEX_R = 22;
+            var HEX_MAX = 64;
+            function severityRank(s) {
+                var x = String(s || '').toLowerCase().trim();
+                if (x === 'critical' || x === 'fatal' || x === 'error') return 4;
+                if (x === 'warning' || x === 'warn') return 3;
+                if (x === 'info') return 2;
+                return 1;
+            }
+            function worstPerDevice(alerts) {
+                var m = {};
+                for (var i = 0; i < (alerts || []).length; i++) {
+                    var a = alerts[i];
+                    var d = String(a.Device || '').trim();
+                    if (!d) continue;
+                    var sev = String(a.Severity || '').trim();
+                    if (!(d in m) || severityRank(sev) > severityRank(m[d])) m[d] = sev;
+                }
+                return m;
+            }
+            function displayBucket(raw) {
+                var x = String(raw || '').toLowerCase().trim();
+                if (x === 'critical' || x === 'fatal' || x === 'error') return 'critical';
+                if (x === 'warning' || x === 'warn') return 'warning';
+                if (x === 'info') return 'warning';
+                if (!raw) return 'ok';
+                return 'warning';
+            }
+            function tileStyle(bucket) {
+                if (bucket === 'critical') return { fill: '#f85149', stroke: '#30363d', sw: 1.5, cls: 'hex-critical' };
+                if (bucket === 'warning') return { fill: '#d29922', stroke: '#30363d', sw: 1.5, cls: 'hex-warning' };
+                return { fill: 'none', stroke: '#3fb950', sw: 1.5, cls: 'hex-ok' };
+            }
+            function hexPathD(cx, cy, R) {
+                var parts = [];
+                for (var i = 0; i < 6; i++) {
+                    var ang = -Math.PI / 2 + i * Math.PI / 3;
+                    var x = cx + R * Math.cos(ang);
+                    var y = cy + R * Math.sin(ang);
+                    parts.push((i === 0 ? 'M ' : 'L ') + x.toFixed(4) + ' ' + y.toFixed(4));
+                }
+                return parts.join(' ') + ' Z';
+            }
+            function escXml(t) {
+                return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            }
+            function buildLayout(names, worst) {
+                var sorted = names.slice().sort();
+                var list = sorted.slice(0, Math.min(sorted.length, HEX_MAX));
+                if (!list.length) return { empty: true };
+                var w = HEX_R * Math.sqrt(3);
+                var vSpace = HEX_R * 2 * 0.75;
+                var cols = Math.max(1, Math.ceil(Math.sqrt(list.length)));
+                var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                var tiles = [];
+                for (var i = 0; i < list.length; i++) {
+                    var col = i % cols;
+                    var row = Math.floor(i / cols);
+                    var cx = col * w + (row % 2) * (w / 2);
+                    var cy = row * vSpace;
+                    var raw = worst[list[i]] || '';
+                    var bucket = displayBucket(raw);
+                    var st = tileStyle(bucket);
+                    tiles.push({ name: list[i], cx: cx, cy: cy, bucket: bucket, fill: st.fill, stroke: st.stroke, sw: st.sw, cls: st.cls });
+                    for (var k = 0; k < 6; k++) {
+                        var ang = -Math.PI / 2 + k * Math.PI / 3;
+                        var px = cx + HEX_R * Math.cos(ang);
+                        var py = cy + HEX_R * Math.sin(ang);
+                        minX = Math.min(minX, px); minY = Math.min(minY, py);
+                        maxX = Math.max(maxX, px); maxY = Math.max(maxY, py);
+                    }
+                }
+                var pad = HEX_R + 6;
+                return { empty: false, tiles: tiles, vx: minX - pad, vy: minY - pad, vw: maxX - minX + 2 * pad, vh: maxY - minY + 2 * pad };
+            }
+            function renderSVG(layout) {
+                var root = document.getElementById('hex-overview-root');
+                if (!root) return;
+                if (layout.empty) {
+                    root.innerHTML = '<div class="hex-overview-empty"><p>No devices configured</p></div>';
+                    return;
+                }
+                var html = '<svg xmlns="http://www.w3.org/2000/svg" class="hex-map-svg" viewBox="' + layout.vx + ' ' + layout.vy + ' ' + layout.vw + ' ' + layout.vh + '" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Host overview honeycomb">';
+                for (var j = 0; j < layout.tiles.length; j++) {
+                    var t = layout.tiles[j];
+                    var href = '/device/' + encodeURIComponent(t.name).replace(/'/g, '%27');
+                    var label = t.bucket === 'ok' ? 'ok' : t.bucket;
+                    var title = escXml(t.name) + ' — ' + escXml(label);
+                    var d = hexPathD(t.cx, t.cy, HEX_R);
+                    html += '<a class="hex-link" href="' + href + '"><path class="hex-shape ' + t.cls + '" d="' + d + '" fill="' + t.fill + '" stroke="' + t.stroke + '" stroke-width="' + t.sw + '"/><title>' + title + '</title></a>';
+                }
+                html += '</svg>';
+                root.innerHTML = html;
+            }
+            async function refreshHexOverview() {
+                var root = document.getElementById('hex-overview-root');
+                if (!root) return;
+                try {
+                    var dr = await fetch('/api/devices');
+                    var ar = await fetch('/alerts');
+                    var dj = await dr.json();
+                    var aj = await ar.json();
+                    var names = (dj.devices || []).map(function (x) { return x.name; }).filter(Boolean);
+                    var worst = worstPerDevice(aj.alerts || []);
+                    renderSVG(buildLayout(names, worst));
+                } catch (e) {
+                    if (console && console.warn) console.warn('hex overview refresh failed', e);
+                }
+            }
+            setInterval(refreshHexOverview, 10000);
+            refreshHexOverview();
+        })();
+        </script>
 {{end}}
 
 {{define "wizard"}}

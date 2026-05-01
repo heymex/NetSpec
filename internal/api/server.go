@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"html/template"
 	"net/http"
 	"net/url"
 	"sort"
@@ -442,6 +443,7 @@ type PageData struct {
 	Commit         string
 	BuildDate      string
 	Telemetry      TelemetryStats
+	HexMapSVG      template.HTML `json:"-"`
 }
 
 // handleWebUI renders the main web interface
@@ -534,6 +536,18 @@ func (s *Server) handleWebUI(w http.ResponseWriter, r *http.Request) {
 			Message:  alert.Message,
 		})
 	}
+
+	deviceNames := make([]string, 0, len(data.Devices))
+	for _, d := range data.Devices {
+		deviceNames = append(deviceNames, d.Name)
+	}
+	hexAlerts := make([]webui.HexAlert, 0, len(alerts))
+	for _, a := range alerts {
+		hexAlerts = append(hexAlerts, webui.HexAlert{Device: a.Device, Severity: a.Severity})
+	}
+	worstByDev := webui.WorstSeverityPerDevice(hexAlerts)
+	hexLayout := webui.BuildHexMapLayout(deviceNames, worstByDev, webui.DefaultHexRadius)
+	data.HexMapSVG = webui.RenderHexMapSVG(hexLayout)
 
 	// Get recent logs
 	if s.logBuffer != nil {
