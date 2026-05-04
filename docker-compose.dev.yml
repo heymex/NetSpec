@@ -9,11 +9,13 @@ services:
       - ${NETSPEC_DATA_DIR:-/opt/netspec}/mdt-sidecar:/sidecar
 
   mdt-translator:
-    image: python:3.12-alpine
+    build:
+      context: ./tools/sidecar
+      dockerfile: Dockerfile
+    image: netspec-mdt-translator:local
     container_name: mdt-translator
     restart: unless-stopped
     network_mode: host
-    command: ["python", "/app/mdt_to_netspec.py"]
     depends_on:
       - telegraf-mdt
     environment:
@@ -23,5 +25,4 @@ services:
       - NETSPEC_INGEST_PORT=${NETSPEC_INGEST_PORT:-57500}
       - MDT_ALLOWED_DEVICES=${MDT_ALLOWED_DEVICES:-}
     volumes:
-      - ./tools/sidecar/mdt_to_netspec.py:/app/mdt_to_netspec.py:ro
       - ${NETSPEC_DATA_DIR:-/opt/netspec}/mdt-sidecar:/sidecar

@@ -111,7 +111,9 @@ Verify forwarder activity:
 tsh ssh derek@derek-ghrunner "tail -n 40 /home/derek/mdt-sidecar/forwarder.log"
 ```
 
-If forwarder is not running, restart it against the current NetSpec ingest port:
+If forwarder is not running, prefer the **containerized translator** (same as `docker-compose.dev.yml`): `make docker-up-telemetry` or `docker compose … up -d mdt-translator` from the NetSpec repo with matching **`NETSPEC_DATA_DIR`** and **`NETSPEC_INGEST_PORT`**.
+
+Legacy host fallback (only if you are not using Compose for the translator):
 
 ```bash
 tsh ssh derek@derek-ghrunner "cd /home/derek/mdt-sidecar && nohup env MDT_DECODED_FILE=/home/derek/mdt-sidecar/decoded.json NETSPEC_INGEST_HOST=127.0.0.1 NETSPEC_INGEST_PORT=57501 MDT_FORWARDER_LOG=/home/derek/mdt-sidecar/forwarder.log python3 /home/derek/mdt-sidecar/mdt_to_netspec.py > /home/derek/mdt-sidecar/forwarder.stdout.log 2>&1 < /dev/null &"
