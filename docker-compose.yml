@@ -14,10 +14,11 @@ services:
       - ${NETSPEC_DATA_DIR:-/opt/netspec}/data:/data
     environment:
       - SNMP_COMMUNITY=${SNMP_COMMUNITY}
-      # With host networking, use localhost instead of Docker DNS name
-      - APPRISE_API_URL=${APPRISE_API_URL:-http://localhost:8086}
+      # With host networking, use 127.0.0.1 and the host-mapped Apprise port.
+      - APPRISE_API_URL=${APPRISE_API_URL:-http://127.0.0.1:8086}
       - LOG_LEVEL=${LOG_LEVEL:-info}
     depends_on:
+      # Startup ordering only; does not wait for Apprise health/readiness.
       - apprise
 
   apprise:

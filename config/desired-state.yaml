@@ -1,4 +1,7 @@
 # NetSpec Desired State Configuration
+#
+# Alert routing and channels belong in config/alerts.yaml (same directory). The loader
+# merges alerts.yaml into runtime config; an `alerts:` key here is ignored.
 
 global:
   default_credentials: vault://network/gnmi-creds
@@ -18,5 +21,3 @@ global:
     port: 57500
 
 devices: {}
-
-# Alert channels and rules live in config/alerts.yaml (loaded separately from this file).

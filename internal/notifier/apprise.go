@@ -28,7 +28,7 @@ type Notifier struct {
 	channels map[string]config.ChannelConfig
 }
 
-// NewNotifier builds a notifier using channel definitions from desired-state (alerts.channels).
+// NewNotifier builds a notifier using channel definitions from alerts.yaml (merged into cfg.Alerts).
 func NewNotifier(logger zerolog.Logger, channels map[string]config.ChannelConfig) *Notifier {
 	if channels == nil {
 		channels = make(map[string]config.ChannelConfig)

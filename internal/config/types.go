@@ -148,13 +148,6 @@ type AlertSeverity struct {
 	AdminDown     string `yaml:"admin_down,omitempty"`
 }
 
-// AlertConfig defines alert routing and behavior
-type AlertConfig struct {
-	Channels      map[string]ChannelConfig `yaml:"channels"`
-	AlertRules    map[string]AlertRule     `yaml:"alert_rules"`
-	AlertBehavior AlertBehavior            `yaml:"alert_behavior"`
-}
-
 // ChannelConfig defines a notification channel
 type ChannelConfig struct {
 	Type            string   `yaml:"type"`
@@ -189,7 +182,8 @@ type StatePersistence struct {
 	OnRestart string `yaml:"on_restart"` // "warn_unknown" or "silent"
 }
 
-// MaintenanceWindow defines maintenance window configuration
+// MaintenanceWindow defines maintenance window configuration.
+// TODO: not yet wired into runtime alert suppression logic.
 type MaintenanceWindow struct {
 	Name           string   `yaml:"name"`
 	Devices        []string `yaml:"devices"`
