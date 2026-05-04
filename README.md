@@ -7,7 +7,7 @@ NetSpec is a next-generation, declarative network monitoring system designed for
 ### Prerequisites
 
 - Docker and Docker Compose v2 (`docker compose`)
-- Cisco IOS-XE devices reachable via SNMP and/or dial-out telemetry
+- Cisco IOS-XE devices using **dial-out MDT** (grpc-tcp) into the repo’s Telegraf path, plus SNMP for targeted confirmation
 
 ### Configuration
 
@@ -25,42 +25,49 @@ The `.env` file (repo root for Compose, or see **Host / local binary** below) sh
 - `SNMP_COMMUNITY` - SNMPv2c community (used by SNMP validation and push-confirmation paths)
 - `APPRISE_API_URL` - Apprise-API **base URL** (required for notifications). NetSpec POSTs JSON to `{APPRISE_API_URL}/notify/` (stateless Apprise-API `notify` endpoint). With `network_mode: host` for NetSpec, use `http://127.0.0.1:8086` (or your host-mapped port), not `http://apprise:8000` (that hostname only resolves inside Compose).
 - Channel targets come from env vars named in `config/alerts.yaml` under `channels.*.url_env` (for example `APPRISE_SLACK_WEBHOOK`). See `.env.example` for placeholders.
-- `NETSPEC_INGEST_HOST` / `NETSPEC_INGEST_PORT` - destination for the optional MDT translator sidecar (must match `global.ingest` in YAML when using push telemetry)
+- `NETSPEC_INGEST_HOST` / `NETSPEC_INGEST_PORT` - where **`mdt-translator`** sends NetSpec JSON lines (must match `global.ingest` when `telemetry_mode` is `telemetry_ingest_push`)
 - `MDT_ALLOWED_DEVICES` - optional comma-separated device-name allowlist for the translator sidecar
 - `NETSPEC_IMAGE_TAG` - optional container image tag override
 - Other optional settings as documented in `.env.example`
 
 **Host / local binary:** When you run `./netspec -config /path/to/config/desired-state.yaml`, NetSpec loads environment defaults from **`/path/to/config/.env`** and **`/path/to/config/netspec.env`** if present (same directory as `desired-state.yaml`). Existing process environment variables are **not** overridden. Docker Compose still reads `.env` from the **repository root** for variable interpolation in compose files.
 
-`config/desired-state.yaml` supports a telemetry mode switch in `global.telemetry_mode`:
-- `snmp_validate_only`: targeted SNMP `GET` validation polling for configured interfaces
-- `telemetry_ingest_push`: line-delimited JSON push ingest on `global.ingest` (default `0.0.0.0:57500`) with targeted SNMP confirmation per event
+`config/desired-state.yaml` sets `global.telemetry_mode`:
+- **`telemetry_ingest_push`** (default in the sample file): line-delimited JSON push ingest on `global.ingest` (default `0.0.0.0:57500`) with targeted SNMP confirmation per event — pair with **both** compose files so Telegraf + **`mdt-translator`** decode IOS-XE dial-out into that ingest.
+- **`snmp_validate_only`**: SNMP validation only; no push ingest listener (no MDT path on this host).
 
 ### Running
 
-The default `docker-compose.yml` uses the NetSpec image built by GitHub Actions and published to GitHub Container Registry.
+Compose is split across two YAML files so **`docker-compose.yml`** can stay Apprise + NetSpec only; **Telegraf** and **`mdt-translator`** live in **`docker-compose.dev.yml`** (name is historical — use the same merge everywhere you run push telemetry). That is **not** an “optional add-on”; it is how the supported MDT → NetSpec path is packaged.
+
+The NetSpec image is built by GitHub Actions and published to GitHub Container Registry.
 
 **Note**: To pull from GitHub Container Registry, you may need to authenticate:
 ```bash
 echo $GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
 ```
 
-Then start the services:
-```bash
-docker compose up -d
-```
-
-For IOS-XE dial-out telemetry (`grpc-tcp`) into `telemetry_ingest_push`, run the sidecar overlay:
+**Push telemetry (standard):** IOS-XE dial-out (`grpc-tcp`) with `telemetry_ingest_push`:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 ```
 
-This starts:
-- `telegraf-mdt` to decode Cisco MDT on `tcp/57500`
-- `mdt-translator` (image **`netspec-mdt-translator:local`**, built from **`tools/sidecar`**) to convert decoded records into NetSpec newline-delimited JSON ingest events
+This starts **`telegraf-mdt`** (MDT in on `tcp/57500`) and **`mdt-translator`** (image **`netspec-mdt-translator:local`**, built from **`tools/sidecar`**) writing NetSpec-shaped JSON lines to `NETSPEC_INGEST_HOST:NETSPEC_INGEST_PORT`, plus **`netspec`** and **`apprise`**.
 
-The sidecar writes runtime artifacts under `${NETSPEC_DATA_DIR}/mdt-sidecar` (`decoded.json`, `forwarder.log`).
+The first time (or after translator changes), build the translator on that host (needs repo checkout with `tools/sidecar/`):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml build mdt-translator
+```
+
+Runtime artifacts: `${NETSPEC_DATA_DIR}/mdt-sidecar` (`decoded.json`, `forwarder.log`).
+
+**Core stack only** (no Telegraf/translator on this host — e.g. `snmp_validate_only` and no dial-out to this box):
+
+```bash
+docker compose up -d
+```
 
 To use a specific image tag instead of `latest`, set the `NETSPEC_IMAGE_TAG` environment variable:
 ```bash
@@ -77,19 +84,19 @@ go build -o netspec ./cmd/netspec
 
 ### Local Docker build (same images as prod, faster iteration than CI)
 
-Use this when you want the **same container layout as production** (Apprise + NetSpec, optional telemetry sidecar) but built **on your machine** from the current tree:
+Use this when you want the **same container layout as production** but built **on your machine** from the current tree:
 
 ```bash
 export NETSPEC_DATA_DIR=/opt/netspec   # or your config/data root
-make docker-rebuild                    # build image netspec:local (after code changes)
-make docker-up                         # apprise + netspec (host network)
-# optional: same stack + MDT sidecar as docker-compose.dev.yml
-make docker-up-telemetry
+make docker-rebuild                    # build netspec:local + netspec-mdt-translator:local
+make docker-up-telemetry               # apprise + netspec + telegraf + mdt-translator (host network)
+# Apprise + NetSpec only (no MDT containers on this host):
+make docker-up
 ```
 
-After each Go or translator Python change, run **`make docker-rebuild`** then **`make docker-up`** or **`make docker-up-telemetry`** (or **`docker compose ... up -d --force-recreate`** for the services you changed). **`make docker-up`** alone does not rebuild images.
+After each Go or translator Python change, run **`make docker-rebuild`** then **`make docker-up-telemetry`** (or **`make docker-up`**) or **`docker compose ... up -d --force-recreate`**. **`make docker-up`** / **`docker-up-telemetry`** alone does not rebuild images.
 
-Compose files: `docker-compose.yml` + `docker-compose.build-local.yml` (and `docker-compose.dev.yml` for telegraf / `mdt-translator`). Stop any host `nohup ./netspec` or old containers first so port **8088** / ingest port are free.
+Compose files: `docker-compose.yml` + `docker-compose.build-local.yml`, and **`docker-compose.dev.yml`** whenever you run the push pipeline locally. Stop any host `nohup ./netspec` or old containers first so port **8088** / ingest port are free.
 
 | Make target | What it does |
 |---------------|----------------|
@@ -106,7 +113,7 @@ This MVP includes:
 
 - ✅ SNMP validator with targeted polling
 - ✅ Interface state evaluation (including **port-channel** members, `member_policy` thresholds, and high-speed interface alias normalization for SNMP vs. telemetry name drift)
-- ✅ Push telemetry ingest with optional **MDT sidecar** (Telegraf + translator to newline-delimited JSON)
+- ✅ Push telemetry ingest via **Telegraf MDT + `mdt-translator`** (newline-delimited JSON into NetSpec)
 - ✅ Alerting via **Apprise-API** (`/notify/`) using channels defined in `config/alerts.yaml`
 - ✅ YAML configuration (split devices, optional credentials and maintenance files)
 - ✅ Docker deployment and **local parity** Makefile workflow
@@ -248,7 +255,7 @@ Images are published to GitHub Container Registry. Replace `OWNER/REPO` with you
 # Pull the latest NetSpec image
 docker pull ghcr.io/OWNER/REPO:latest
 
-# MDT → NetSpec ingest translator (optional; dev compose also builds it locally)
+# MDT → NetSpec ingest translator (same image `docker-compose.dev.yml` builds locally)
 docker pull ghcr.io/OWNER/REPO-mdt-translator:latest
 
 # Or use a specific version

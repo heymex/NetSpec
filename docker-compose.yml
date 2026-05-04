@@ -1,3 +1,7 @@
+# NetSpec + Apprise. Does not start Telegraf or mdt-translator — those are defined in
+# docker-compose.dev.yml (Compose merge; filename is historical). For the supported
+# IOS-XE dial-out → MDT → NetSpec push pipeline, always add -f docker-compose.dev.yml.
+
 services:
   netspec:
     image: ghcr.io/heymex/netspec:${NETSPEC_IMAGE_TAG:-latest}

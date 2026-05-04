@@ -1,3 +1,7 @@
+# MDT pipeline: Telegraf (grpc-tcp in) + mdt-translator → NetSpec newline-delimited JSON.
+# Merge with docker-compose.yml (same flags in prod/UAT/lab). Not a separate “optional”
+# product mode — the repo splits services across two files for layering.
+
 services:
   telegraf-mdt:
     image: telegraf:1.31

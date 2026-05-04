@@ -4,9 +4,9 @@ This guide documents the current NetSpec operating model for Cisco IOS-XE: push 
 
 ## Current NetSpec Telemetry Model
 
-NetSpec currently supports:
-- `snmp_validate_only`
-- `telemetry_ingest_push`
+NetSpec supports:
+- **`telemetry_ingest_push`** — production path (dial-out MDT → collector → NetSpec ingest + SNMP confirmation)
+- **`snmp_validate_only`** — SNMP validation only (no push ingest on this host)
 
 `gnmi_pull` is no longer supported.
 
@@ -51,7 +51,7 @@ Use telemetry mode explicitly in `config/desired-state.yaml`:
 
 ```yaml
 global:
-  telemetry_mode: snmp_validate_only   # or telemetry_ingest_push
+  telemetry_mode: telemetry_ingest_push
   snmp:
     version: 2c
     port: 161
