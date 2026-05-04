@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"html/template"
 	"net/http"
+	"strconv"
 	"net/url"
 	"sort"
 	"strings"
@@ -744,9 +745,9 @@ func formatDuration(d time.Duration) string {
 	days := hours / 24
 	hours = hours % 24
 	if hours == 0 {
-		return string(rune('0'+days)) + "d"
+		return strconv.Itoa(days) + "d"
 	}
-	return string(rune('0'+days)) + "d " + string(rune('0'+hours)) + "h"
+	return strconv.Itoa(days) + "d " + strconv.Itoa(hours) + "h"
 }
 
 func reverseLogEntries(entries []webui.LogEntry) {

@@ -13,16 +13,20 @@ NetSpec is a next-generation, declarative network monitoring system designed for
 
 1. Edit `config/desired-state.yaml` with global settings.
 2. Define devices either in `config/desired-state.yaml` (monolithic) or as split files in `config/devices/*.yaml`.
-3. Copy `.env.example` to `.env` and update with your credentials:
+3. Optional: edit `config/alerts.yaml` for alert channels and routing (`alerts:` does not belong in `desired-state.yaml`; it is not loaded from there).
+4. Copy `.env.example` to `.env` and update with your credentials:
 
 ```bash
 cp .env.example .env
 # Edit .env with your actual values
 ```
 
+Steps 1–2 are required for a minimal deployment; step 3 only if you use Apprise alerting; step 4 supplies runtime credentials for Compose or local runs.
+
 The `.env` file should contain:
 - `SNMP_COMMUNITY` - SNMPv2c community (used by SNMP validation and push-confirmation paths)
-- `APPRISE_API_URL` - Apprise-API base URL (required). With `network_mode: host` for NetSpec, use `http://127.0.0.1:8086` (or your mapped port). Channel targets come from env vars named in `alerts.channels.*.url_env` in YAML (for example `APPRISE_SLACK_WEBHOOK`).
+- `API_PORT` - web UI/API listen port override (default `8088`)
+- `APPRISE_API_URL` - Apprise-API base URL (required for alerting). With `network_mode: host` for NetSpec, use `http://127.0.0.1:8086` (or your mapped port). Channel targets come from env vars named in `config/alerts.yaml` under `channels.*.url_env` (for example `APPRISE_SLACK_WEBHOOK`).
 - Optional: `APPRISE_NOTIFY_TIMEOUT` (HTTP timeout per notify, e.g. `15s`). Troubleshooting: [Apprise alerting](docs/APPRISE_ALERTING.md).
 - `NETSPEC_IMAGE_TAG` - optional container image tag override
 - Other optional settings as documented in `.env.example`
@@ -86,6 +90,8 @@ After each Go or translator Python change, run **`make docker-rebuild`** then **
 
 Compose files: `docker-compose.yml` + `docker-compose.build-local.yml` (and `docker-compose.dev.yml` for telegraf / `mdt-translator`). Stop any host `nohup ./netspec` or old containers first so port **8088** / ingest port are free.
 
+Because `netspec` uses `network_mode: host` in the default compose stack, `APPRISE_API_URL` must target the host-mapped Apprise port (for example `http://127.0.0.1:8086`). In this topology, `depends_on` controls startup order only and does not guarantee Apprise is fully ready before NetSpec starts.
+
 ## MVP Features
 
 This MVP includes:
@@ -108,7 +114,7 @@ NetSpec includes a built-in web UI accessible at `http://localhost:8088` (or you
 - **Active Alerts** - Current firing alerts with severity indicators
 - **Live Logs** - Auto-refreshing log stream (updates every 5 seconds)
 - **Configuration View** - Collection interval and dedup settings
-- **Config Reload** - Button to force re-read of `desired-state.yaml` without restart
+- **Config Reload** - Button to reload all configuration files from the config directory without restart
 - **API Browser** - Interactive OpenAPI documentation at `/api-browser` (Swagger UI with try-it-out; spec served at `/openapi.json`)
 
 ### API Endpoints
@@ -170,9 +176,15 @@ When using the sidecar overlay, set `NETSPEC_INGEST_PORT` in `.env` to match you
 
 NetSpec uses multiple configuration files:
 
-- **`config/desired-state.yaml`** - Global monitoring configuration and optional monolithic device definitions
-- **`config/devices/*.yaml`** - (Optional) Split device definitions for large deployments
-- **`config/desired-state.yaml`** + **`config/devices/*.yaml`** are the only required runtime config files in the current project state
+| File | Required | Purpose |
+|------|----------|---------|
+| `config/desired-state.yaml` | Yes | Global settings plus optional monolithic device/interface definitions |
+| `config/alerts.yaml` | No | Alert channels, routing rules, and alert behavior |
+| `config/credentials.yaml` | No | Named credential sets for device authentication references |
+| `config/maintenance.yaml` | No | Scheduled maintenance windows (currently loaded but not yet enforced for alert suppression) |
+| `config/devices/*.yaml` | No | Per-device split config files for larger deployments |
+
+`desired-state.yaml` does not load an `alerts:` block; alert routing lives in `alerts.yaml`.
 
 When using `config/devices/*.yaml`, each file can be either:
 
@@ -199,6 +211,10 @@ Device keys must be unique across all files and `desired-state.yaml`.
 On startup, NetSpec logs `monolithic_device_count` and `split_device_count` to show how devices were sourced.
 
 See `config/desired-state.yaml` and `config/devices/example-device.yaml` for configuration examples.
+
+## Bundled Tools
+
+The container image bundles `gnmic` for operator debugging workflows (for example ad-hoc in-container gNMI queries while troubleshooting). The NetSpec application itself does not shell out to `gnmic` at runtime.
 
 ### Cisco IOS-XE Telemetry Setup
 

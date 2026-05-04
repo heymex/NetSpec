@@ -1,0 +1,27 @@
+# Alert channels, routing rules, and behavior. Loaded by NetSpec as config/alerts.yaml.
+# Do not put this block in desired-state.yaml — that file is only for DesiredStateConfig
+# and unknown keys (including `alerts`) are ignored without warning.
+
+channels:
+  ops-slack:
+    type: apprise
+    url_env: APPRISE_SLACK_WEBHOOK
+    severity_filter: [warning, critical]
+
+  ops-teams:
+    type: apprise
+    url_env: APPRISE_TEAMS_WEBHOOK
+    severity_filter: [critical]
+
+alert_rules:
+  default:
+    channels: [ops-slack]
+
+  critical:
+    channels: [ops-slack, ops-teams]
+
+  warning:
+    channels: [ops-slack]
+
+alert_behavior:
+  deduplication_window: 300s

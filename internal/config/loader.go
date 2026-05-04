@@ -50,7 +50,8 @@ func LoadConfigDir(dir string) (*Config, error) {
 		}
 	}
 
-	// Load maintenance.yaml (optional)
+	// Load maintenance.yaml (optional).
+	// TODO: not yet wired into runtime alert suppression logic.
 	maintenancePath := filepath.Join(dir, "maintenance.yaml")
 	if _, err := os.Stat(maintenancePath); err == nil {
 		if err := loadYAML(maintenancePath, &cfg.Maintenance); err != nil {
@@ -190,7 +191,8 @@ func parseDeviceFile(data []byte) (map[string]DeviceConfig, error) {
 	return nil, fmt.Errorf("no devices defined; expected either top-level devices: map or direct device map")
 }
 
-// ResolveCredentials resolves credentials for a device
+// ResolveCredentials resolves credentials for a device.
+// TODO: not yet wired into SNMP/gNMI collectors.
 func (c *Config) ResolveCredentials(deviceName string) CredentialEntry {
 	dev, ok := c.DesiredState.Devices[deviceName]
 	if !ok {

@@ -31,7 +31,9 @@ WORKDIR /app
 
 COPY --from=builder /build/netspec .
 
-# Download and install gnmic (gNMI CLI client)
+# Download and install gnmic (gNMI CLI client).
+# NetSpec does not invoke gnmic directly; it is bundled for operator
+# troubleshooting and ad-hoc gNMI queries inside the running container.
 # Supports both amd64 and arm64 architectures
 ARG TARGETARCH
 ARG GNMIC_VERSION=0.26.0

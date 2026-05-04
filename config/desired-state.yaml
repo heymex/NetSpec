@@ -1,4 +1,7 @@
 # NetSpec Desired State Configuration
+#
+# Alert routing and channels belong in config/alerts.yaml (same directory). The loader
+# merges alerts.yaml into runtime config; an `alerts:` key here is ignored.
 
 global:
   default_credentials: vault://network/gnmi-creds
@@ -16,28 +19,3 @@ global:
     port: 57500
 
 devices: {}
-
-alerts:
-  channels:
-    ops-slack:
-      type: apprise
-      url_env: APPRISE_SLACK_WEBHOOK
-      severity_filter: [warning, critical]
-      
-    ops-teams:
-      type: apprise
-      url_env: APPRISE_TEAMS_WEBHOOK
-      severity_filter: [critical]
-
-  alert_rules:
-    default:
-      channels: [ops-slack]
-      
-    critical:
-      channels: [ops-slack, ops-teams]
-      
-    warning:
-      channels: [ops-slack]
-
-  alert_behavior:
-    deduplication_window: 300s

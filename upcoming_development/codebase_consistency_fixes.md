@@ -155,12 +155,12 @@ Option B is cleaner long-term. Option A is a lower-risk minimal change.
 
 ## Completion Checklist
 
-- [ ] 1.1 — Move alerts block to `config/alerts.yaml`, update README
-- [ ] 2.1 — Fix `formatDuration` rune bug
-- [ ] 3.1 — Delete duplicate `AlertConfig` type
-- [ ] 3.2 — Decide on credentials / maintenance: implement or mark TODO
-- [ ] 4.1 — Document all optional config files in README
-- [ ] 4.2 — Add `API_PORT` to `.env.example` and README
-- [ ] 4.3 — Correct reload description in README
-- [ ] 4.4 — Clarify `gnmic` usage in Dockerfile and README
-- [ ] 5.1 — Resolve Docker Compose networking (choose option A or B)
+- [x] 1.1 — Move alerts block to `config/alerts.yaml`, update README
+- [x] 2.1 — Fix `formatDuration` rune bug
+- [x] 3.1 — Delete duplicate `AlertConfig` type
+- [x] 3.2 — Decide on credentials / maintenance: implement or mark TODO
+- [x] 4.1 — Document all optional config files in README
+- [x] 4.2 — Add `API_PORT` to `.env.example` and README
+- [x] 4.3 — Correct reload description in README
+- [x] 4.4 — Clarify `gnmic` usage in Dockerfile and README
+- [x] 5.1 — Resolve Docker Compose networking (choose option A or B)
