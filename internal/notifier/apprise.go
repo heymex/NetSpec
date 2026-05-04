@@ -33,9 +33,15 @@ func NewNotifier(logger zerolog.Logger, channels map[string]config.ChannelConfig
 	if channels == nil {
 		channels = make(map[string]config.ChannelConfig)
 	}
+	timeout := 10 * time.Second
+	if v := strings.TrimSpace(os.Getenv("APPRISE_NOTIFY_TIMEOUT")); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			timeout = d
+		}
+	}
 	return &Notifier{
 		logger:   logger.With().Str("component", "notifier").Logger(),
-		client:   &http.Client{Timeout: 10 * time.Second},
+		client:   &http.Client{Timeout: timeout},
 		channels: channels,
 	}
 }
@@ -84,7 +90,7 @@ func (n *Notifier) SendAlert(alert *types.Alert, channelNames []string) error {
 		}
 
 		attempted++
-		if err := n.deliver(apiBase, serviceURL, title, body, notifyType); err != nil {
+		if err := n.deliver(apiBase, serviceURL, title, body, notifyType, name, scrubServiceURL(serviceURL)); err != nil {
 			n.logger.Error().Err(err).Str("channel", name).Msg("failed to send notification")
 			errs = append(errs, fmt.Errorf("channel %q: %w", name, err))
 		} else {
@@ -127,11 +133,27 @@ func appriseNotifyType(severity, state string) string {
 	}
 }
 
-func (n *Notifier) deliver(apiBase, serviceURL, title, body, notifyType string) error {
+func (n *Notifier) deliver(apiBase, serviceURL, title, body, notifyType, channelName, serviceURLRedacted string) error {
 	reqURL, payload, err := buildNotifyRequest(apiBase, serviceURL, title, body, notifyType)
 	if err != nil {
 		return err
 	}
+
+	mode := "keyed"
+	if _, ok := payload["urls"]; ok {
+		mode = "stateless"
+	}
+	parsed, _ := url.Parse(reqURL)
+	path := parsed.Path
+	if path == "" {
+		path = "/"
+	}
+	n.logger.Debug().
+		Str("channel", channelName).
+		Str("delivery", mode).
+		Str("path", path).
+		Str("url_env_target", serviceURLRedacted).
+		Msg("apprise notify")
 
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
@@ -152,9 +174,50 @@ func (n *Notifier) deliver(apiBase, serviceURL, title, body, notifyType string) 
 
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("apprise-api returned %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		return fmt.Errorf("apprise-api %s", summarizeAppriseAPIError(resp.StatusCode, respBody))
 	}
 	return nil
+}
+
+// scrubServiceURL returns a log-safe hint for an Apprise URL or raw notify key.
+func scrubServiceURL(serviceURL string) string {
+	s := strings.TrimSpace(serviceURL)
+	if s == "" {
+		return ""
+	}
+	if i := strings.Index(s, "://"); i > 0 {
+		return s[:i+3] + "(redacted)"
+	}
+	return s
+}
+
+// summarizeAppriseAPIError turns Apprise-API JSON error bodies into a short string for logs and wrapped errors.
+func summarizeAppriseAPIError(status int, body []byte) string {
+	s := strings.TrimSpace(string(body))
+	if s == "" {
+		return fmt.Sprintf("HTTP %d (empty body)", status)
+	}
+	var wrap struct {
+		Error   string          `json:"error"`
+		Details json.RawMessage `json:"details"`
+	}
+	if json.Unmarshal(body, &wrap) == nil && (wrap.Error != "" || len(bytes.TrimSpace(wrap.Details)) > 0) {
+		d := strings.TrimSpace(string(wrap.Details))
+		if len(d) > 400 {
+			d = d[:400] + "…"
+		}
+		if wrap.Error != "" && d != "" {
+			return fmt.Sprintf("HTTP %d: %s details=%s", status, wrap.Error, d)
+		}
+		if wrap.Error != "" {
+			return fmt.Sprintf("HTTP %d: %s", status, wrap.Error)
+		}
+		return fmt.Sprintf("HTTP %d: details=%s", status, d)
+	}
+	if len(s) > 500 {
+		return fmt.Sprintf("HTTP %d: %s…", status, s[:500])
+	}
+	return fmt.Sprintf("HTTP %d: %s", status, s)
 }
 
 // buildNotifyRequest chooses Apprise-API stateless vs keyed notify URL and JSON body.
