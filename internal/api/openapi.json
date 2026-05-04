@@ -1,0 +1,574 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "NetSpec HTTP API",
+    "description": "JSON HTTP API for the NetSpec declarative network state monitor. Use **Try it out** to call endpoints from this host. Device and interface path segments must be URL-encoded (e.g. `GigabitEthernet1%2F0%2F1` for `GigabitEthernet1/0/1`).",
+    "version": "1.0.0"
+  },
+  "tags": [
+    { "name": "Health", "description": "Liveness and summary" },
+    { "name": "Alerts & logs", "description": "Active alerts and recent log lines" },
+    { "name": "Devices", "description": "Device inventory, detail, interface updates, and deletion" },
+    { "name": "Telemetry", "description": "Push ingest statistics" },
+    { "name": "Configuration", "description": "Reload YAML configuration" },
+    { "name": "Discovery", "description": "SNMP wizard / device onboarding" }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "Health check",
+        "description": "Returns `healthy` and current UTC time.",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HealthResponse" },
+                "example": { "status": "healthy", "time": "2026-05-04T12:00:00Z" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/status": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "Status summary",
+        "description": "Process uptime, version metadata, and active alert count.",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/StatusResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/alerts": {
+      "get": {
+        "tags": ["Alerts & logs"],
+        "summary": "Active alerts",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AlertsResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/logs": {
+      "get": {
+        "tags": ["Alerts & logs"],
+        "summary": "Recent log entries",
+        "description": "Up to 200 most recent buffered log lines (newest first in the `entries` array after server ordering).",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/LogsResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/devices": {
+      "get": {
+        "tags": ["Devices"],
+        "summary": "List devices",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/DeviceListResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/devices/{device}": {
+      "get": {
+        "tags": ["Devices"],
+        "summary": "Device detail",
+        "description": "Configuration, per-interface runtime snapshot, and filtered recent logs.",
+        "parameters": [
+          {
+            "name": "device",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Device key from desired state YAML"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/DeviceDetailResponse" }
+              }
+            }
+          },
+          "400": { "description": "Bad request" },
+          "404": { "description": "Device not found" },
+          "500": { "description": "Configuration not loaded" }
+        }
+      },
+      "delete": {
+        "tags": ["Devices"],
+        "summary": "Delete device",
+        "description": "Removes the device from desired-state YAML, reloads config when configured, and clears active alerts for that device.",
+        "parameters": [
+          {
+            "name": "device",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Removed",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/DeviceDeleteResponse" }
+              }
+            }
+          },
+          "400": { "description": "Invalid device or YAML error" },
+          "404": { "description": "Device not found in YAML" },
+          "500": { "description": "Server error" }
+        }
+      }
+    },
+    "/api/devices/{device}/interfaces/{interface}": {
+      "patch": {
+        "tags": ["Devices"],
+        "summary": "Update interface policy",
+        "description": "Patches one interface in desired-state YAML and reloads when a reload function is configured. Include only fields to change.",
+        "parameters": [
+          {
+            "name": "device",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "interface",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Interface name; URL-encode slashes (e.g. `GigabitEthernet1%2F0%2F1`)."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/InterfacePatchRequest" },
+              "example": {
+                "monitor": true,
+                "desired_state": "up",
+                "admin_state": "up",
+                "alert_severity": "warning"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/InterfacePatchResponse" }
+              }
+            }
+          },
+          "400": { "description": "Invalid JSON or validation error" },
+          "404": { "description": "Device or interface not found" },
+          "502": { "description": "SNMP or upstream error when applicable" }
+        }
+      }
+    },
+    "/api/reload": {
+      "post": {
+        "tags": ["Configuration"],
+        "summary": "Reload configuration",
+        "description": "Re-reads desired-state YAML from disk and updates the in-memory config.",
+        "responses": {
+          "200": {
+            "description": "Reload attempted",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ReloadResponse" }
+              }
+            }
+          },
+          "405": { "description": "Method not allowed (use POST)" },
+          "500": { "description": "Reload failed" }
+        }
+      }
+    },
+    "/api/telemetry/stats": {
+      "get": {
+        "tags": ["Telemetry"],
+        "summary": "Telemetry ingest statistics",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TelemetryStatsResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/discovery/probe": {
+      "post": {
+        "tags": ["Discovery"],
+        "summary": "SNMP probe (sys* OIDs)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/DiscoveryRequest" },
+              "example": { "address": "10.0.0.1", "community": "public", "port": 161 }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Probe result",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ProbeResult" }
+              }
+            }
+          },
+          "400": { "description": "Invalid JSON" },
+          "502": { "description": "SNMP / agent error" },
+          "504": { "description": "Timeout" }
+        }
+      }
+    },
+    "/api/discovery/walk": {
+      "post": {
+        "tags": ["Discovery"],
+        "summary": "SNMP interface walk",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/DiscoveryRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Interface table",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/WalkResult" }
+              }
+            }
+          },
+          "400": { "description": "Invalid JSON" },
+          "502": { "description": "SNMP / agent error" },
+          "504": { "description": "Timeout" }
+        }
+      }
+    },
+    "/api/discovery/commit": {
+      "post": {
+        "tags": ["Discovery"],
+        "summary": "Commit discovery to YAML",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CommitRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Commit result",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CommitResult" }
+              }
+            }
+          },
+          "400": { "description": "Invalid request" },
+          "500": { "description": "Write or validation error" }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "HealthResponse": {
+        "type": "object",
+        "required": ["status", "time"],
+        "properties": {
+          "status": { "type": "string", "example": "healthy" },
+          "time": { "type": "string", "format": "date-time" }
+        }
+      },
+      "StatusResponse": {
+        "type": "object",
+        "properties": {
+          "active_alerts": { "type": "integer" },
+          "time": { "type": "string" },
+          "uptime": { "type": "string" },
+          "version": { "type": "string" },
+          "commit": { "type": "string" },
+          "build_date": { "type": "string" }
+        }
+      },
+      "Alert": {
+        "type": "object",
+        "properties": {
+          "ID": { "type": "string" },
+          "Device": { "type": "string" },
+          "Entity": { "type": "string" },
+          "AlertType": { "type": "string" },
+          "Severity": { "type": "string" },
+          "State": { "type": "string" },
+          "FiredAt": { "type": "string", "format": "date-time" },
+          "ResolvedAt": { "type": "string", "format": "date-time", "nullable": true },
+          "Message": { "type": "string" },
+          "RelatedState": { "type": "object", "additionalProperties": { "type": "string" } }
+        }
+      },
+      "AlertsResponse": {
+        "type": "object",
+        "properties": {
+          "alerts": { "type": "array", "items": { "$ref": "#/components/schemas/Alert" } },
+          "count": { "type": "integer" }
+        }
+      },
+      "LogEntry": {
+        "type": "object",
+        "properties": {
+          "timestamp": { "type": "string", "format": "date-time" },
+          "level": { "type": "string" },
+          "message": { "type": "string" },
+          "raw": { "type": "string" }
+        }
+      },
+      "LogsResponse": {
+        "type": "object",
+        "properties": {
+          "entries": { "type": "array", "items": { "$ref": "#/components/schemas/LogEntry" } },
+          "count": { "type": "integer" }
+        }
+      },
+      "DeviceListItem": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "address": { "type": "string" },
+          "description": { "type": "string" },
+          "interface_count": { "type": "integer" }
+        }
+      },
+      "DeviceListResponse": {
+        "type": "object",
+        "properties": {
+          "devices": { "type": "array", "items": { "$ref": "#/components/schemas/DeviceListItem" } }
+        }
+      },
+      "InterfaceRuntime": {
+        "type": "object",
+        "properties": {
+          "oper_status": { "type": "string" },
+          "admin_status": { "type": "string" },
+          "last_snmp_validation_at": { "type": "string", "format": "date-time" },
+          "last_telemetry_validation_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "DeviceInterfaceRow": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "desired_state": { "type": "string" },
+          "admin_state": { "type": "string" },
+          "alerts": { "type": "string" },
+          "runtime": { "$ref": "#/components/schemas/InterfaceRuntime", "nullable": true }
+        }
+      },
+      "DeviceDetailResponse": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "address": { "type": "string" },
+          "description": { "type": "string" },
+          "interfaces": { "type": "array", "items": { "$ref": "#/components/schemas/DeviceInterfaceRow" } },
+          "logs": { "type": "array", "items": { "$ref": "#/components/schemas/LogEntry" } }
+        }
+      },
+      "DeviceDeleteResponse": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "device": { "type": "string" },
+          "cleared_alerts": { "type": "integer" }
+        }
+      },
+      "InterfacePatchRequest": {
+        "type": "object",
+        "properties": {
+          "description": { "type": "string" },
+          "desired_state": { "type": "string" },
+          "admin_state": { "type": "string" },
+          "monitor": { "type": "boolean" },
+          "alert_severity": { "type": "string", "description": "e.g. critical, warning, info" }
+        }
+      },
+      "InterfacePatchResponse": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "device": { "type": "string" },
+          "interface": { "type": "string" }
+        }
+      },
+      "ReloadResponse": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "error": { "type": "string" },
+          "device_count": { "type": "integer" }
+        }
+      },
+      "DeviceTelemetryStat": {
+        "type": "object",
+        "properties": {
+          "device": { "type": "string" },
+          "count": { "type": "integer", "format": "int64" }
+        }
+      },
+      "UnknownTelemetryDevice": {
+        "type": "object",
+        "properties": {
+          "device": { "type": "string" },
+          "count": { "type": "integer", "format": "int64" },
+          "last_seen_at": { "type": "string", "format": "date-time" },
+          "wizard_url": { "type": "string" }
+        }
+      },
+      "TelemetryStatsResponse": {
+        "type": "object",
+        "properties": {
+          "received": { "type": "integer", "format": "int64" },
+          "accepted": { "type": "integer", "format": "int64" },
+          "rejected_invalid_json": { "type": "integer", "format": "int64" },
+          "rejected_auth": { "type": "integer", "format": "int64" },
+          "rejected_missing": { "type": "integer", "format": "int64" },
+          "last_event_at": { "type": "string", "format": "date-time" },
+          "events_per_second": { "type": "number", "format": "double" },
+          "top_devices": { "type": "array", "items": { "$ref": "#/components/schemas/DeviceTelemetryStat" } },
+          "unknown_devices": { "type": "array", "items": { "$ref": "#/components/schemas/UnknownTelemetryDevice" } }
+        }
+      },
+      "DiscoveryRequest": {
+        "type": "object",
+        "required": ["address"],
+        "properties": {
+          "address": { "type": "string", "description": "Device IP or hostname" },
+          "community": { "type": "string", "description": "SNMPv2c community; defaults from env" },
+          "port": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 161 }
+        }
+      },
+      "ProbeResult": {
+        "type": "object",
+        "properties": {
+          "address": { "type": "string" },
+          "sys_name": { "type": "string" },
+          "sys_descr": { "type": "string" },
+          "sys_object_id": { "type": "string" },
+          "sys_location": { "type": "string" },
+          "vendor_hint": { "type": "string" },
+          "already_configured": { "type": "boolean" },
+          "existing_device_key": { "type": "string" }
+        }
+      },
+      "WalkInterface": {
+        "type": "object",
+        "properties": {
+          "index": { "type": "integer" },
+          "name": { "type": "string" },
+          "alias": { "type": "string" },
+          "type": { "type": "integer" },
+          "type_label": { "type": "string" },
+          "is_port_channel": { "type": "boolean" },
+          "channel_members": { "type": "array", "items": { "type": "string" } },
+          "admin_status": { "type": "string" },
+          "oper_status": { "type": "string" },
+          "already_configured": { "type": "boolean" },
+          "filtered_default": { "type": "boolean" }
+        }
+      },
+      "WalkResult": {
+        "type": "object",
+        "properties": {
+          "address": { "type": "string" },
+          "interfaces": { "type": "array", "items": { "$ref": "#/components/schemas/WalkInterface" } },
+          "filtered_count": { "type": "integer" }
+        }
+      },
+      "CommitInterface": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "alias": { "type": "string" },
+          "monitor": { "type": "boolean" },
+          "desired_state": { "type": "string" },
+          "admin_state": { "type": "string" },
+          "alert_severity": { "type": "string" },
+          "is_port_channel": { "type": "boolean" },
+          "members": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "CommitRequest": {
+        "type": "object",
+        "properties": {
+          "address": { "type": "string" },
+          "community": { "type": "string" },
+          "device_key": { "type": "string" },
+          "device_description": { "type": "string" },
+          "existing_device_key": { "type": "string" },
+          "action": { "type": "string" },
+          "interfaces": { "type": "array", "items": { "$ref": "#/components/schemas/CommitInterface" } }
+        }
+      },
+      "CommitResult": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "action": { "type": "string" },
+          "device_key": { "type": "string" },
+          "interfaces_written": { "type": "integer" },
+          "interfaces_monitored": { "type": "integer" },
+          "message": { "type": "string" }
+        }
+      }
+    }
+  }
+}
