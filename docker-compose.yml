@@ -1,3 +1,10 @@
+# Core stack: NetSpec + Apprise only.
+#
+# MDT dial-out (Telegraf gRPC + mdt-translator) is NOT in this file — it lives in
+# docker-compose.dev.yml (name is historical: use that overlay for UAT/staging/prod
+# whenever global.telemetry_mode is telemetry_ingest_push). Example:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+
 services:
   netspec:
     image: ghcr.io/heymex/netspec:${NETSPEC_IMAGE_TAG:-latest}

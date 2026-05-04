@@ -1,3 +1,9 @@
+# MDT sidecar overlay: Telegraf (Cisco MDT in) + translator (NetSpec JSON line out).
+# Use with docker-compose.yml — not standalone. Intended for any env with push
+# telemetry (UAT, prod, lab), despite the "dev" filename.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+
 services:
   telegraf-mdt:
     image: telegraf:1.31

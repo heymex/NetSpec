@@ -33,33 +33,45 @@ The `.env` file should contain:
 
 ### Running
 
-The docker-compose file uses the container image built by GitHub Actions from GitHub Container Registry.
+The default `docker-compose.yml` uses the NetSpec image built by GitHub Actions from GitHub Container Registry. It starts **only** **`netspec`** and **`apprise`**. There is **no** Telegraf or translator in that file by design.
+
+| What you need | Compose files | Services you get |
+|-----------------|----------------|------------------|
+| SNMP-only / no MDT pipeline | `docker-compose.yml` only | `netspec`, `apprise` |
+| **`telemetry_ingest_push`** + Cisco MDT dial-out | **`docker-compose.yml`** + **`docker-compose.dev.yml`** | above + **`telegraf-mdt`**, **`mdt-translator`** |
+
+The second file is named **`docker-compose.dev.yml` for historical reasons**; use the same two-file command on **UAT, staging, or production** whenever you run push telemetry. You must deploy **both YAML files** from the repo (or equivalent paths) so Compose can resolve the `./tools/sidecar/...` bind mounts for Telegraf and the translator **build context**.
 
 **Note**: To pull from GitHub Container Registry, you may need to authenticate:
 ```bash
 echo $GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
 ```
 
-Then start the services:
+SNMP-only / Apprise stack:
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
-For IOS-XE dial-out telemetry (`grpc-tcp`) into `telemetry_ingest_push`, run the sidecar overlay:
-
+Push telemetry (MDT) stack — **required** if devices send MDT to this host and NetSpec uses `telemetry_ingest_push`:
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 ```
 
+The first time (or after translator changes), build the translator image on that host (needs repo checkout with `tools/sidecar/`):
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml build mdt-translator
+```
+CI also publishes **`ghcr.io/<owner>/<repo>-mdt-translator`** tags if you prefer to `docker pull` that image and point Compose at it (advanced; default is local build to `netspec-mdt-translator:local`).
+
 This starts:
 - `telegraf-mdt` to decode Cisco MDT on `tcp/57500`
-- `mdt-translator` (image **`netspec-mdt-translator:local`**, built from **`tools/sidecar`**) to convert decoded records into NetSpec newline-delimited JSON ingest events
+- `mdt-translator` to tail `decoded.json` and open TCP to NetSpec’s ingest port
 
 The sidecar writes runtime artifacts under `${NETSPEC_DATA_DIR}/mdt-sidecar` (`decoded.json`, `forwarder.log`).
 
 To use a specific image tag instead of `latest`, set the `NETSPEC_IMAGE_TAG` environment variable:
 ```bash
-NETSPEC_IMAGE_TAG=v1.0.0 docker-compose up -d
+NETSPEC_IMAGE_TAG=v1.0.0 docker compose up -d
 ```
 
 ### Building from Source
