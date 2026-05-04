@@ -6,8 +6,8 @@ NetSpec is a next-generation, declarative network monitoring system designed for
 
 ### Prerequisites
 
-- Docker and Docker Compose
-- Cisco IOS-XE devices reachable via SNMP and/or dial-out telemetry
+- Docker and Docker Compose v2 (`docker compose`)
+- Cisco IOS-XE devices using **dial-out MDT** (grpc-tcp) into the repo’s Telegraf path, plus SNMP for targeted confirmation
 
 ### Configuration
 
@@ -26,44 +26,56 @@ Steps 1–2 are required for a minimal deployment; step 3 only if you use Appris
 The `.env` file should contain:
 - `SNMP_COMMUNITY` - SNMPv2c community (used by SNMP validation and push-confirmation paths)
 - `API_PORT` - web UI/API listen port override (default `8088`)
-- `APPRISE_API_URL` - Apprise-API base URL (required for alerting). With `network_mode: host` for NetSpec, use `http://127.0.0.1:8086` (or your mapped port). Channel targets come from env vars named in `config/alerts.yaml` under `channels.*.url_env` (for example `APPRISE_SLACK_WEBHOOK`).
+- `APPRISE_API_URL` - Apprise-API **base URL** (required for notifications). NetSpec POSTs JSON to `{APPRISE_API_URL}/notify/` (stateless Apprise-API `notify` endpoint). With `network_mode: host` for NetSpec, use `http://127.0.0.1:8086` (or your host-mapped port), not `http://apprise:8000` (that hostname only resolves inside Compose).
+- Channel targets come from env vars named in `config/alerts.yaml` under `channels.*.url_env` (for example `APPRISE_SLACK_WEBHOOK`). See `.env.example` for placeholders.
 - Optional: `APPRISE_NOTIFY_TIMEOUT` (HTTP timeout per notify, e.g. `15s`). Troubleshooting: [Apprise alerting](docs/APPRISE_ALERTING.md).
+- `NETSPEC_INGEST_HOST` / `NETSPEC_INGEST_PORT` - where **`mdt-translator`** sends NetSpec JSON lines (must match `global.ingest` when `telemetry_mode` is `telemetry_ingest_push`)
+- `MDT_ALLOWED_DEVICES` - optional comma-separated device-name allowlist for the translator sidecar
 - `NETSPEC_IMAGE_TAG` - optional container image tag override
 - Other optional settings as documented in `.env.example`
 
-`config/desired-state.yaml` supports a telemetry mode switch in `global.telemetry_mode`:
-- `snmp_validate_only`: targeted SNMP `GET` validation polling for configured interfaces
-- `telemetry_ingest_push`: line-delimited JSON push ingest on `tcp/57500` with targeted SNMP confirmation per event
+**Host / local binary:** When you run `./netspec -config /path/to/config/desired-state.yaml`, NetSpec loads environment defaults from **`/path/to/config/.env`** and **`/path/to/config/netspec.env`** if present (same directory as `desired-state.yaml`). Existing process environment variables are **not** overridden. Docker Compose still reads `.env` from the **repository root** for variable interpolation in compose files.
+
+`config/desired-state.yaml` sets `global.telemetry_mode`:
+- **`telemetry_ingest_push`** (default in the sample file): line-delimited JSON push ingest on `global.ingest` (default `0.0.0.0:57500`) with targeted SNMP confirmation per event — pair with **both** compose files so Telegraf + **`mdt-translator`** decode IOS-XE dial-out into that ingest.
+- **`snmp_validate_only`**: SNMP validation only; no push ingest listener (no MDT path on this host).
 
 ### Running
 
-The docker-compose file uses the container image built by GitHub Actions from GitHub Container Registry.
+Compose is split across two YAML files so **`docker-compose.yml`** can stay Apprise + NetSpec only; **Telegraf** and **`mdt-translator`** live in **`docker-compose.dev.yml`** (name is historical — use the same merge everywhere you run push telemetry). That is **not** an “optional add-on”; it is how the supported MDT → NetSpec path is packaged.
+
+The NetSpec image is built by GitHub Actions and published to GitHub Container Registry.
 
 **Note**: To pull from GitHub Container Registry, you may need to authenticate:
 ```bash
 echo $GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
 ```
 
-Then start the services:
-```bash
-docker-compose up -d
-```
-
-For IOS-XE dial-out telemetry (`grpc-tcp`) into `telemetry_ingest_push`, run the sidecar overlay:
+**Push telemetry (standard):** IOS-XE dial-out (`grpc-tcp`) with `telemetry_ingest_push`:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 ```
 
-This starts:
-- `telegraf-mdt` to decode Cisco MDT on `tcp/57500`
-- `mdt-translator` (image **`netspec-mdt-translator:local`**, built from **`tools/sidecar`**) to convert decoded records into NetSpec newline-delimited JSON ingest events
+This starts **`telegraf-mdt`** (MDT in on `tcp/57500`) and **`mdt-translator`** (image **`netspec-mdt-translator:local`**, built from **`tools/sidecar`**) writing NetSpec-shaped JSON lines to `NETSPEC_INGEST_HOST:NETSPEC_INGEST_PORT`, plus **`netspec`** and **`apprise`**.
 
-The sidecar writes runtime artifacts under `${NETSPEC_DATA_DIR}/mdt-sidecar` (`decoded.json`, `forwarder.log`).
+The first time (or after translator changes), build the translator on that host (needs repo checkout with `tools/sidecar/`):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml build mdt-translator
+```
+
+Runtime artifacts: `${NETSPEC_DATA_DIR}/mdt-sidecar` (`decoded.json`, `forwarder.log`).
+
+**Core stack only** (no Telegraf/translator on this host — e.g. `snmp_validate_only` and no dial-out to this box):
+
+```bash
+docker compose up -d
+```
 
 To use a specific image tag instead of `latest`, set the `NETSPEC_IMAGE_TAG` environment variable:
 ```bash
-NETSPEC_IMAGE_TAG=v1.0.0 docker-compose up -d
+NETSPEC_IMAGE_TAG=v1.0.0 docker compose up -d
 ```
 
 ### Building from Source
@@ -76,19 +88,28 @@ go build -o netspec ./cmd/netspec
 
 ### Local Docker build (same images as prod, faster iteration than CI)
 
-Use this when you want the **same container layout as production** (Apprise + NetSpec, optional telemetry sidecar) but built **on your machine** from the current tree:
+Use this when you want the **same container layout as production** but built **on your machine** from the current tree:
 
 ```bash
 export NETSPEC_DATA_DIR=/opt/netspec   # or your config/data root
-make docker-rebuild                    # build image netspec:local (after code changes)
-make docker-up                         # apprise + netspec (host network)
-# optional: same stack + MDT sidecar as docker-compose.dev.yml
-make docker-up-telemetry
+make docker-rebuild                    # build netspec:local + netspec-mdt-translator:local
+make docker-up-telemetry               # apprise + netspec + telegraf + mdt-translator (host network)
+# Apprise + NetSpec only (no MDT containers on this host):
+make docker-up
 ```
 
-After each Go or translator Python change, run **`make docker-rebuild`** then **`make docker-up`** or **`make docker-up-telemetry`** (or **`docker compose ... up -d --force-recreate`** for the services you changed). **`make docker-up`** alone does not rebuild images.
+After each Go or translator Python change, run **`make docker-rebuild`** then **`make docker-up-telemetry`** (or **`make docker-up`**) or **`docker compose ... up -d --force-recreate`**. **`make docker-up`** / **`docker-up-telemetry`** alone does not rebuild images.
 
-Compose files: `docker-compose.yml` + `docker-compose.build-local.yml` (and `docker-compose.dev.yml` for telegraf / `mdt-translator`). Stop any host `nohup ./netspec` or old containers first so port **8088** / ingest port are free.
+Compose files: `docker-compose.yml` + `docker-compose.build-local.yml`, and **`docker-compose.dev.yml`** whenever you run the push pipeline locally. Stop any host `nohup ./netspec` or old containers first so port **8088** / ingest port are free.
+
+| Make target | What it does |
+|---------------|----------------|
+| `make docker-rebuild` | Build `netspec:local` and `netspec-mdt-translator:local` |
+| `make docker-up` | Start Apprise + NetSpec (local images) |
+| `make docker-down` | Stop that stack |
+| `make docker-up-telemetry` | Same + Telegraf MDT + `mdt-translator` |
+| `make docker-down-telemetry` | Stop telemetry stack |
+| `make docker-logs-netspec` | Follow NetSpec container logs |
 
 Because `netspec` uses `network_mode: host` in the default compose stack, `APPRISE_API_URL` must target the host-mapped Apprise port (for example `http://127.0.0.1:8086`). In this topology, `depends_on` controls startup order only and does not guarantee Apprise is fully ready before NetSpec starts.
 
@@ -97,11 +118,12 @@ Because `netspec` uses `network_mode: host` in the default compose stack, `APPRI
 This MVP includes:
 
 - ✅ SNMP validator with targeted polling
-- ✅ Interface state evaluation
-- ✅ Basic alerting via Apprise
-- ✅ YAML configuration
-- ✅ Docker deployment
-- ✅ Web status interface
+- ✅ Interface state evaluation (including **port-channel** members, `member_policy` thresholds, and high-speed interface alias normalization for SNMP vs. telemetry name drift)
+- ✅ Push telemetry ingest via **Telegraf MDT + `mdt-translator`** (newline-delimited JSON into NetSpec)
+- ✅ Alerting via **Apprise-API** (`/notify/`) using channels defined in `config/alerts.yaml`
+- ✅ YAML configuration (split devices, optional credentials and maintenance files)
+- ✅ Docker deployment and **local parity** Makefile workflow
+- ✅ Web status interface, discovery wizard, API browser (OpenAPI/Swagger)
 
 ## Web Interface
 
@@ -109,13 +131,13 @@ NetSpec includes a built-in web UI accessible at `http://localhost:8088` (or you
 
 ### Features
 
-- **Dashboard** - Overview of devices, interfaces, and active alerts
+- **Dashboard** - Overview of devices, interfaces, active alerts, push telemetry **events/sec**, and a **host overview** honeycomb (up to 64 devices, worst alert severity per cell, links to device pages; refreshes periodically)
 - **Device List** - All monitored devices with interface counts
-- **Active Alerts** - Current firing alerts with severity indicators
-- **Live Logs** - Auto-refreshing log stream (updates every 5 seconds)
+- **Active Alerts** - Current firing alerts with severity indicators (sorted by severity)
+- **Live Logs** - Auto-refreshing log stream (newest entries first; periodic refresh)
 - **Configuration View** - Collection interval and dedup settings
 - **Config Reload** - Button to reload all configuration files from the config directory without restart
-- **API Browser** - Interactive OpenAPI documentation at `/api-browser` (Swagger UI with try-it-out; spec served at `/openapi.json`)
+- **API Browser** - Interactive OpenAPI documentation at `/api-browser` (Swagger UI with try-it-out; machine-readable spec at `/openapi.json`). Interface names in URLs must be **percent-encoded** (for example `GigabitEthernet1%2F0%2F1`).
 
 ### API Endpoints
 
@@ -130,10 +152,10 @@ NetSpec includes a built-in web UI accessible at `http://localhost:8088` (or you
 | `/api/logs` | GET | Recent log entries (JSON) |
 | `/api/devices` | GET | Device configuration (JSON) |
 | `/api/devices/{name}` | GET | Single device detail (JSON) |
-| `/api/devices/{name}` | DELETE | Remove device from desired state YAML |
-| `/api/devices/{name}/interfaces/{iface}` | PATCH | Update interface policy fields |
+| `/api/devices/{name}` | DELETE | Remove device from desired-state YAML (and split device file if present), reload when configured, clear active alerts for that device |
+| `/api/devices/{name}/interfaces/{iface}` | PATCH | Update interface policy fields (`monitor`, `desired_state`, `admin_state`, `description`, `alert_severity`, etc.) |
 | `/api/reload` | POST | Reload configuration |
-| `/api/telemetry/stats` | GET | Push ingest counters and top talkers |
+| `/api/telemetry/stats` | GET | Push ingest counters, **events/sec**, last event time, top talkers, and unknown devices (with wizard URLs; telemetry source IP can prefill the wizard when the device is not in config yet) |
 | `/api/discovery/probe` | POST | SNMP probe (wizard) |
 | `/api/discovery/walk` | POST | SNMP interface walk |
 | `/api/discovery/commit` | POST | Write discovery selection to YAML |
@@ -156,7 +178,7 @@ NetSpec currently supports two runtime collection modes:
 Preferred operating model:
 
 ```
-IOS-XE Dial-Out Telemetry → NetSpec Ingest Receiver → SNMP Targeted Validation → Evaluator → Alert Engine
+IOS-XE Dial-Out Telemetry → Collector (e.g. Telegraf MDT) → mdt-translator → NetSpec ingest → SNMP targeted validation → Evaluator → Alert engine
 ```
 
 This keeps telemetry event-driven while using targeted SNMP `GET` calls for confirmation. Dial-out telemetry configuration details are documented in `docs/CISCO_GNMI_SETUP.md`.
@@ -174,7 +196,7 @@ When using the sidecar overlay, set `NETSPEC_INGEST_PORT` in `.env` to match you
 
 ## Configuration
 
-NetSpec uses multiple configuration files:
+NetSpec loads all files from the **`config/`** directory next to `desired-state.yaml`:
 
 | File | Required | Purpose |
 |------|----------|---------|
@@ -210,7 +232,11 @@ core-sw-01:
 Device keys must be unique across all files and `desired-state.yaml`.
 On startup, NetSpec logs `monolithic_device_count` and `split_device_count` to show how devices were sourced.
 
-See `config/desired-state.yaml` and `config/devices/example-device.yaml` for configuration examples.
+See `config/desired-state.yaml`, `config/alerts.yaml`, and `config/devices/example-device.yaml` for configuration examples.
+
+### Port-channel interfaces
+
+For `Port-channel` (or equivalent) interfaces you can declare `members.required` and a `member_policy` with `mode`: `all_active`, `min_active`, or `per_stack_minimum`, plus optional `critical_threshold_pct` / `warning_threshold_pct` for member-down severity escalation. Invalid combinations (for example warning threshold ≥ critical) are rejected at config load time.
 
 ## Bundled Tools
 
@@ -220,12 +246,16 @@ The container image bundles `gnmic` for operator debugging workflows (for exampl
 
 For detailed instructions on IOS-XE telemetry and validation patterns, see the [Cisco telemetry setup guide](docs/CISCO_GNMI_SETUP.md).
 
+## Operations runbook
+
+For a full dev-host workflow (ports, Apprise URL, sidecar, `curl` checks), see [docs/DEV_HOST_RUNBOOK.md](docs/DEV_HOST_RUNBOOK.md).
+
 ## CI/CD
 
 GitHub Actions automatically:
 - Builds and tests on every push and pull request
 - Builds and pushes multi-arch Docker images (linux/amd64, linux/arm64) to GitHub Container Registry for **NetSpec** and the **MDT translator** sidecar
-- Images are tagged with: `latest`, branch name, commit SHA, and semantic version tags
+- Images are tagged with: `latest`, branch name, commit SHA, and semantic version tags (PR builds use corrected metadata tagging)
 
 ### Using the Container Image
 
@@ -235,7 +265,7 @@ Images are published to GitHub Container Registry. Replace `OWNER/REPO` with you
 # Pull the latest NetSpec image
 docker pull ghcr.io/OWNER/REPO:latest
 
-# MDT → NetSpec ingest translator (optional; dev compose also builds it locally)
+# MDT → NetSpec ingest translator (same image `docker-compose.dev.yml` builds locally)
 docker pull ghcr.io/OWNER/REPO-mdt-translator:latest
 
 # Or use a specific version
@@ -244,5 +274,6 @@ docker pull ghcr.io/OWNER/REPO:v1.0.0
 
 ## Notes
 
-- Use `/wizard` in the web UI to discover and add devices/interfaces.
-- Interface policies can be edited inline from each device page (monitor flag, desired/admin state, alert level).
+- Use `/wizard` in the web UI to discover and add devices/interfaces. Unknown push-telemetry sources appear under **Telemetry** stats with a link into the wizard (address prefill uses the TCP sender when available).
+- Interface policies can be edited inline from each device page (monitor flag, desired/admin state, alert severity).
+- Prefer **`docker compose`** (v2) over legacy `docker-compose` where possible.

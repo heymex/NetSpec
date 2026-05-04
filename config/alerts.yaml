@@ -1,6 +1,5 @@
-# Alert channels, routing rules, and behavior. Loaded by NetSpec as config/alerts.yaml.
-# Do not put this block in desired-state.yaml — that file is only for DesiredStateConfig
-# and unknown keys (including `alerts`) are ignored without warning.
+# Alert routing for NetSpec (loaded from config/alerts.yaml).
+# Top-level `alerts:` inside desired-state.yaml is not used by the loader.
 
 channels:
   ops-slack:

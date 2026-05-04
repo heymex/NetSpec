@@ -1,4 +1,4 @@
-# Merge with docker-compose.yml (and optionally docker-compose.dev.yml) to build
+# Merge with docker-compose.yml (and docker-compose.dev.yml for push telemetry) to build
 # NetSpec from this repo instead of pulling ghcr.io/heymex/netspec.
 #
 # Example:

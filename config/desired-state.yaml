@@ -5,7 +5,9 @@
 
 global:
   default_credentials: vault://network/gnmi-creds
-  telemetry_mode: snmp_validate_only # snmp_validate_only | telemetry_ingest_push
+  # Production path: push ingest (IOS-XE dial-out → Telegraf + translator → NetSpec).
+  # snmp_validate_only = SNMP validation only, no push ingest listener.
+  telemetry_mode: telemetry_ingest_push
   collection_interval: 10s
   snmp:
     version: 2c

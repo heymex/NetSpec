@@ -39,3 +39,5 @@ data/
 
 # Documentation and misc files
 .docs/
+
+.DS_Store
