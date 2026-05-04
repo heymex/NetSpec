@@ -23,6 +23,7 @@ cp .env.example .env
 The `.env` file should contain:
 - `SNMP_COMMUNITY` - SNMPv2c community (used by SNMP validation and push-confirmation paths)
 - `APPRISE_API_URL` - Apprise-API base URL (required). With `network_mode: host` for NetSpec, use `http://127.0.0.1:8086` (or your mapped port). Channel targets come from env vars named in `alerts.channels.*.url_env` in YAML (for example `APPRISE_SLACK_WEBHOOK`).
+- Optional: `APPRISE_NOTIFY_TIMEOUT` (HTTP timeout per notify, e.g. `15s`). Troubleshooting: [Apprise alerting](docs/APPRISE_ALERTING.md).
 - `NETSPEC_IMAGE_TAG` - optional container image tag override
 - Other optional settings as documented in `.env.example`
 
