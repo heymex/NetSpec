@@ -72,8 +72,8 @@ func main() {
 		Int("split_device_count", cfg.SplitDeviceCount).
 		Msg("Configuration loaded")
 
-	// Create notifier
-	notifier := notifier.NewNotifier(logger)
+	// Create notifier (channel URLs come from env vars named in desired-state alerts.channels.*.url_env)
+	notifier := notifier.NewNotifier(logger, cfg.Alerts.Channels)
 
 	// Create alert engine
 	alertEngine := alerter.NewEngine(cfg, notifier, logger)
@@ -304,7 +304,6 @@ func main() {
 		// are evaluated immediately after reload.
 		cfg = newCfg
 		eval = evaluator.NewEvaluator(cfg, logger)
-		go alertEngine.Run()
 
 		logger.Info().
 			Int("device_count", len(newCfg.DesiredState.Devices)).

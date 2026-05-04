@@ -3,79 +3,188 @@ package notifier
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"regexp"
+	"strings"
 	"time"
 
+	"github.com/netspec/netspec/internal/config"
 	"github.com/netspec/netspec/internal/types"
 	"github.com/rs/zerolog"
 )
 
-// Notifier handles sending alerts via Apprise
+// appriseNotifyKey matches keys for POST /notify/{key}/ (Apprise-API stored configs).
+var appriseNotifyKey = regexp.MustCompile(`^[\w-]{1,128}$`)
+
+// Notifier sends alerts through an Apprise-API instance (linuxserver/apprise-api or caronc/apprise-api).
 type Notifier struct {
-	logger zerolog.Logger
-	client *http.Client
+	logger   zerolog.Logger
+	client   *http.Client
+	channels map[string]config.ChannelConfig
 }
 
-// NewNotifier creates a new Apprise notifier
-func NewNotifier(logger zerolog.Logger) *Notifier {
+// NewNotifier builds a notifier using channel definitions from desired-state (alerts.channels).
+func NewNotifier(logger zerolog.Logger, channels map[string]config.ChannelConfig) *Notifier {
+	if channels == nil {
+		channels = make(map[string]config.ChannelConfig)
+	}
 	return &Notifier{
-		logger: logger,
-		client: &http.Client{
-			Timeout: 10 * time.Second,
-		},
+		logger:   logger.With().Str("component", "notifier").Logger(),
+		client:   &http.Client{Timeout: 10 * time.Second},
+		channels: channels,
 	}
 }
 
-// SendAlert sends an alert to the specified channels
+// SendAlert delivers an alert to the given logical channel names (from alert_rules).
 func (n *Notifier) SendAlert(alert *types.Alert, channelNames []string) error {
-	// Get channel configs
-	channels := make([]Channel, 0, len(channelNames))
+	if len(channelNames) == 0 {
+		return nil
+	}
+
+	apiBase := strings.TrimSpace(os.Getenv("APPRISE_API_URL"))
+	if apiBase == "" {
+		return fmt.Errorf("APPRISE_API_URL is not set; cannot deliver notifications (set it to your Apprise-API base URL, e.g. http://localhost:8086)")
+	}
+
+	title := fmt.Sprintf("NetSpec: %s", alert.Severity)
+	body := n.formatMessage(alert)
+	notifyType := appriseNotifyType(alert.Severity, alert.State)
+
+	var errs []error
+	attempted := 0
+
 	for _, name := range channelNames {
-		// For MVP, we'll use Apprise API directly
-		// In production, this would look up channel config
-		url := os.Getenv(fmt.Sprintf("APPRISE_%s_URL", name))
-		if url == "" {
-			n.logger.Warn().
+		ch, ok := n.channels[name]
+		if !ok {
+			n.logger.Warn().Str("channel", name).Msg("unknown alert channel referenced in alert_rules")
+			errs = append(errs, fmt.Errorf("channel %q: not defined in alerts.channels", name))
+			continue
+		}
+		if !severityAllows(ch.SeverityFilter, alert.Severity) {
+			n.logger.Debug().
 				Str("channel", name).
-				Msg("Channel URL not found, skipping")
+				Str("severity", alert.Severity).
+				Msg("channel skipped due to severity_filter")
 			continue
 		}
 
-		channels = append(channels, Channel{
-			Name: name,
-			URL:  url,
-		})
-	}
+		serviceURL := strings.TrimSpace(os.Getenv(ch.URLEnv))
+		if serviceURL == "" {
+			n.logger.Warn().
+				Str("channel", name).
+				Str("url_env", ch.URLEnv).
+				Msg("notification URL environment variable is empty")
+			errs = append(errs, fmt.Errorf("channel %q: environment variable %s is not set or empty", name, ch.URLEnv))
+			continue
+		}
 
-	// Format message
-	message := n.formatMessage(alert)
-
-	// Send to each channel
-	for _, channel := range channels {
-		if err := n.sendToApprise(channel.URL, message, alert.Severity); err != nil {
-			n.logger.Error().
-				Err(err).
-				Str("channel", channel.Name).
-				Msg("Failed to send notification")
-			// Continue to other channels
+		attempted++
+		if err := n.deliver(apiBase, serviceURL, title, body, notifyType); err != nil {
+			n.logger.Error().Err(err).Str("channel", name).Msg("failed to send notification")
+			errs = append(errs, fmt.Errorf("channel %q: %w", name, err))
 		} else {
-			n.logger.Info().
-				Str("channel", channel.Name).
-				Str("alert_id", alert.ID).
-				Msg("Notification sent")
+			n.logger.Info().Str("channel", name).Str("alert_id", alert.ID).Msg("notification sent")
 		}
 	}
 
+	if attempted == 0 {
+		return errors.Join(errs...)
+	}
+	return errors.Join(errs...)
+}
+
+func severityAllows(filter []string, severity string) bool {
+	if len(filter) == 0 {
+		return true
+	}
+	s := strings.ToLower(strings.TrimSpace(severity))
+	for _, f := range filter {
+		if strings.ToLower(strings.TrimSpace(f)) == s {
+			return true
+		}
+	}
+	return false
+}
+
+func appriseNotifyType(severity, state string) string {
+	if strings.EqualFold(state, "resolved") {
+		return "success"
+	}
+	switch strings.ToLower(strings.TrimSpace(severity)) {
+	case "critical":
+		return "failure"
+	case "warning":
+		return "warning"
+	case "info":
+		return "info"
+	default:
+		return "warning"
+	}
+}
+
+func (n *Notifier) deliver(apiBase, serviceURL, title, body, notifyType string) error {
+	reqURL, payload, err := buildNotifyRequest(apiBase, serviceURL, title, body, notifyType)
+	if err != nil {
+		return err
+	}
+
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal notify payload: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, reqURL, bytes.NewReader(jsonData))
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := n.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("http: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("apprise-api returned %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
 	return nil
 }
 
-// Channel represents a notification channel
-type Channel struct {
-	Name string
-	URL  string
+// buildNotifyRequest chooses Apprise-API stateless vs keyed notify URL and JSON body.
+// - Service URLs (contain "://") use POST /notify/ with "urls" set (NotifyByUrlForm).
+// - Otherwise, if the value matches the API key pattern, POST /notify/{key}/ without "urls" (NotifyForm + stored config).
+func buildNotifyRequest(apiBase, serviceURL, title, body, notifyType string) (reqURL string, payload map[string]string, err error) {
+	base, err := url.Parse(strings.TrimSpace(apiBase))
+	if err != nil || base.Scheme == "" || base.Host == "" {
+		return "", nil, fmt.Errorf("invalid APPRISE_API_URL %q", apiBase)
+	}
+
+	payload = map[string]string{
+		"title":  title,
+		"body":   body,
+		"format": "text",
+		"type":   notifyType,
+	}
+
+	if strings.Contains(serviceURL, "://") {
+		u := base.JoinPath("notify")
+		payload["urls"] = serviceURL
+		return u.String(), payload, nil
+	}
+
+	if appriseNotifyKey.MatchString(serviceURL) {
+		u := base.JoinPath("notify", serviceURL)
+		return u.String(), payload, nil
+	}
+
+	return "", nil, fmt.Errorf("value must be an Apprise service URL (contains ://) or a stored notify key (letters, digits, underscore, hyphen, max 128 chars); got %q", serviceURL)
 }
 
 // formatMessage formats an alert into a notification message
@@ -95,75 +204,12 @@ func (n *Notifier) formatMessage(alert *types.Alert) string {
 	}
 
 	title := fmt.Sprintf("%s NetSpec Alert: %s", emoji, alert.AlertType)
-	body := fmt.Sprintf("%s\n\nDevice: %s\nInterface: %s\nSeverity: %s\nState: %s",
+	msgBody := fmt.Sprintf("%s\n\nDevice: %s\nInterface: %s\nSeverity: %s\nState: %s",
 		alert.Message, alert.Device, alert.Entity, alert.Severity, alert.State)
 
 	if alert.ResolvedAt != nil {
-		body += fmt.Sprintf("\nResolved at: %s", alert.ResolvedAt.Format(time.RFC3339))
+		msgBody += fmt.Sprintf("\nResolved at: %s", alert.ResolvedAt.Format(time.RFC3339))
 	}
 
-	return fmt.Sprintf("%s\n\n%s", title, body)
-}
-
-// sendToApprise sends a message to Apprise API
-func (n *Notifier) sendToApprise(url, message, severity string) error {
-	// For MVP, we'll use Apprise API endpoint
-	// Apprise API expects: POST /notify/{service} with body
-	// For simplicity, we'll use the URL directly as Apprise service URL
-	
-	// If URL contains "://", it's already an Apprise service URL
-	// Otherwise, assume it's an Apprise API endpoint
-	
-	// Simple implementation: if it looks like an Apprise service URL, use it directly
-	// Otherwise, POST to Apprise API
-	
-	// For MVP, we'll assume Apprise service URLs are provided
-	// Format: slack://tokenA/tokenB/tokenC
-	// We'll use Apprise library or HTTP API
-	
-	// Simple HTTP POST to Apprise API (if running as service)
-	// For MVP, we'll use direct Apprise service URLs
-	
-	// Create request body
-	payload := map[string]string{
-		"body": message,
-		"title": fmt.Sprintf("NetSpec: %s", severity),
-		"format": "text",
-	}
-	
-	jsonData, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("failed to marshal payload: %w", err)
-	}
-
-	// Try Apprise API endpoint first (if APPRISE_API_URL is set)
-	apiURL := os.Getenv("APPRISE_API_URL")
-	if apiURL != "" {
-		req, err := http.NewRequest("POST", fmt.Sprintf("%s/notify/%s", apiURL, url), bytes.NewBuffer(jsonData))
-		if err != nil {
-			return fmt.Errorf("failed to create request: %w", err)
-		}
-		req.Header.Set("Content-Type", "application/json")
-
-		resp, err := n.client.Do(req)
-		if err != nil {
-			return fmt.Errorf("failed to send request: %w", err)
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode >= 400 {
-			body, _ := io.ReadAll(resp.Body)
-			return fmt.Errorf("Apprise API error: %d - %s", resp.StatusCode, string(body))
-		}
-
-		return nil
-	}
-
-	// Fallback: log that we would send (for MVP without Apprise service)
-	n.logger.Info().
-		Str("url", url).
-		Str("message", message).
-		Msg("Would send notification (Apprise not configured)")
-
-	return nil
+	return fmt.Sprintf("%s\n\n%s", title, msgBody)
 }

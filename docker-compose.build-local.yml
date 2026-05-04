@@ -1,0 +1,26 @@
+# Merge with docker-compose.yml (and optionally docker-compose.dev.yml) to build
+# NetSpec from this repo instead of pulling ghcr.io/heymex/netspec.
+#
+# Example:
+#   export NETSPEC_DATA_DIR=/opt/netspec
+#   docker compose -f docker-compose.yml -f docker-compose.build-local.yml build netspec
+#   docker compose -f docker-compose.yml -f docker-compose.build-local.yml up -d
+#
+# With MDT sidecar (same as prod compose stack):
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.build-local.yml up -d
+#
+# Optional build metadata (e.g. from Makefile):
+#   NETSPEC_LOCAL_VERSION  (default: dev)
+#   NETSPEC_LOCAL_COMMIT   (default: unknown)
+#   NETSPEC_LOCAL_BUILD_DATE (default: unknown)
+
+services:
+  netspec:
+    image: netspec:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${NETSPEC_LOCAL_VERSION:-dev}
+        COMMIT: ${NETSPEC_LOCAL_COMMIT:-unknown}
+        BUILD_DATE: ${NETSPEC_LOCAL_BUILD_DATE:-unknown}

@@ -96,11 +96,9 @@ func NewEngine(cfg *config.Config, notifier *notifier.Notifier, logger zerolog.L
 		escFn := func(alert types.Alert, channels []string) {
 			alert.Message = fmt.Sprintf("[ESCALATED] %s", alert.Message)
 			for _, chName := range channels {
-				ch, ok := cfg.Alerts.Channels[chName]
-				if !ok {
+				if _, ok := cfg.Alerts.Channels[chName]; !ok {
 					continue
 				}
-				_ = ch // Use channel config if needed
 				if err := notifier.SendAlert(&alert, []string{chName}); err != nil {
 					l.Error().Err(err).Str("channel", chName).Msg("escalation notification failed")
 				} else {
@@ -301,7 +299,7 @@ func (e *Engine) ResolveAlert(device, entity, alertType string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	alertID := fmt.Sprintf("%s:%s:%s", device, entity, alertType)
+	alertID := fmt.Sprintf("%s|%s|%s", device, entity, alertType)
 	alert, exists := e.activeAlerts[alertID]
 	if !exists || alert.State == "resolved" {
 		return
@@ -343,11 +341,6 @@ func getChannelsForSeverity(cfg *config.Config, severity string) []string {
 	}
 
 	return []string{}
-}
-
-// getChannelURL gets channel URL from environment variable
-func getChannelURL(envVar string) string {
-	return "" // Will be handled by notifier
 }
 
 // GetActiveAlerts returns all active alerts
