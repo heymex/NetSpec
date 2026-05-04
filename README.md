@@ -52,7 +52,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 
 This starts:
 - `telegraf-mdt` to decode Cisco MDT on `tcp/57500`
-- `mdt-translator` to convert decoded records into NetSpec newline-delimited JSON ingest events
+- `mdt-translator` (image **`netspec-mdt-translator:local`**, built from **`tools/sidecar`**) to convert decoded records into NetSpec newline-delimited JSON ingest events
 
 The sidecar writes runtime artifacts under `${NETSPEC_DATA_DIR}/mdt-sidecar` (`decoded.json`, `forwarder.log`).
 
@@ -81,7 +81,7 @@ make docker-up                         # apprise + netspec (host network)
 make docker-up-telemetry
 ```
 
-After each Go change, run **`make docker-rebuild`** then **`make docker-up`** (or **`docker compose ... up -d --force-recreate netspec`**). **`make docker-up`** alone does not rebuild the binary.
+After each Go or translator Python change, run **`make docker-rebuild`** then **`make docker-up`** or **`make docker-up-telemetry`** (or **`docker compose ... up -d --force-recreate`** for the services you changed). **`make docker-up`** alone does not rebuild images.
 
 Compose files: `docker-compose.yml` + `docker-compose.build-local.yml` (and `docker-compose.dev.yml` for telegraf / `mdt-translator`). Stop any host `nohup ./netspec` or old containers first so port **8088** / ingest port are free.
 
@@ -195,7 +195,7 @@ For detailed instructions on IOS-XE telemetry and validation patterns, see the [
 
 GitHub Actions automatically:
 - Builds and tests on every push and pull request
-- Builds and pushes multi-arch Docker images (linux/amd64, linux/arm64) to GitHub Container Registry
+- Builds and pushes multi-arch Docker images (linux/amd64, linux/arm64) to GitHub Container Registry for **NetSpec** and the **MDT translator** sidecar
 - Images are tagged with: `latest`, branch name, commit SHA, and semantic version tags
 
 ### Using the Container Image
@@ -203,8 +203,11 @@ GitHub Actions automatically:
 Images are published to GitHub Container Registry. Replace `OWNER/REPO` with your repository:
 
 ```bash
-# Pull the latest image
+# Pull the latest NetSpec image
 docker pull ghcr.io/OWNER/REPO:latest
+
+# MDT → NetSpec ingest translator (optional; dev compose also builds it locally)
+docker pull ghcr.io/OWNER/REPO-mdt-translator:latest
 
 # Or use a specific version
 docker pull ghcr.io/OWNER/REPO:v1.0.0

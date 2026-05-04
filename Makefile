@@ -21,12 +21,15 @@ export NETSPEC_LOCAL_COMMIT     ?= $(shell git rev-parse --short HEAD 2>/dev/nul
 export NETSPEC_LOCAL_BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 export NETSPEC_LOCAL_VERSION    ?= dev
 
-.PHONY: docker-build-netspec docker-rebuild docker-up docker-down docker-up-telemetry docker-down-telemetry docker-logs-netspec
+.PHONY: docker-build-netspec docker-build-mdt-translator docker-rebuild docker-up docker-down docker-up-telemetry docker-down-telemetry docker-logs-netspec
 
 docker-build-netspec:
 	$(COMPOSE_BASE) build netspec
 
-docker-rebuild: docker-build-netspec
+docker-build-mdt-translator:
+	$(COMPOSE_TELEM) build mdt-translator
+
+docker-rebuild: docker-build-netspec docker-build-mdt-translator
 
 docker-up:
 	$(COMPOSE_BASE) up -d
