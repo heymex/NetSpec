@@ -130,5 +130,30 @@ tsh ssh derek@derek-ghrunner "cd /home/derek/mdt-sidecar && nohup env MDT_DECODE
   - Fix: align `global.ingest.port` in YAML with `NETSPEC_INGEST_PORT`; restart `make docker-up-telemetry` or the translator container.
 
 - Container vs host binary
-  - Prefer **one** of: containerized NetSpec (this runbook § “Recommended: containerized dev”) **or** host `./netspec` for quick Go iteration—not both on the same ports.
+  - Prefer **one** runtime: containerized NetSpec (this runbook § “Recommended: containerized dev”) **or** host `./netspec` for quick Go iteration—not both on the same ports. This host has often run the **host** `./netspec` process operationally; if you switch to Compose, ensure port/config paths are correct.
   - If testing with Docker Compose, ensure `NETSPEC_DATA_DIR` contains `config/`, `data/`, and `apprise-config/` as in production, and avoid dual-running with a legacy host NetSpec on **8088** / the ingest port.
+
+## 8) Opening a GitHub PR from the dev host (`gh`)
+
+**Best practice:** create the PR from the **branch already pushed to `origin`**, without checking that branch out in a dirty working tree. That avoids losing or merging local-only edits on the server (e.g. tar-patched files, experiments).
+
+1. Push your branch from your laptop (or merge via GitHub UI) so **`origin/<branch>`** exists.
+2. On **`derek-ghrunner`**, use **`gh pr create --head <branch>`** from any directory in the clone; **`git checkout`** of the feature branch is **not** required.
+
+```bash
+cd /home/derek/NetSpec-dev
+git fetch origin
+gh pr create --repo heymex/NetSpec --base main --head feature/your-branch \
+  --title "Your title" --body "Your description."
+```
+
+Or use the repo helper (same behavior, resolves clone path automatically when run inside the repo):
+
+```bash
+cd /home/derek/NetSpec-dev
+./scripts/gh-pr-create.sh feature/your-branch "Your title" "Your description."
+```
+
+**Avoid:** `git checkout feature/your-branch` when you have uncommitted changes in **`NetSpec-dev`** unless you intend to carry or discard them (**`git stash`** / commit first).
+
+**Alternative:** run **`gh pr create`** from your **laptop** clone after **`git push`** (same model; no server needed).
