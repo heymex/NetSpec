@@ -20,10 +20,10 @@ export NETSPEC_LOCAL_VERSION    ?= dev
 .PHONY: docker-build-netspec docker-build-mdt-translator docker-rebuild docker-up docker-down docker-logs-netspec
 
 docker-build-netspec:
-	$(COMPOSE_LOCAL) build netspec
+	$(COMPOSE_LOCAL) build netspec-netspec
 
 docker-build-mdt-translator:
-	$(COMPOSE_LOCAL) build mdt-translator
+	$(COMPOSE_LOCAL) build netspec-mdt-translator
 
 docker-rebuild: docker-build-netspec docker-build-mdt-translator
 
@@ -34,4 +34,4 @@ docker-down:
 	$(COMPOSE_LOCAL) down
 
 docker-logs-netspec:
-	$(COMPOSE_LOCAL) logs -f netspec
+	$(COMPOSE_LOCAL) logs -f netspec-netspec

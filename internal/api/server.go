@@ -64,6 +64,8 @@ type Server struct {
 	evaluatorMu     sync.RWMutex
 	telemetryGetter TelemetryStatsGetter
 	telemetryMu     sync.RWMutex
+	reachMu        sync.RWMutex
+	reachTracker   *collector.ReachabilityTracker
 }
 
 // NewServer creates a new API server
@@ -114,6 +116,19 @@ func (s *Server) SetTelemetryStatsGetter(getter TelemetryStatsGetter) {
 	s.telemetryMu.Lock()
 	defer s.telemetryMu.Unlock()
 	s.telemetryGetter = getter
+}
+
+// SetSNMPReachabilityTracker supplies per-device SNMP contact state for the API and honeycomb.
+func (s *Server) SetSNMPReachabilityTracker(t *collector.ReachabilityTracker) {
+	s.reachMu.Lock()
+	defer s.reachMu.Unlock()
+	s.reachTracker = t
+}
+
+func (s *Server) snmpReachTracker() *collector.ReachabilityTracker {
+	s.reachMu.RLock()
+	defer s.reachMu.RUnlock()
+	return s.reachTracker
 }
 
 // Start starts the HTTP server
@@ -248,15 +263,30 @@ func (s *Server) handleDevicesAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Strings(deviceNames)
 
+	tr := s.snmpReachTracker()
 	devices := make([]map[string]interface{}, 0, len(deviceNames))
 	for _, name := range deviceNames {
 		dev := cfg.DesiredState.Devices[name]
-		devices = append(devices, map[string]interface{}{
+		row := map[string]interface{}{
 			"name":            name,
 			"address":         dev.Address,
 			"description":     dev.Description,
 			"interface_count": len(dev.Interfaces),
-		})
+		}
+		if tr != nil {
+			rs := tr.Status(name)
+			row["snmp_reachability"] = rs.Reachability
+			if !rs.LastAttemptAt.IsZero() {
+				row["snmp_last_attempt_at"] = rs.LastAttemptAt.UTC().Format(time.RFC3339Nano)
+			}
+			if !rs.LastOKAt.IsZero() {
+				row["snmp_last_ok_at"] = rs.LastOKAt.UTC().Format(time.RFC3339Nano)
+			}
+			if rs.LastError != "" {
+				row["snmp_last_error"] = rs.LastError
+			}
+		}
+		devices = append(devices, row)
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -549,7 +579,9 @@ func (s *Server) handleWebUI(w http.ResponseWriter, r *http.Request) {
 		hexAlerts = append(hexAlerts, webui.HexAlert{Device: a.Device, Severity: a.Severity})
 	}
 	worstByDev := webui.WorstSeverityPerDevice(hexAlerts)
-	hexLayout := webui.BuildHexMapLayout(deviceNames, worstByDev, webui.DefaultHexRadius)
+	reachAugment := snmpReachForHex(s.snmpReachTracker(), deviceNames)
+	mergedHex := webui.MergeHexSeverityWithSNMP(worstByDev, reachAugment)
+	hexLayout := webui.BuildHexMapLayout(deviceNames, mergedHex, webui.DefaultHexRadius)
 	data.HexMapSVG = webui.RenderHexMapSVG(hexLayout)
 
 	// Get recent logs
@@ -728,6 +760,22 @@ func (s *Server) handleDevicePage(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error().Err(err).Msg("Failed to render device template")
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
+}
+
+// snmpReachForHex maps device names to reachability strings for honeycomb merge (ok omitted).
+func snmpReachForHex(tracker *collector.ReachabilityTracker, deviceNames []string) map[string]string {
+	if tracker == nil || len(deviceNames) == 0 {
+		return nil
+	}
+	out := make(map[string]string)
+	for _, dn := range deviceNames {
+		st := tracker.Status(dn)
+		if st.Reachability == collector.SNMPReachOK {
+			continue
+		}
+		out[dn] = st.Reachability
+	}
+	return out
 }
 
 // formatDuration formats a duration in a human-readable way

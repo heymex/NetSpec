@@ -24,8 +24,9 @@ func PatchDesiredState(configPath string, req *CommitRequest) (*CommitResult, er
 	if err != nil {
 		return nil, err
 	}
-	devicesDir := filepath.Join(filepath.Dir(configPath), "devices")
-	splitIndex, err := indexSplitDeviceFiles(devicesDir)
+	configDir := filepath.Dir(configPath)
+	writeDevicesDir := config.SplitDeviceWriteDir(configDir)
+	splitIndex, err := indexMergedSplitDeviceFiles(configDir)
 	if err != nil {
 		return nil, err
 	}
@@ -42,7 +43,7 @@ func PatchDesiredState(configPath string, req *CommitRequest) (*CommitResult, er
 			Interfaces:  make(map[string]config.InterfaceConfig),
 		}
 		applyInterfaces(&dev, req.Interfaces)
-		if err := writeSplitDeviceFile(devicesDir, targetKey, dev); err != nil {
+		if err := writeSplitDeviceFile(writeDevicesDir, targetKey, dev); err != nil {
 			return nil, err
 		}
 	case "patch":
@@ -94,7 +95,7 @@ func PatchDesiredState(configPath string, req *CommitRequest) (*CommitResult, er
 		if err := writeDesiredState(configPath, desired); err != nil {
 			return nil, err
 		}
-		if err := writeSplitDeviceFile(devicesDir, targetKey, dev); err != nil {
+		if err := writeSplitDeviceFile(writeDevicesDir, targetKey, dev); err != nil {
 			return nil, err
 		}
 		break
@@ -200,6 +201,23 @@ func writeDesiredState(configPath string, desired *config.DesiredStateConfig) er
 
 type splitFile struct {
 	Devices map[string]config.DeviceConfig `yaml:"devices"`
+}
+
+func indexMergedSplitDeviceFiles(configDir string) (map[string]string, error) {
+	out := map[string]string{}
+	for _, dir := range config.SplitDeviceReadDirs(configDir) {
+		sub, err := indexSplitDeviceFiles(dir)
+		if err != nil {
+			return nil, err
+		}
+		for key, path := range sub {
+			if prev, ok := out[key]; ok {
+				return nil, fmt.Errorf("duplicate device %q in split YAML: %s and %s", key, prev, path)
+			}
+			out[key] = path
+		}
+	}
+	return out, nil
 }
 
 func indexSplitDeviceFiles(devicesDir string) (map[string]string, error) {
@@ -365,8 +383,8 @@ func UpdateDeviceInterface(configPath, deviceKey, ifaceName string, patch Interf
 	if err != nil {
 		return err
 	}
-	devicesDir := filepath.Join(filepath.Dir(configPath), "devices")
-	splitIndex, err := indexSplitDeviceFiles(devicesDir)
+	configDir := filepath.Dir(configPath)
+	splitIndex, err := indexMergedSplitDeviceFiles(configDir)
 	if err != nil {
 		return err
 	}
@@ -408,8 +426,8 @@ func DeleteDevice(configPath, deviceKey string) error {
 	if err != nil {
 		return err
 	}
-	devicesDir := filepath.Join(filepath.Dir(configPath), "devices")
-	splitIndex, err := indexSplitDeviceFiles(devicesDir)
+	configDir := filepath.Dir(configPath)
+	splitIndex, err := indexMergedSplitDeviceFiles(configDir)
 	if err != nil {
 		return err
 	}

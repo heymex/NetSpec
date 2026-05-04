@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"flag"
+	"fmt"
 	"io"
 	"net"
 	"net/url"
@@ -13,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -72,6 +74,10 @@ func main() {
 		Int("split_device_count", cfg.SplitDeviceCount).
 		Msg("Configuration loaded")
 
+	var runningCfg atomic.Pointer[config.Config]
+	runningCfg.Store(cfg)
+	reachTracker := collector.NewReachabilityTracker()
+
 	// Create notifier (channel URLs come from env vars named in config/alerts.yaml channels.*.url_env)
 	notifier := notifier.NewNotifier(logger, cfg.Alerts.Channels)
 
@@ -116,7 +122,15 @@ func main() {
 				defer ticker.Stop()
 
 				for {
+					monitored := 0
+					for _, ic := range dc.Interfaces {
+						if ic.Monitor {
+							monitored++
+						}
+					}
 					snapshots, err := validator.PollDevice(name, dc)
+					reachTracker.RecordPoll(name, err, len(snapshots), monitored)
+					syncSNMPReachAlerts(alertEngine, reachTracker, name)
 					if err != nil {
 						logger.Warn().Err(err).Str("device", name).Msg("SNMP validation poll failed")
 					} else {
@@ -206,6 +220,9 @@ func main() {
 						OperStatus:  event.OperStatus,
 						AdminStatus: event.AdminStatus,
 					}
+				} else {
+					reachTracker.RecordInterfaceSNMPSuccess(deviceName)
+					alertEngine.SyncSNMPReachability(deviceName, true, "")
 				}
 
 				validationSource := "snmp"
@@ -226,6 +243,38 @@ func main() {
 				cancel()
 			}
 		}()
+
+		// Periodic SNMP reachability so configured devices do not appear healthy when no telemetry arrives.
+		go func() {
+			iv := cfg.DesiredState.Global.SNMP.ValidationInterval
+			if iv <= 0 {
+				iv = cfg.DesiredState.Global.CollectionInterval
+			}
+			if iv <= 0 {
+				iv = 10 * time.Second
+			}
+			ticker := time.NewTicker(iv)
+			defer ticker.Stop()
+			for {
+				cur := runningCfg.Load()
+				if cur != nil {
+					for name, dc := range cur.DesiredState.Devices {
+						addr := strings.TrimSpace(dc.Address)
+						if addr == "" {
+							reachTracker.RecordPing(name, fmt.Errorf("device has no address"))
+						} else {
+							reachTracker.RecordPing(name, validator.SNMPPing(addr))
+						}
+						syncSNMPReachAlerts(alertEngine, reachTracker, name)
+					}
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+				}
+			}
+		}()
 	default:
 		logger.Fatal().
 			Str("telemetry_mode", cfg.DesiredState.Global.TelemetryMode).
@@ -242,6 +291,7 @@ func main() {
 	// Configure the API server with log buffer, config, version, and collector getter
 	apiServer.SetLogBuffer(logBuffer)
 	apiServer.SetConfig(cfg, *configPath)
+	apiServer.SetSNMPReachabilityTracker(reachTracker)
 	apiServer.SetVersion(version.GetVersion(), version.GetCommit(), version.GetBuildDate())
 	apiServer.SetEvaluatorGetter(func() *evaluator.Evaluator {
 		return eval
@@ -303,6 +353,12 @@ func main() {
 		// Swap in the latest config/evaluator so newly added devices/interfaces
 		// are evaluated immediately after reload.
 		cfg = newCfg
+		runningCfg.Store(newCfg)
+		allowed := make(map[string]struct{}, len(newCfg.DesiredState.Devices))
+		for n := range newCfg.DesiredState.Devices {
+			allowed[n] = struct{}{}
+		}
+		reachTracker.Prune(allowed)
 		eval = evaluator.NewEvaluator(cfg, logger)
 
 		logger.Info().
@@ -464,4 +520,17 @@ func canonicalInterfaceName(name string) string {
 		" ", "",
 	)
 	return replacer.Replace(s)
+}
+
+func syncSNMPReachAlerts(engine *alerter.Engine, tr *collector.ReachabilityTracker, device string) {
+	if engine == nil || tr == nil {
+		return
+	}
+	st := tr.Status(device)
+	ok := st.Reachability == collector.SNMPReachOK
+	errMsg := ""
+	if st.Reachability == collector.SNMPReachFail {
+		errMsg = st.LastError
+	}
+	engine.SyncSNMPReachability(device, ok, errMsg)
 }

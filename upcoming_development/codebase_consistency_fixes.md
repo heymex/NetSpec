@@ -138,7 +138,7 @@ Until a decision is made, add a `// TODO: not yet wired` comment to `ResolveCred
 
 ### 5.1 Resolve Docker Compose networking ambiguity
 
-**Problem:** `netspec` uses `network_mode: host` while `apprise` uses a custom bridge network (`monitoring`). They are on different network planes. The `depends_on: apprise` has no health-check condition, so `netspec` can start before Apprise is ready.
+**Problem:** `netspec-netspec` uses `network_mode: host` while `netspec-apprise` uses a custom bridge network (`netspec`). They are on different network planes. The `depends_on: netspec-apprise` has no health-check condition, so NetSpec can start before Apprise is ready.
 
 **Fix options:**
 

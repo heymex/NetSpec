@@ -28,7 +28,8 @@ type HexTile struct {
 	GridCol    int
 	GridRow    int
 	CX, CY     float64
-	WorstSev   string // normalized: ok, warning, critical (display bucket)
+	RawSev     string // pre-bucket severity (alerts + snmp hints)
+	WorstSev   string // display bucket: ok, warning, critical
 	Fill       string
 	Stroke     string
 	StrokeW    float64
@@ -64,6 +65,56 @@ func WorstSeverityPerDevice(alerts []HexAlert) map[string]string {
 	return out
 }
 
+// MergeHexSeverityWithSNMP overlays SNMP reachability hints onto alert-derived worst severity.
+// reach values: "ok" | "unknown" | "fail" (from collector.SNMPReach* constants).
+func MergeHexSeverityWithSNMP(worstFromAlerts map[string]string, reach map[string]string) map[string]string {
+	out := make(map[string]string)
+	for k, v := range worstFromAlerts {
+		out[k] = v
+	}
+	for dev, r := range reach {
+		prev := out[dev]
+		out[dev] = worseHexRaw(prev, reachToHexRaw(r))
+	}
+	return out
+}
+
+func reachToHexRaw(r string) string {
+	switch strings.ToLower(strings.TrimSpace(r)) {
+	case "fail":
+		return "unreachable"
+	case "unknown":
+		return "unknown"
+	default:
+		return ""
+	}
+}
+
+func worseHexRaw(a, b string) string {
+	if severityRankForHex(b) > severityRankForHex(a) {
+		return b
+	}
+	return a
+}
+
+func severityRankForHex(s string) int {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "critical", "fatal", "error", "unreachable":
+		return 4
+	case "warning", "warn":
+		return 3
+	case "info":
+		return 2
+	case "unknown":
+		return 2
+	default:
+		if s == "" {
+			return 0
+		}
+		return 1
+	}
+}
+
 func severityRank(s string) int {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "critical", "fatal", "error":
@@ -80,11 +131,13 @@ func severityRank(s string) int {
 // DisplayBucket maps raw severity to UI bucket for fills (ok | warning | critical).
 func DisplayBucket(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "critical", "fatal", "error":
+	case "critical", "fatal", "error", "unreachable":
 		return "critical"
 	case "warning", "warn":
 		return "warning"
 	case "info":
+		return "warning"
+	case "unknown":
 		return "warning"
 	default:
 		if raw == "" {
@@ -149,6 +202,7 @@ func BuildHexMapLayout(deviceNames []string, worstSeverityByDevice map[string]st
 			GridRow:    row,
 			CX:         cx,
 			CY:         cy,
+			RawSev:     raw,
 			WorstSev:   bucket,
 			Fill:       fill,
 			Stroke:     stroke,
@@ -211,7 +265,7 @@ func RenderHexMapSVG(layout HexMapLayout) template.HTML {
 
 	for _, t := range layout.Tiles {
 		d := HexPathD(t.CX, t.CY, layout.Radius)
-		title := html.EscapeString(t.DeviceName + " — " + humanWorstLabel(t.WorstSev))
+		title := html.EscapeString(HumanHexTitle(t.DeviceName, t.RawSev, t.WorstSev))
 		href := "/device/" + url.PathEscape(t.DeviceName)
 		fmt.Fprintf(&b, `<a class="hex-link" href="%s">`, html.EscapeString(href))
 		fmt.Fprintf(&b, `<path class="hex-shape %s" d="%s" fill="%s" stroke="%s" stroke-width="%.2f"/>`,
@@ -231,5 +285,18 @@ func humanWorstLabel(bucket string) string {
 		return "warning"
 	default:
 		return "ok"
+	}
+}
+
+// HumanHexTitle builds a short tooltip label from raw severity (pre-bucket) and display bucket.
+func HumanHexTitle(deviceName, rawBeforeBucket, displayBucket string) string {
+	raw := strings.ToLower(strings.TrimSpace(rawBeforeBucket))
+	switch raw {
+	case "unreachable":
+		return deviceName + " — SNMP unreachable"
+	case "unknown":
+		return deviceName + " — awaiting SNMP"
+	default:
+		return deviceName + " — " + humanWorstLabel(displayBucket)
 	}
 }

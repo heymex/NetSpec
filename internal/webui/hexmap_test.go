@@ -28,8 +28,27 @@ func TestDisplayBucket(t *testing.T) {
 	if DisplayBucket("critical") != "critical" {
 		t.Fatal()
 	}
+	if DisplayBucket("unreachable") != "critical" {
+		t.Fatalf("unreachable: got %q", DisplayBucket("unreachable"))
+	}
+	if DisplayBucket("unknown") != "warning" {
+		t.Fatalf("unknown: got %q", DisplayBucket("unknown"))
+	}
 	if DisplayBucket("") != "ok" {
 		t.Fatal()
+	}
+}
+
+func TestMergeHexSeverityWithSNMP(t *testing.T) {
+	t.Parallel()
+	alerts := map[string]string{"a": "warning"}
+	reach := map[string]string{"a": "fail", "b": "unknown"}
+	got := MergeHexSeverityWithSNMP(alerts, reach)
+	if got["a"] != "unreachable" {
+		t.Fatalf("device a: want unreachable merged over warning, got %q", got["a"])
+	}
+	if got["b"] != "unknown" {
+		t.Fatalf("device b: want unknown, got %q", got["b"])
 	}
 }
 

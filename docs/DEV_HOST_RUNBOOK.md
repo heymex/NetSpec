@@ -111,7 +111,7 @@ Verify forwarder activity:
 tsh ssh derek@derek-ghrunner "tail -n 40 /home/derek/mdt-sidecar/forwarder.log"
 ```
 
-If forwarder is not running, prefer the **containerized translator**: `make docker-up` or `docker compose -f docker-compose.yml -f docker-compose.build-local.yml up -d mdt-translator` from the NetSpec repo with matching **`NETSPEC_DATA_DIR`** and **`NETSPEC_INGEST_PORT`**.
+If forwarder is not running, prefer the **containerized translator**: `make docker-up` or `docker compose -f docker-compose.yml -f docker-compose.build-local.yml up -d netspec-mdt-translator` from the NetSpec repo with matching **`NETSPEC_DATA_DIR`** and **`NETSPEC_INGEST_PORT`**.
 
 Legacy host fallback (only if you are not using Compose for the translator):
 

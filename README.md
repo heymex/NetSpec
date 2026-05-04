@@ -26,7 +26,7 @@ Steps 1–2 are required for a minimal deployment; step 3 only if you use Appris
 The `.env` file should contain:
 - `SNMP_COMMUNITY` - SNMPv2c community (used by SNMP validation and push-confirmation paths)
 - `API_PORT` - web UI/API listen port override (default `8088`)
-- `APPRISE_API_URL` - Apprise-API **base URL** (required for notifications). NetSpec POSTs JSON to `{APPRISE_API_URL}/notify/` (stateless Apprise-API `notify` endpoint). With `network_mode: host` for NetSpec, use `http://127.0.0.1:8086` (or your host-mapped port), not `http://apprise:8000` (that hostname only resolves inside Compose).
+- `APPRISE_API_URL` - Apprise-API **base URL** (required for notifications). NetSpec POSTs JSON to `{APPRISE_API_URL}/notify/` (stateless Apprise-API `notify` endpoint). With `network_mode: host` for NetSpec, use `http://127.0.0.1:8086` (or your host-mapped port), not `http://netspec-apprise:8000` (that hostname only resolves inside the Compose **`netspec`** bridge, not on the host network namespace).
 - Channel targets come from env vars named in `config/alerts.yaml` under `channels.*.url_env` (for example `APPRISE_SLACK_WEBHOOK`). See `.env.example` for placeholders.
 - Optional: `APPRISE_NOTIFY_TIMEOUT` (HTTP timeout per notify, e.g. `15s`). Troubleshooting: [Apprise alerting](docs/APPRISE_ALERTING.md).
 - `NETSPEC_INGEST_HOST` / `NETSPEC_INGEST_PORT` - where **`mdt-translator`** sends NetSpec JSON lines (must match `global.ingest` when `telemetry_mode` is `telemetry_ingest_push`)
@@ -55,7 +55,7 @@ echo $GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
 docker compose up -d
 ```
 
-This starts all four services: **`netspec`**, **`apprise`**, **`telegraf-mdt`** (MDT in on `tcp/57500`), and **`mdt-translator`** (forwards NetSpec-shaped JSON lines to `NETSPEC_INGEST_HOST:NETSPEC_INGEST_PORT`).
+This starts all four services: **`netspec-netspec`**, **`netspec-apprise`**, **`netspec-telegraf-mdt`** (MDT in on `tcp/57500`), and **`netspec-mdt-translator`** (forwards NetSpec-shaped JSON lines to `NETSPEC_INGEST_HOST:NETSPEC_INGEST_PORT`). Compose uses a **`netspec-` service prefix** and a **`netspec` bridge network** so names stay unique alongside other stacks on the same host.
 
 Runtime artifacts: `${NETSPEC_DATA_DIR}/mdt-sidecar` (`decoded.json`, `forwarder.log`).
 
@@ -93,7 +93,7 @@ Stop any host `nohup ./netspec` or old containers first so port **8088** / inges
 | `make docker-down` | Stop the stack |
 | `make docker-logs-netspec` | Follow NetSpec container logs |
 
-Because `netspec` uses `network_mode: host` in the default compose stack, `APPRISE_API_URL` must target the host-mapped Apprise port (for example `http://127.0.0.1:8086`). In this topology, `depends_on` controls startup order only and does not guarantee Apprise is fully ready before NetSpec starts.
+Because **`netspec-netspec`** uses `network_mode: host` in the default compose stack, `APPRISE_API_URL` must target the host-mapped Apprise port (for example `http://127.0.0.1:8086`), not `http://netspec-apprise:8000` (that DNS name only resolves for containers attached to the **`netspec`** bridge). In this topology, `depends_on` controls startup order only and does not guarantee Apprise is fully ready before NetSpec starts.
 
 ## MVP Features
 
@@ -113,7 +113,7 @@ NetSpec includes a built-in web UI accessible at `http://localhost:8088` (or you
 
 ### Features
 
-- **Dashboard** - Overview of devices, interfaces, active alerts, push telemetry **events/sec**, and a **host overview** honeycomb (up to 64 devices, worst alert severity per cell, links to device pages; refreshes periodically)
+- **Dashboard** - Overview of devices, interfaces, active alerts, push telemetry **events/sec**, and a **host overview** honeycomb (up to 64 devices; each cell reflects the worse of **active alerts** and **SNMP reachability** so unreachable or not-yet-polled devices are not shown as healthy; refreshes periodically)
 - **Device List** - All monitored devices with interface counts
 - **Active Alerts** - Current firing alerts with severity indicators (sorted by severity)
 - **Live Logs** - Auto-refreshing log stream (newest entries first; periodic refresh)
@@ -186,9 +186,12 @@ NetSpec loads all files from the **`config/`** directory next to `desired-state.
 | `config/alerts.yaml` | No | Alert channels, routing rules, and alert behavior |
 | `config/credentials.yaml` | No | Named credential sets for device authentication references |
 | `config/maintenance.yaml` | No | Scheduled maintenance windows (currently loaded but not yet enforced for alert suppression) |
-| `config/devices/*.yaml` | No | Per-device split config files for larger deployments |
+| `config/devices/*.yaml` | No | Legacy location for per-device split YAML (still loaded) |
+| `data/devices/*.yaml` | No | **Writable** split device files (discovery wizard and API write here when `/config` is mounted read-only) |
 
 `desired-state.yaml` does not load an `alerts:` block; alert routing lives in `alerts.yaml`.
+
+Split device definitions are merged from **`config/devices/`** first, then **`data/devices/`** (relative to the same config root as `desired-state.yaml`). Duplicate device keys across those trees are rejected at load time.
 
 When using `config/devices/*.yaml`, each file can be either:
 

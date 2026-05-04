@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -116,4 +118,57 @@ func validConfigWithMembers(members []string, policy *MemberPolicy) *Config {
 
 func ptrFloat(v float64) *float64 {
 	return &v
+}
+
+func TestLoadConfigDirReadsDataDevicesDir(t *testing.T) {
+	t.Parallel()
+	tmp := t.TempDir()
+	cfgDir := filepath.Join(tmp, "cfg")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	desired := []byte(`global:
+  telemetry_mode: snmp_validate_only
+  snmp:
+    version: "2c"
+devices:
+  mono-sw:
+    address: 10.0.0.1
+    interfaces:
+      Gi1:
+        desired_state: up
+        monitor: true
+`)
+	if err := os.WriteFile(filepath.Join(cfgDir, "desired-state.yaml"), desired, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dataDevDir := SplitDeviceWriteDir(cfgDir)
+	if err := os.MkdirAll(dataDevDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	split := []byte(`devices:
+  split-sw:
+    address: 10.0.0.2
+    interfaces:
+      Gi1:
+        desired_state: up
+        monitor: true
+`)
+	if err := os.WriteFile(filepath.Join(dataDevDir, "split-sw.yaml"), split, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadConfigDir(cfgDir)
+	if err != nil {
+		t.Fatalf("LoadConfigDir: %v", err)
+	}
+	if _, ok := cfg.DesiredState.Devices["mono-sw"]; !ok {
+		t.Fatal("missing mono-sw")
+	}
+	if _, ok := cfg.DesiredState.Devices["split-sw"]; !ok {
+		t.Fatal("missing split-sw from data/devices")
+	}
+	if cfg.TotalDeviceCount() != 2 {
+		t.Fatalf("device count: want 2, got %d", cfg.TotalDeviceCount())
+	}
 }

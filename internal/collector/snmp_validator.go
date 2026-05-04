@@ -15,6 +15,7 @@ const (
 	ifNameOID        = ".1.3.6.1.2.1.31.1.1.1.1"
 	ifAdminStatusOID = ".1.3.6.1.2.1.2.2.1.7"
 	ifOperStatusOID  = ".1.3.6.1.2.1.2.2.1.8"
+	sysUpTimeOID     = "1.3.6.1.2.1.1.3.0"
 )
 
 // InterfaceSnapshot is normalized interface state from SNMP.
@@ -40,6 +41,35 @@ func NewSNMPValidator(globalCfg config.SNMPConfig, community string, logger zero
 		community:    community,
 		ifIndexByDev: make(map[string]map[string]int),
 	}
+}
+
+// SNMPPing performs a minimal SNMPv2c GET of sysUpTime.0 against address (device IP/hostname).
+func (v *SNMPValidator) SNMPPing(address string) error {
+	client := &gosnmp.GoSNMP{
+		Target:    address,
+		Port:      v.globalCfg.Port,
+		Version:   gosnmp.Version2c,
+		Community: v.community,
+		Timeout:   v.globalCfg.Timeout,
+		Retries:   v.globalCfg.Retries,
+	}
+	if err := client.Connect(); err != nil {
+		return fmt.Errorf("snmp connect failed: %w", err)
+	}
+	defer client.Conn.Close()
+
+	pkt, err := client.Get([]string{sysUpTimeOID})
+	if err != nil {
+		return fmt.Errorf("snmp get failed: %w", err)
+	}
+	if pkt == nil || len(pkt.Variables) == 0 {
+		return fmt.Errorf("snmp get returned no data")
+	}
+	vv := pkt.Variables[0]
+	if vv.Type == gosnmp.NoSuchObject || vv.Type == gosnmp.NoSuchInstance {
+		return fmt.Errorf("snmp sysUpTime not available")
+	}
+	return nil
 }
 
 func (v *SNMPValidator) PollDevice(deviceName string, deviceCfg config.DeviceConfig) ([]InterfaceSnapshot, error) {

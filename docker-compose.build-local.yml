@@ -11,7 +11,7 @@
 #   NETSPEC_LOCAL_BUILD_DATE (default: unknown)
 
 services:
-  netspec:
+  netspec-netspec:
     image: netspec:local
     build:
       context: .
@@ -21,7 +21,7 @@ services:
         COMMIT: ${NETSPEC_LOCAL_COMMIT:-unknown}
         BUILD_DATE: ${NETSPEC_LOCAL_BUILD_DATE:-unknown}
 
-  mdt-translator:
+  netspec-mdt-translator:
     image: netspec-mdt-translator:local
     build:
       context: ./tools/sidecar

@@ -1,11 +1,13 @@
 # NetSpec + Apprise + Telegraf MDT + mdt-translator.
 # All services required for the standard IOS-XE dial-out → MDT → NetSpec push pipeline.
+# Service names use a netspec- prefix so the project groups cleanly in tooling and avoids
+# clashing with other Apprise stacks on the same host (unique container names).
 # For local builds from source, merge docker-compose.build-local.yml.
 
 services:
-  netspec:
+  netspec-netspec:
     image: ghcr.io/heymex/netspec:${NETSPEC_IMAGE_TAG:-latest}
-    container_name: netspec
+    container_name: netspec-netspec
     restart: unless-stopped
     # Use host networking so NetSpec can reach devices on management VLANs.
     network_mode: host
@@ -19,14 +21,14 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-info}
     depends_on:
       # Startup ordering only; does not wait for Apprise health/readiness.
-      - apprise
+      - netspec-apprise
 
-  apprise:
+  netspec-apprise:
     # Alternative registries if lscr.io is unavailable:
     # - docker.io/linuxserver/apprise-api:latest (Docker Hub)
     # - ghcr.io/linuxserver/apprise-api:latest (GitHub Container Registry)
     image: ${APPRISE_IMAGE:-docker.io/linuxserver/apprise-api:latest}
-    container_name: apprise
+    container_name: netspec-apprise
     restart: unless-stopped
     environment:
       - PUID=1000
@@ -38,24 +40,24 @@ services:
       # Apprise-API uWSGI listens on 8000 inside the container (linuxserver image).
       - "8086:8000"
     networks:
-      - monitoring
+      - netspec
 
-  telegraf-mdt:
+  netspec-telegraf-mdt:
     image: telegraf:1.31
-    container_name: telegraf-mdt
+    container_name: netspec-telegraf-mdt
     restart: unless-stopped
     network_mode: host
     volumes:
       - ./tools/sidecar/telegraf-mdt.conf:/etc/telegraf/telegraf.conf:ro
       - ${NETSPEC_DATA_DIR:-/opt/netspec}/mdt-sidecar:/sidecar
 
-  mdt-translator:
+  netspec-mdt-translator:
     image: ghcr.io/heymex/netspec-mdt-translator:${NETSPEC_IMAGE_TAG:-latest}
-    container_name: mdt-translator
+    container_name: netspec-mdt-translator
     restart: unless-stopped
     network_mode: host
     depends_on:
-      - telegraf-mdt
+      - netspec-telegraf-mdt
     environment:
       - MDT_DECODED_FILE=/sidecar/decoded.json
       - MDT_FORWARDER_LOG=/sidecar/forwarder.log
@@ -66,5 +68,5 @@ services:
       - ${NETSPEC_DATA_DIR:-/opt/netspec}/mdt-sidecar:/sidecar
 
 networks:
-  monitoring:
+  netspec:
     driver: bridge

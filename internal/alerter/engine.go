@@ -162,6 +162,35 @@ func (e *Engine) ProcessStateChange(change evaluator.StateChange) {
 	}
 }
 
+// SyncSNMPReachability raises or clears a synthetic host-level alert when SNMP contact fails or recovers.
+func (e *Engine) SyncSNMPReachability(device string, reachable bool, errMsg string) {
+	device = strings.TrimSpace(device)
+	if device == "" {
+		return
+	}
+	msg := fmt.Sprintf("SNMP connectivity restored for device %s", device)
+	if !reachable {
+		if strings.TrimSpace(errMsg) != "" {
+			msg = fmt.Sprintf("SNMP unreachable for device %s: %s", device, errMsg)
+		} else {
+			msg = fmt.Sprintf("SNMP unreachable for device %s", device)
+		}
+	}
+	ev := AlertEvent{
+		Device:    device,
+		Entity:    "__snmp__",
+		AlertType: "snmp_unreachable",
+		Severity:  "warning",
+		Firing:    !reachable,
+		Message:   msg,
+	}
+	select {
+	case e.events <- ev:
+	default:
+		e.logger.Warn().Str("device", device).Msg("alert event channel full, dropping snmp reachability")
+	}
+}
+
 // process handles an alert event
 func (e *Engine) process(ev AlertEvent) {
 	key := fmt.Sprintf("%s|%s|%s", ev.Device, ev.Entity, ev.AlertType)

@@ -25,12 +25,15 @@ func LoadConfigDir(dir string) (*Config, error) {
 		return nil, fmt.Errorf("loading desired-state.yaml: %w", err)
 	}
 	cfg.MonolithicDeviceCount = len(cfg.DesiredState.Devices)
-	// Optionally load additional device definitions from config/devices/*.yaml.
-	// This allows large deployments to split per-device config files while
-	// preserving backward compatibility with monolithic desired-state.yaml.
-	splitCount, err := loadDeviceFiles(filepath.Join(dir, "devices"), cfg)
-	if err != nil {
-		return nil, fmt.Errorf("loading devices directory: %w", err)
+	// Optionally load additional device definitions from split YAML directories:
+	// <configDir>/devices (legacy) and <configDir>/../data/devices (writable in Docker).
+	splitCount := 0
+	for _, d := range SplitDeviceReadDirs(dir) {
+		n, err := loadDeviceFiles(d, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("loading devices directory %s: %w", d, err)
+		}
+		splitCount += n
 	}
 	cfg.SplitDeviceCount = splitCount
 

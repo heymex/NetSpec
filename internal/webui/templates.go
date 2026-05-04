@@ -803,10 +803,10 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
             var HEX_MAX = 64;
             function severityRank(s) {
                 var x = String(s || '').toLowerCase().trim();
-                if (x === 'critical' || x === 'fatal' || x === 'error') return 4;
+                if (x === 'critical' || x === 'fatal' || x === 'error' || x === 'unreachable') return 4;
                 if (x === 'warning' || x === 'warn') return 3;
-                if (x === 'info') return 2;
-                return 1;
+                if (x === 'info' || x === 'unknown') return 2;
+                return x ? 1 : 0;
             }
             function worstPerDevice(alerts) {
                 var m = {};
@@ -819,13 +819,35 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                 }
                 return m;
             }
+            function snmpReachRaw(devices) {
+                var m = {};
+                for (var i = 0; i < (devices || []).length; i++) {
+                    var d = devices[i];
+                    if (!d || !d.name) continue;
+                    var r = String(d.snmp_reachability || '').toLowerCase().trim();
+                    if (r === 'fail') m[d.name] = 'unreachable';
+                    else if (r === 'unknown') m[d.name] = 'unknown';
+                }
+                return m;
+            }
+            function mergeWorstRaw(a, b) {
+                return severityRank(b) > severityRank(a) ? b : a;
+            }
             function displayBucket(raw) {
                 var x = String(raw || '').toLowerCase().trim();
-                if (x === 'critical' || x === 'fatal' || x === 'error') return 'critical';
+                if (x === 'critical' || x === 'fatal' || x === 'error' || x === 'unreachable') return 'critical';
                 if (x === 'warning' || x === 'warn') return 'warning';
-                if (x === 'info') return 'warning';
+                if (x === 'info' || x === 'unknown') return 'warning';
                 if (!raw) return 'ok';
                 return 'warning';
+            }
+            function hexTitle(name, rawWorst) {
+                var r = String(rawWorst || '').toLowerCase().trim();
+                if (r === 'unreachable') return name + ' — SNMP unreachable';
+                if (r === 'unknown') return name + ' — awaiting SNMP';
+                if (r === 'critical' || r === 'fatal' || r === 'error') return name + ' — critical';
+                if (r === 'warning' || r === 'warn' || r === 'info') return name + ' — warning';
+                return name + ' — ok';
             }
             function tileStyle(bucket) {
                 if (bucket === 'critical') return { fill: '#f85149', stroke: '#30363d', sw: 1.5, cls: 'hex-critical' };
@@ -862,7 +884,7 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                     var raw = worst[list[i]] || '';
                     var bucket = displayBucket(raw);
                     var st = tileStyle(bucket);
-                    tiles.push({ name: list[i], cx: cx, cy: cy, bucket: bucket, fill: st.fill, stroke: st.stroke, sw: st.sw, cls: st.cls });
+                    tiles.push({ name: list[i], cx: cx, cy: cy, raw: raw, bucket: bucket, fill: st.fill, stroke: st.stroke, sw: st.sw, cls: st.cls });
                     for (var k = 0; k < 6; k++) {
                         var ang = -Math.PI / 2 + k * Math.PI / 3;
                         var px = cx + HEX_R * Math.cos(ang);
@@ -885,8 +907,7 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                 for (var j = 0; j < layout.tiles.length; j++) {
                     var t = layout.tiles[j];
                     var href = '/device/' + encodeURIComponent(t.name).replace(/'/g, '%27');
-                    var label = t.bucket === 'ok' ? 'ok' : t.bucket;
-                    var title = escXml(t.name) + ' — ' + escXml(label);
+                    var title = escXml(hexTitle(t.name, t.raw));
                     var d = hexPathD(t.cx, t.cy, HEX_R);
                     html += '<a class="hex-link" href="' + href + '"><path class="hex-shape ' + t.cls + '" d="' + d + '" fill="' + t.fill + '" stroke="' + t.stroke + '" stroke-width="' + t.sw + '"/><title>' + title + '</title></a>';
                 }
@@ -902,7 +923,13 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                     var dj = await dr.json();
                     var aj = await ar.json();
                     var names = (dj.devices || []).map(function (x) { return x.name; }).filter(Boolean);
-                    var worst = worstPerDevice(aj.alerts || []);
+                    var wa = worstPerDevice(aj.alerts || []);
+                    var sr = snmpReachRaw(dj.devices || []);
+                    var worst = {};
+                    for (var i = 0; i < names.length; i++) {
+                        var n = names[i];
+                        worst[n] = mergeWorstRaw(wa[n] || '', sr[n] || '');
+                    }
                     renderSVG(buildLayout(names, worst));
                 } catch (e) {
                     if (console && console.warn) console.warn('hex overview refresh failed', e);

@@ -48,6 +48,6 @@ NetSpec sends firing and resolved alerts to [Apprise-API](https://github.com/car
 
 ## Docker vs host NetSpec
 
-- **Host-process NetSpec** must use **`APPRISE_API_URL` pointing at localhost** (or the host’s published Apprise port), not `http://apprise:8000` (that hostname only resolves inside user-defined Docker networks).
+- **Host-network NetSpec** (`netspec-netspec` in Compose) must use **`APPRISE_API_URL` pointing at localhost** (or the host’s published Apprise port), not `http://netspec-apprise:8000` (that hostname only resolves for containers on the Compose **`netspec`** bridge, not in the host network namespace).
 
 - **Container NetSpec with `network_mode: host`** is the same: use **localhost** for Apprise on the host.
