@@ -30,7 +30,7 @@ sudo -E make docker-rebuild
 sudo -E make docker-up-telemetry
 ```
 
-6. Verify: `curl -sS http://127.0.0.1:8088/health` and `curl -sS http://127.0.0.1:8088/api/telemetry/stats`.
+6. Verify: `curl -sS http://127.0.0.1:8088/health` and `curl -sS http://127.0.0.1:8088/api/telemetry/stats`. Optional: open `http://127.0.0.1:8088/api-browser` for the interactive API reference (loads `/openapi.json`).
 
 Do **not** run **`restart-netspec-dev.sh`** at the same time as the NetSpec container (both would bind **8088**).
 

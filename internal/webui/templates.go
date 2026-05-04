@@ -622,6 +622,7 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                     <span class="status-dot"></span>
                     Running
                 </div>
+                <a class="btn btn-secondary" href="/api-browser">API</a>
                 <a class="btn btn-secondary" href="/wizard">+ Add Device</a>
                 <button class="btn btn-primary" onclick="reloadConfig()">↻ Reload Config</button>
             </div>
@@ -959,7 +960,10 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                 <h1 style="font-size:1.45rem;">Device Discovery Wizard</h1>
                 <div class="small">{{if .Version}}{{.Version}}{{else}}dev{{end}}</div>
             </div>
-            <a href="/" class="btn">← Back to Dashboard</a>
+            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+                <a href="/" class="btn">← Back to Dashboard</a>
+                <a href="/api-browser" class="btn">API Browser</a>
+            </div>
         </header>
 
         <div id="step1" class="step active card">
@@ -1598,6 +1602,7 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
             </div>
             <div>
                 <button class="btn btn-danger" onclick="deleteDevice()">Delete Device</button>
+                <a href="/api-browser" class="btn btn-secondary">API</a>
                 <a href="/" class="btn btn-secondary">← Back to Dashboard</a>
             </div>
         </header>

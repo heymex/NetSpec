@@ -108,18 +108,30 @@ NetSpec includes a built-in web UI accessible at `http://localhost:8088` (or you
 - **Live Logs** - Auto-refreshing log stream (updates every 5 seconds)
 - **Configuration View** - Collection interval and dedup settings
 - **Config Reload** - Button to force re-read of `desired-state.yaml` without restart
+- **API Browser** - Interactive OpenAPI documentation at `/api-browser` (Swagger UI with try-it-out; spec served at `/openapi.json`)
 
 ### API Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/` | GET | Web UI dashboard |
+| `/api-browser` | GET | Interactive API browser (Swagger UI) |
+| `/openapi.json` | GET | OpenAPI 3.0 document for tooling and the API browser |
 | `/health` | GET | Health check |
 | `/status` | GET | Status summary (JSON) |
 | `/alerts` | GET | Active alerts (JSON) |
 | `/api/logs` | GET | Recent log entries (JSON) |
 | `/api/devices` | GET | Device configuration (JSON) |
+| `/api/devices/{name}` | GET | Single device detail (JSON) |
+| `/api/devices/{name}` | DELETE | Remove device from desired state YAML |
+| `/api/devices/{name}/interfaces/{iface}` | PATCH | Update interface policy fields |
 | `/api/reload` | POST | Reload configuration |
+| `/api/telemetry/stats` | GET | Push ingest counters and top talkers |
+| `/api/discovery/probe` | POST | SNMP probe (wizard) |
+| `/api/discovery/walk` | POST | SNMP interface walk |
+| `/api/discovery/commit` | POST | Write discovery selection to YAML |
+| `/device/{name}` | GET | Device detail HTML page |
+| `/wizard` | GET | Discovery wizard HTML page |
 
 ## Architecture
 
