@@ -7,8 +7,8 @@ This runbook documents the standard operational flow for `derek-ghrunner` so tel
 - Host: `derek-ghrunner`
 - App checkout: `/home/derek/NetSpec-dev`
 - Runtime config: `/home/derek/netspec-config/desired-state.yaml`
-- Optional alert routing: `/home/derek/netspec-config/alerts.yaml` (required for Apprise delivery; not read from `desired-state.yaml`)
-- Host env for NetSpec: `/home/derek/netspec-config/netspec.env` (sourced by `restart-netspec-dev.sh`)
+- Alert routing: `/home/derek/netspec-config/alerts.yaml` (required for Apprise delivery; the loader does **not** read a top-level `alerts:` key from `desired-state.yaml`)
+- Host env for NetSpec: `/home/derek/netspec-config/netspec.env` (sourced by `restart-netspec-dev.sh`; the Go binary also auto-loads `netspec.env` and `.env` in the **config directory** when started directly, without overriding variables already set in the process environment)
 - NetSpec process mode: **prefer Docker** (see below); legacy option was host `./netspec` for fast Go iteration
 - Sidecar files: `/home/derek/mdt-sidecar` (or `${NETSPEC_DATA_DIR}/mdt-sidecar` when using Compose)
 
@@ -122,13 +122,13 @@ tsh ssh derek@derek-ghrunner "cd /home/derek/mdt-sidecar && nohup env MDT_DECODE
 ## 7) Known failure patterns
 
 - `listen tcp :8088: bind: address already in use`
-  - Cause: stale NetSpec process still running.
-  - Fix: kill old process, then restart once.
+  - Cause: stale NetSpec process still running **or** NetSpec container and host binary both bound to 8088.
+  - Fix: choose one runtime (`pkill -x netspec` **or** stop the `netspec` service from Compose), then start once.
 
 - Telemetry counters stay at zero while NetSpec is healthy
-  - Cause: forwarder process stopped or wrong ingest port.
-  - Fix: restart forwarder with matching `NETSPEC_INGEST_PORT`.
+  - Cause: `mdt-translator` / forwarder stopped, wrong `NETSPEC_INGEST_PORT`, or Telegraf not writing `decoded.json`.
+  - Fix: align `global.ingest.port` in YAML with `NETSPEC_INGEST_PORT`; restart `make docker-up-telemetry` or the translator container.
 
-- Container restart confusion
-  - Current operational runtime uses host process (`./netspec`), not the containerized app process.
-  - If testing with docker compose, ensure port/config paths are correct and avoid dual-running.
+- Container vs host binary
+  - Prefer **one** of: containerized NetSpec (this runbook § “Recommended: containerized dev”) **or** host `./netspec` for quick Go iteration—not both on the same ports.
+  - If testing with Docker Compose, ensure `NETSPEC_DATA_DIR` contains `config/`, `data/`, and `apprise-config/` as in production, and avoid dual-running with a legacy host NetSpec on **8088** / the ingest port.

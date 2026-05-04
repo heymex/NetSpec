@@ -1,0 +1,26 @@
+# Alert routing for NetSpec (loaded from config/alerts.yaml).
+# Top-level `alerts:` inside desired-state.yaml is not used by the loader.
+
+channels:
+  ops-slack:
+    type: apprise
+    url_env: APPRISE_SLACK_WEBHOOK
+    severity_filter: [warning, critical]
+
+  ops-teams:
+    type: apprise
+    url_env: APPRISE_TEAMS_WEBHOOK
+    severity_filter: [critical]
+
+alert_rules:
+  default:
+    channels: [ops-slack]
+
+  critical:
+    channels: [ops-slack, ops-teams]
+
+  warning:
+    channels: [ops-slack]
+
+alert_behavior:
+  deduplication_window: 300s

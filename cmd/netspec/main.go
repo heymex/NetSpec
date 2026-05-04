@@ -72,7 +72,7 @@ func main() {
 		Int("split_device_count", cfg.SplitDeviceCount).
 		Msg("Configuration loaded")
 
-	// Create notifier (channel URLs come from env vars named in desired-state alerts.channels.*.url_env)
+	// Create notifier (channel URLs come from env vars named in config/alerts.yaml channels.*.url_env)
 	notifier := notifier.NewNotifier(logger, cfg.Alerts.Channels)
 
 	// Create alert engine
