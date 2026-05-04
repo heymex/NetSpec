@@ -30,7 +30,8 @@ services:
     volumes:
       - ${NETSPEC_DATA_DIR:-/opt/netspec}/apprise-config:/config
     ports:
-      - "8086:8086"
+      # Apprise-API uWSGI listens on 8000 inside the container (linuxserver image).
+      - "8086:8000"
     networks:
       - monitoring
 

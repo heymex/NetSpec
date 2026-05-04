@@ -22,7 +22,7 @@ cp .env.example .env
 
 The `.env` file should contain:
 - `SNMP_COMMUNITY` - SNMPv2c community (used by SNMP validation and push-confirmation paths)
-- `APPRISE_API_URL` - Apprise API URL (defaults to `http://apprise:8000` for API use, `localhost:8086` in host-network docker compose)
+- `APPRISE_API_URL` - Apprise-API base URL (required). With `network_mode: host` for NetSpec, use `http://127.0.0.1:8086` (or your mapped port). Channel targets come from env vars named in `alerts.channels.*.url_env` in YAML (for example `APPRISE_SLACK_WEBHOOK`).
 - `NETSPEC_IMAGE_TAG` - optional container image tag override
 - Other optional settings as documented in `.env.example`
 
@@ -68,6 +68,22 @@ go mod download
 go build -o netspec ./cmd/netspec
 ./netspec -config ./config/desired-state.yaml
 ```
+
+### Local Docker build (same images as prod, faster iteration than CI)
+
+Use this when you want the **same container layout as production** (Apprise + NetSpec, optional telemetry sidecar) but built **on your machine** from the current tree:
+
+```bash
+export NETSPEC_DATA_DIR=/opt/netspec   # or your config/data root
+make docker-rebuild                    # build image netspec:local (after code changes)
+make docker-up                         # apprise + netspec (host network)
+# optional: same stack + MDT sidecar as docker-compose.dev.yml
+make docker-up-telemetry
+```
+
+After each Go change, run **`make docker-rebuild`** then **`make docker-up`** (or **`docker compose ... up -d --force-recreate netspec`**). **`make docker-up`** alone does not rebuild the binary.
+
+Compose files: `docker-compose.yml` + `docker-compose.build-local.yml` (and `docker-compose.dev.yml` for telegraf / `mdt-translator`). Stop any host `nohup ./netspec` or old containers first so port **8088** / ingest port are free.
 
 ## MVP Features
 
