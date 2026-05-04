@@ -130,3 +130,28 @@ tsh ssh derek@derek-ghrunner "cd /home/derek/mdt-sidecar && nohup env MDT_DECODE
 - Container restart confusion
   - Current operational runtime uses host process (`./netspec`), not the containerized app process.
   - If testing with docker compose, ensure port/config paths are correct and avoid dual-running.
+
+## 8) Opening a GitHub PR from the dev host (`gh`)
+
+**Best practice:** create the PR from the **branch already pushed to `origin`**, without checking that branch out in a dirty working tree. That avoids losing or merging local-only edits on the server (e.g. tar-patched files, experiments).
+
+1. Push your branch from your laptop (or merge via GitHub UI) so **`origin/<branch>`** exists.
+2. On **`derek-ghrunner`**, use **`gh pr create --head <branch>`** from any directory in the clone; **`git checkout`** of the feature branch is **not** required.
+
+```bash
+cd /home/derek/NetSpec-dev
+git fetch origin
+gh pr create --repo heymex/NetSpec --base main --head feature/your-branch \
+  --title "Your title" --body "Your description."
+```
+
+Or use the repo helper (same behavior, resolves clone path automatically when run inside the repo):
+
+```bash
+cd /home/derek/NetSpec-dev
+./scripts/gh-pr-create.sh feature/your-branch "Your title" "Your description."
+```
+
+**Avoid:** `git checkout feature/your-branch` when you have uncommitted changes in **`NetSpec-dev`** unless you intend to carry or discard them (**`git stash`** / commit first).
+
+**Alternative:** run **`gh pr create`** from your **laptop** clone after **`git push`** (same model; no server needed).
