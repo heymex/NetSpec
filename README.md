@@ -37,43 +37,29 @@ The `.env` file should contain:
 **Host / local binary:** When you run `./netspec -config /path/to/config/desired-state.yaml`, NetSpec loads environment defaults from **`/path/to/config/.env`** and **`/path/to/config/netspec.env`** if present (same directory as `desired-state.yaml`). Existing process environment variables are **not** overridden. Docker Compose still reads `.env` from the **repository root** for variable interpolation in compose files.
 
 `config/desired-state.yaml` sets `global.telemetry_mode`:
-- **`telemetry_ingest_push`** (default in the sample file): line-delimited JSON push ingest on `global.ingest` (default `0.0.0.0:57500`) with targeted SNMP confirmation per event — pair with **both** compose files so Telegraf + **`mdt-translator`** decode IOS-XE dial-out into that ingest.
-- **`snmp_validate_only`**: SNMP validation only; no push ingest listener (no MDT path on this host).
+- **`telemetry_ingest_push`** (default in the sample file): line-delimited JSON push ingest on `global.ingest` (default `0.0.0.0:57500`) with targeted SNMP confirmation per event — Telegraf + **`mdt-translator`** decode IOS-XE dial-out into that ingest.
+- **`snmp_validate_only`**: SNMP validation only; no push ingest listener.
 
 ### Running
 
-Compose is split across two YAML files so **`docker-compose.yml`** can stay Apprise + NetSpec only; **Telegraf** and **`mdt-translator`** live in **`docker-compose.dev.yml`** (name is historical — use the same merge everywhere you run push telemetry). That is **not** an “optional add-on”; it is how the supported MDT → NetSpec path is packaged.
-
-The NetSpec image is built by GitHub Actions and published to GitHub Container Registry.
+GitHub Actions builds and publishes all images (NetSpec and mdt-translator) to GitHub Container Registry on every merge to main.
 
 **Note**: To pull from GitHub Container Registry, you may need to authenticate:
 ```bash
 echo $GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
 ```
 
-**Push telemetry (standard):** IOS-XE dial-out (`grpc-tcp`) with `telemetry_ingest_push`:
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
-```
-
-This starts **`telegraf-mdt`** (MDT in on `tcp/57500`) and **`mdt-translator`** (image **`netspec-mdt-translator:local`**, built from **`tools/sidecar`**) writing NetSpec-shaped JSON lines to `NETSPEC_INGEST_HOST:NETSPEC_INGEST_PORT`, plus **`netspec`** and **`apprise`**.
-
-The first time (or after translator changes), build the translator on that host (needs repo checkout with `tools/sidecar/`):
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml build mdt-translator
-```
-
-Runtime artifacts: `${NETSPEC_DATA_DIR}/mdt-sidecar` (`decoded.json`, `forwarder.log`).
-
-**Core stack only** (no Telegraf/translator on this host — e.g. `snmp_validate_only` and no dial-out to this box):
+**Standard deployment** (published images):
 
 ```bash
 docker compose up -d
 ```
 
-To use a specific image tag instead of `latest`, set the `NETSPEC_IMAGE_TAG` environment variable:
+This starts all four services: **`netspec`**, **`apprise`**, **`telegraf-mdt`** (MDT in on `tcp/57500`), and **`mdt-translator`** (forwards NetSpec-shaped JSON lines to `NETSPEC_INGEST_HOST:NETSPEC_INGEST_PORT`).
+
+Runtime artifacts: `${NETSPEC_DATA_DIR}/mdt-sidecar` (`decoded.json`, `forwarder.log`).
+
+To pin a specific image tag instead of `latest`:
 ```bash
 NETSPEC_IMAGE_TAG=v1.0.0 docker compose up -d
 ```
@@ -93,22 +79,18 @@ Use this when you want the **same container layout as production** but built **o
 ```bash
 export NETSPEC_DATA_DIR=/opt/netspec   # or your config/data root
 make docker-rebuild                    # build netspec:local + netspec-mdt-translator:local
-make docker-up-telemetry               # apprise + netspec + telegraf + mdt-translator (host network)
-# Apprise + NetSpec only (no MDT containers on this host):
-make docker-up
+make docker-up                         # start all four services (local images)
 ```
 
-After each Go or translator Python change, run **`make docker-rebuild`** then **`make docker-up-telemetry`** (or **`make docker-up`**) or **`docker compose ... up -d --force-recreate`**. **`make docker-up`** / **`docker-up-telemetry`** alone does not rebuild images.
+After each Go or translator Python change, run **`make docker-rebuild`** then **`make docker-up`** or **`docker compose -f docker-compose.yml -f docker-compose.build-local.yml up -d --force-recreate`**. **`make docker-up`** alone does not rebuild images.
 
-Compose files: `docker-compose.yml` + `docker-compose.build-local.yml`, and **`docker-compose.dev.yml`** whenever you run the push pipeline locally. Stop any host `nohup ./netspec` or old containers first so port **8088** / ingest port are free.
+Stop any host `nohup ./netspec` or old containers first so port **8088** / ingest port are free.
 
 | Make target | What it does |
 |---------------|----------------|
 | `make docker-rebuild` | Build `netspec:local` and `netspec-mdt-translator:local` |
-| `make docker-up` | Start Apprise + NetSpec (local images) |
-| `make docker-down` | Stop that stack |
-| `make docker-up-telemetry` | Same + Telegraf MDT + `mdt-translator` |
-| `make docker-down-telemetry` | Stop telemetry stack |
+| `make docker-up` | Start all four services (local images) |
+| `make docker-down` | Stop the stack |
 | `make docker-logs-netspec` | Follow NetSpec container logs |
 
 Because `netspec` uses `network_mode: host` in the default compose stack, `APPRISE_API_URL` must target the host-mapped Apprise port (for example `http://127.0.0.1:8086`). In this topology, `depends_on` controls startup order only and does not guarantee Apprise is fully ready before NetSpec starts.
@@ -265,7 +247,7 @@ Images are published to GitHub Container Registry. Replace `OWNER/REPO` with you
 # Pull the latest NetSpec image
 docker pull ghcr.io/OWNER/REPO:latest
 
-# MDT → NetSpec ingest translator (same image `docker-compose.dev.yml` builds locally)
+# MDT → NetSpec ingest translator
 docker pull ghcr.io/OWNER/REPO-mdt-translator:latest
 
 # Or use a specific version

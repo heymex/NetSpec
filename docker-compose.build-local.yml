@@ -1,13 +1,9 @@
-# Merge with docker-compose.yml (and docker-compose.dev.yml for push telemetry) to build
-# NetSpec from this repo instead of pulling ghcr.io/heymex/netspec.
+# Merge with docker-compose.yml to build images from this repo instead of pulling from GHCR.
 #
 # Example:
 #   export NETSPEC_DATA_DIR=/opt/netspec
-#   docker compose -f docker-compose.yml -f docker-compose.build-local.yml build netspec
+#   docker compose -f docker-compose.yml -f docker-compose.build-local.yml build
 #   docker compose -f docker-compose.yml -f docker-compose.build-local.yml up -d
-#
-# With MDT sidecar (same as prod compose stack):
-#   docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.build-local.yml up -d
 #
 # Optional build metadata (e.g. from Makefile):
 #   NETSPEC_LOCAL_VERSION  (default: dev)
@@ -24,3 +20,9 @@ services:
         VERSION: ${NETSPEC_LOCAL_VERSION:-dev}
         COMMIT: ${NETSPEC_LOCAL_COMMIT:-unknown}
         BUILD_DATE: ${NETSPEC_LOCAL_BUILD_DATE:-unknown}
+
+  mdt-translator:
+    image: netspec-mdt-translator:local
+    build:
+      context: ./tools/sidecar
+      dockerfile: Dockerfile

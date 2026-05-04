@@ -1,6 +1,6 @@
-# NetSpec + Apprise. Does not start Telegraf or mdt-translator — those are defined in
-# docker-compose.dev.yml (Compose merge; filename is historical). For the supported
-# IOS-XE dial-out → MDT → NetSpec push pipeline, always add -f docker-compose.dev.yml.
+# NetSpec + Apprise + Telegraf MDT + mdt-translator.
+# All services required for the standard IOS-XE dial-out → MDT → NetSpec push pipeline.
+# For local builds from source, merge docker-compose.build-local.yml.
 
 services:
   netspec:
@@ -39,6 +39,31 @@ services:
       - "8086:8000"
     networks:
       - monitoring
+
+  telegraf-mdt:
+    image: telegraf:1.31
+    container_name: telegraf-mdt
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./tools/sidecar/telegraf-mdt.conf:/etc/telegraf/telegraf.conf:ro
+      - ${NETSPEC_DATA_DIR:-/opt/netspec}/mdt-sidecar:/sidecar
+
+  mdt-translator:
+    image: ghcr.io/heymex/netspec-mdt-translator:${NETSPEC_IMAGE_TAG:-latest}
+    container_name: mdt-translator
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      - telegraf-mdt
+    environment:
+      - MDT_DECODED_FILE=/sidecar/decoded.json
+      - MDT_FORWARDER_LOG=/sidecar/forwarder.log
+      - NETSPEC_INGEST_HOST=${NETSPEC_INGEST_HOST:-127.0.0.1}
+      - NETSPEC_INGEST_PORT=${NETSPEC_INGEST_PORT:-57500}
+      - MDT_ALLOWED_DEVICES=${MDT_ALLOWED_DEVICES:-}
+    volumes:
+      - ${NETSPEC_DATA_DIR:-/opt/netspec}/mdt-sidecar:/sidecar
 
 networks:
   monitoring:

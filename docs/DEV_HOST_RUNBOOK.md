@@ -14,20 +14,20 @@ This runbook documents the standard operational flow for `derek-ghrunner` so tel
 
 ## Recommended: containerized dev (matches prod)
 
-Use the same **`docker-compose.yml`** (plus **`docker-compose.build-local.yml`**) so Apprise port mapping, volumes, and NetSpec **host networking** match production. Build **`netspec:local`** on the dev host instead of waiting for GHCR.
+Use the same **`docker-compose.yml`** (plus **`docker-compose.build-local.yml`** for local builds) so Apprise port mapping, volumes, and NetSpec **host networking** match production. Build **`netspec:local`** and **`netspec-mdt-translator:local`** on the dev host instead of waiting for GHCR.
 
 1. **Stop legacy processes** so ports **8088**, **57501** (or your ingest port), and **8086** are not double-bound: `pkill -x netspec` and stop any host `python3 …/mdt_to_netspec.py` (see §6 for `ps`/`grep` that avoids matching `ssh`).
 2. **`NETSPEC_DATA_DIR`** should be one tree containing **`config/`**, **`data/`**, **`apprise-config/`**, **`mdt-sidecar/`** (same layout as prod). Example: `/opt/netspec` with your files symlinked or copied there.
 3. **Compose env interpolation:** from the repo directory, Docker Compose reads **`.env`** in that directory for `${SNMP_COMMUNITY}`, `${APPRISE_API_URL}`, etc. Either copy/link `netspec.env` → `.env` in the checkout or `export` those variables before `make`. For host-network NetSpec talking to Apprise on the host, use **`APPRISE_API_URL=http://127.0.0.1:8086`** (not `http://apprise:8000`).
 4. **Ingest port for the sidecar:** set **`NETSPEC_INGEST_PORT`** (and ingest in `desired-state.yaml`) consistently, e.g. `57501`.
-5. Build and start (telemetry overlay = telegraf + `mdt-translator` in containers):
+5. Build and start:
 
 ```bash
 cd /home/derek/NetSpec-dev
 export NETSPEC_DATA_DIR=/opt/netspec
 export NETSPEC_INGEST_PORT=57501
 sudo -E make docker-rebuild
-sudo -E make docker-up-telemetry
+sudo -E make docker-up
 ```
 
 6. Verify: `curl -sS http://127.0.0.1:8088/health` and `curl -sS http://127.0.0.1:8088/api/telemetry/stats`. Optional: open `http://127.0.0.1:8088/api-browser` for the interactive API reference (loads `/openapi.json`).
@@ -111,7 +111,7 @@ Verify forwarder activity:
 tsh ssh derek@derek-ghrunner "tail -n 40 /home/derek/mdt-sidecar/forwarder.log"
 ```
 
-If forwarder is not running, prefer the **containerized translator** (same as `docker-compose.dev.yml`): `make docker-up-telemetry` or `docker compose … up -d mdt-translator` from the NetSpec repo with matching **`NETSPEC_DATA_DIR`** and **`NETSPEC_INGEST_PORT`**.
+If forwarder is not running, prefer the **containerized translator**: `make docker-up` or `docker compose -f docker-compose.yml -f docker-compose.build-local.yml up -d mdt-translator` from the NetSpec repo with matching **`NETSPEC_DATA_DIR`** and **`NETSPEC_INGEST_PORT`**.
 
 Legacy host fallback (only if you are not using Compose for the translator):
 
@@ -127,7 +127,7 @@ tsh ssh derek@derek-ghrunner "cd /home/derek/mdt-sidecar && nohup env MDT_DECODE
 
 - Telemetry counters stay at zero while NetSpec is healthy
   - Cause: `mdt-translator` / forwarder stopped, wrong `NETSPEC_INGEST_PORT`, or Telegraf not writing `decoded.json`.
-  - Fix: align `global.ingest.port` in YAML with `NETSPEC_INGEST_PORT`; restart `make docker-up-telemetry` or the translator container.
+  - Fix: align `global.ingest.port` in YAML with `NETSPEC_INGEST_PORT`; restart `make docker-up` or the translator container.
 
 - Container vs host binary
   - Prefer **one** runtime: containerized NetSpec (this runbook § “Recommended: containerized dev”) **or** host `./netspec` for quick Go iteration—not both on the same ports. This host has often run the **host** `./netspec` process operationally; if you switch to Compose, ensure port/config paths are correct.
