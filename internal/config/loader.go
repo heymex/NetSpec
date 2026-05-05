@@ -24,6 +24,12 @@ func LoadConfigDir(dir string) (*Config, error) {
 	if err := loadYAML(filepath.Join(dir, "desired-state.yaml"), &cfg.DesiredState); err != nil {
 		return nil, fmt.Errorf("loading desired-state.yaml: %w", err)
 	}
+	if err := MergeMonolithicDeviceOverlay(dir, &cfg.DesiredState); err != nil {
+		return nil, err
+	}
+	if cfg.DesiredState.Devices == nil {
+		cfg.DesiredState.Devices = make(map[string]DeviceConfig)
+	}
 	cfg.MonolithicDeviceCount = len(cfg.DesiredState.Devices)
 	// Optionally load additional device definitions from split YAML directories:
 	// <configDir>/devices (legacy) and <configDir>/../data/devices (writable in Docker).

@@ -172,3 +172,61 @@ devices:
 		t.Fatalf("device count: want 2, got %d", cfg.TotalDeviceCount())
 	}
 }
+
+func TestLoadConfigDirMonolithicDeviceOverlay(t *testing.T) {
+	t.Parallel()
+	tmp := t.TempDir()
+	cfgDir := filepath.Join(tmp, "cfg")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(DataDir(cfgDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	desired := []byte(`global:
+  telemetry_mode: snmp_validate_only
+  snmp:
+    version: "2c"
+devices:
+  keep-sw:
+    address: 10.0.0.1
+    interfaces:
+      Gi1:
+        desired_state: up
+        monitor: true
+  drop-sw:
+    address: 10.0.0.9
+    interfaces:
+      Gi1:
+        desired_state: up
+        monitor: true
+`)
+	if err := os.WriteFile(filepath.Join(cfgDir, "desired-state.yaml"), desired, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	overlay := []byte(`devices:
+  keep-sw:
+    address: 10.0.0.1
+    interfaces:
+      Gi1:
+        desired_state: up
+        monitor: true
+`)
+	if err := os.WriteFile(MonolithicDeviceOverlayPath(cfgDir), overlay, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadConfigDir(cfgDir)
+	if err != nil {
+		t.Fatalf("LoadConfigDir: %v", err)
+	}
+	if _, ok := cfg.DesiredState.Devices["keep-sw"]; !ok {
+		t.Fatal("missing keep-sw")
+	}
+	if _, ok := cfg.DesiredState.Devices["drop-sw"]; ok {
+		t.Fatal("drop-sw should be overridden by overlay")
+	}
+	if cfg.TotalDeviceCount() != 1 {
+		t.Fatalf("device count: want 1, got %d", cfg.TotalDeviceCount())
+	}
+}

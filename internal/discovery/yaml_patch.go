@@ -20,7 +20,7 @@ func PatchDesiredState(configPath string, req *CommitRequest) (*CommitResult, er
 		return nil, err
 	}
 
-	desired, err := loadDesiredState(configPath)
+	desired, err := loadDesiredStateForEdit(configPath)
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +92,7 @@ func PatchDesiredState(configPath string, req *CommitRequest) (*CommitResult, er
 		applyInterfaces(&dev, req.Interfaces)
 		desired.Devices[targetKey] = dev
 		delete(desired.Devices, targetKey)
-		if err := writeDesiredState(configPath, desired); err != nil {
+		if err := writeDesiredStateAdaptive(configPath, desired); err != nil {
 			return nil, err
 		}
 		if err := writeSplitDeviceFile(writeDevicesDir, targetKey, dev); err != nil {
@@ -182,6 +182,46 @@ func loadDesiredState(configPath string) (*config.DesiredStateConfig, error) {
 		desired.Devices = make(map[string]config.DeviceConfig)
 	}
 	return &desired, nil
+}
+
+func loadDesiredStateForEdit(configPath string) (*config.DesiredStateConfig, error) {
+	desired, err := loadDesiredState(configPath)
+	if err != nil {
+		return nil, err
+	}
+	if err := config.MergeMonolithicDeviceOverlay(filepath.Dir(configPath), desired); err != nil {
+		return nil, err
+	}
+	if desired.Devices == nil {
+		desired.Devices = make(map[string]config.DeviceConfig)
+	}
+	return desired, nil
+}
+
+func isDirWritable(dir string) bool {
+	f, err := os.CreateTemp(dir, ".netspec-write-test-*")
+	if err != nil {
+		return false
+	}
+	name := f.Name()
+	_ = f.Close()
+	_ = os.Remove(name)
+	return true
+}
+
+func writeDesiredStateAdaptive(configPath string, desired *config.DesiredStateConfig) error {
+	dir := filepath.Dir(configPath)
+	if isDirWritable(dir) {
+		if err := writeDesiredState(configPath, desired); err != nil {
+			return err
+		}
+		_ = os.Remove(config.MonolithicDeviceOverlayPath(dir))
+		return nil
+	}
+	if desired.Devices == nil {
+		desired.Devices = make(map[string]config.DeviceConfig)
+	}
+	return config.WriteMonolithicDeviceOverlay(dir, desired.Devices)
 }
 
 func writeDesiredState(configPath string, desired *config.DesiredStateConfig) error {
@@ -379,7 +419,7 @@ func UpdateDeviceInterface(configPath, deviceKey, ifaceName string, patch Interf
 		}
 	}
 
-	desired, err := loadDesiredState(configPath)
+	desired, err := loadDesiredStateForEdit(configPath)
 	if err != nil {
 		return err
 	}
@@ -413,7 +453,7 @@ func UpdateDeviceInterface(configPath, deviceKey, ifaceName string, patch Interf
 		return err
 	}
 	desired.Devices[deviceKey] = dev
-	return writeDesiredState(configPath, desired)
+	return writeDesiredStateAdaptive(configPath, desired)
 }
 
 func DeleteDevice(configPath, deviceKey string) error {
@@ -422,7 +462,7 @@ func DeleteDevice(configPath, deviceKey string) error {
 		return errors.New("device key is required")
 	}
 
-	desired, err := loadDesiredState(configPath)
+	desired, err := loadDesiredStateForEdit(configPath)
 	if err != nil {
 		return err
 	}
@@ -454,7 +494,7 @@ func DeleteDevice(configPath, deviceKey string) error {
 		return errNotFound("device key not found")
 	}
 	delete(desired.Devices, deviceKey)
-	return writeDesiredState(configPath, desired)
+	return writeDesiredStateAdaptive(configPath, desired)
 }
 
 func applyInterfacePatch(dev *config.DeviceConfig, ifaceName string, patch InterfaceUpdate) error {
