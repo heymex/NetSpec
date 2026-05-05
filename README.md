@@ -125,6 +125,7 @@ NetSpec includes a built-in web UI accessible at `http://localhost:8088` (or you
 - **Configuration View** - Collection interval and dedup settings
 - **Config Reload** - Button to reload all configuration files from the config directory without restart
 - **API Browser** - Interactive OpenAPI documentation at `/api-browser` (Swagger UI with try-it-out; machine-readable spec at `/openapi.json`). Interface names in URLs must be **percent-encoded** (for example `GigabitEthernet1%2F0%2F1`).
+- **SNMP notices** - When SNMP matters for your deployment (fallback polling, snmp-only mode, or telemetry + SNMP reachability), the dashboard, device pages, wizard, and `/status` surface short **banner warnings** so operators see load/behavior expectations beyond log lines alone.
 
 ### API Endpoints
 

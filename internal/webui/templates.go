@@ -525,6 +525,43 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                 opacity: 1;
             }
         }
+
+        /* SNMP operator banners (fallback / snmp-only telemetry) */
+        .snmp-banner-stack {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            margin-bottom: 1.25rem;
+        }
+        .snmp-banner {
+            border-radius: 10px;
+            padding: 0.85rem 1.1rem;
+            border: 1px solid var(--border-color);
+            line-height: 1.45;
+        }
+        .snmp-banner-title {
+            font-weight: 600;
+            font-size: 0.95rem;
+            margin-bottom: 0.35rem;
+        }
+        .snmp-banner-body {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+        .snmp-banner.snmp-banner-warning {
+            background: rgba(210, 153, 34, 0.12);
+            border-color: rgba(210, 153, 34, 0.45);
+        }
+        .snmp-banner.snmp-banner-warning .snmp-banner-title {
+            color: var(--accent-yellow);
+        }
+        .snmp-banner.snmp-banner-info {
+            background: rgba(88, 166, 255, 0.08);
+            border-color: rgba(88, 166, 255, 0.35);
+        }
+        .snmp-banner.snmp-banner-info .snmp-banner-title {
+            color: var(--accent-blue);
+        }
     </style>
 </head>
 <body>
@@ -627,6 +664,8 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                 <button class="btn btn-primary" onclick="reloadConfig()">↻ Reload Config</button>
             </div>
         </header>
+
+        {{template "snmp-banner-stack" .}}
 
         <div class="stats-grid">
             <div class="stat-card">
@@ -941,6 +980,19 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
         </script>
 {{end}}
 
+{{define "snmp-banner-stack"}}
+        {{if .SNMPWarnings}}
+        <div class="snmp-banner-stack" role="region" aria-label="SNMP notices">
+            {{range .SNMPWarnings}}
+            <div class="snmp-banner snmp-banner-{{.Class}}">
+                <div class="snmp-banner-title">{{.Title}}</div>
+                <div class="snmp-banner-body">{{.Body}}</div>
+            </div>
+            {{end}}
+        </div>
+        {{end}}
+{{end}}
+
 {{define "wizard"}}
 <!DOCTYPE html>
 <html lang="en">
@@ -978,6 +1030,14 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
         th { color: var(--mut); font-weight: 500; }
         .small { font-size: 0.75rem; color: var(--mut); }
         .badge { display: inline-block; font-size: 0.72rem; padding: 0.15rem 0.4rem; border-radius: 4px; background: rgba(88,166,255,.15); color: var(--blue); }
+        .snmp-banner-stack { display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 1rem; }
+        .snmp-banner { border-radius: 10px; padding: 0.85rem 1.1rem; border: 1px solid var(--bd); line-height: 1.45; }
+        .snmp-banner-title { font-weight: 600; font-size: 0.92rem; margin-bottom: 0.35rem; }
+        .snmp-banner-body { font-size: 0.82rem; color: var(--mut); }
+        .snmp-banner.snmp-banner-warning { background: rgba(210,153,34,0.14); border-color: rgba(210,153,34,0.45); }
+        .snmp-banner.snmp-banner-warning .snmp-banner-title { color: var(--yellow); }
+        .snmp-banner.snmp-banner-info { background: rgba(88,166,255,0.08); border-color: rgba(88,166,255,0.35); }
+        .snmp-banner.snmp-banner-info .snmp-banner-title { color: var(--blue); }
     </style>
 </head>
 <body>
@@ -992,6 +1052,8 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                 <a href="/api-browser" class="btn">API Browser</a>
             </div>
         </header>
+
+        {{template "snmp-banner-stack" .}}
 
         <div id="step1" class="step active card">
             <h3>Step 1: Connect & Probe</h3>
@@ -1613,6 +1675,42 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
             color: var(--text-secondary);
             word-break: break-word;
         }
+
+        .snmp-banner-stack {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            margin-bottom: 1.25rem;
+        }
+        .snmp-banner {
+            border-radius: 10px;
+            padding: 0.85rem 1.1rem;
+            border: 1px solid var(--border-color);
+            line-height: 1.45;
+        }
+        .snmp-banner-title {
+            font-weight: 600;
+            font-size: 0.95rem;
+            margin-bottom: 0.35rem;
+        }
+        .snmp-banner-body {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+        .snmp-banner.snmp-banner-warning {
+            background: rgba(210, 153, 34, 0.12);
+            border-color: rgba(210, 153, 34, 0.45);
+        }
+        .snmp-banner.snmp-banner-warning .snmp-banner-title {
+            color: var(--accent-yellow);
+        }
+        .snmp-banner.snmp-banner-info {
+            background: rgba(88, 166, 255, 0.08);
+            border-color: rgba(88, 166, 255, 0.35);
+        }
+        .snmp-banner.snmp-banner-info .snmp-banner-title {
+            color: var(--accent-blue);
+        }
     </style>
 </head>
 <body>
@@ -1633,6 +1731,8 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                 <a href="/" class="btn btn-secondary">← Back to Dashboard</a>
             </div>
         </header>
+
+        {{template "snmp-banner-stack" .}}
 
         <div class="card">
             <div class="card-header">

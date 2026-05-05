@@ -194,6 +194,20 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"commit":        commit,
 		"build_date":    buildDate,
 	}
+	s.reloadMu.RLock()
+	statusCfg := s.config
+	s.reloadMu.RUnlock()
+	if w := snmpUIWarnings(statusCfg); len(w) > 0 {
+		list := make([]map[string]string, 0, len(w))
+		for _, x := range w {
+			list = append(list, map[string]string{
+				"class": x.Class,
+				"title": x.Title,
+				"body":  x.Body,
+			})
+		}
+		status["snmp_warnings"] = list
+	}
 
 	json.NewEncoder(w).Encode(status)
 }
@@ -479,6 +493,7 @@ type PageData struct {
 	BuildDate      string
 	Telemetry      TelemetryStats
 	HexMapSVG      template.HTML `json:"-"`
+	SNMPWarnings   []SNMPUIWarning `json:"-"`
 }
 
 // handleWebUI renders the main web interface
@@ -585,6 +600,7 @@ func (s *Server) handleWebUI(w http.ResponseWriter, r *http.Request) {
 	mergedHex := webui.MergeHexSeverityWithSNMP(worstByDev, reachAugment)
 	hexLayout := webui.BuildHexMapLayout(deviceNames, mergedHex, webui.DefaultHexRadius)
 	data.HexMapSVG = webui.RenderHexMapSVG(hexLayout)
+	data.SNMPWarnings = snmpUIWarnings(cfg)
 
 	// Get recent logs
 	if s.logBuffer != nil {
@@ -613,10 +629,11 @@ func (s *Server) handleTelemetryStatsAPI(w http.ResponseWriter, r *http.Request)
 
 // DevicePageData holds data for the device detail page
 type DevicePageData struct {
-	Device    DeviceDetailInfo
-	Version   string
-	Commit    string
-	BuildDate string
+	Device       DeviceDetailInfo
+	Version      string
+	Commit       string
+	BuildDate    string
+	SNMPWarnings []SNMPUIWarning `json:"-"`
 }
 
 // DeviceDetailInfo holds detailed device information
@@ -751,10 +768,11 @@ func (s *Server) handleDevicePage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := DevicePageData{
-		Device:    deviceDetail,
-		Version:   version,
-		Commit:    commit,
-		BuildDate: buildDate,
+		Device:       deviceDetail,
+		Version:      version,
+		Commit:       commit,
+		BuildDate:    buildDate,
+		SNMPWarnings: snmpUIWarnings(cfg),
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

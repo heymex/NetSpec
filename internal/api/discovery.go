@@ -24,14 +24,20 @@ func (s *Server) handleWizardPage(w http.ResponseWriter, r *http.Request) {
 	buildDate := s.buildDate
 	s.versionMu.RUnlock()
 
+	s.reloadMu.RLock()
+	wizCfg := s.config
+	s.reloadMu.RUnlock()
+
 	data := struct {
-		Version   string
-		Commit    string
-		BuildDate string
+		Version      string
+		Commit       string
+		BuildDate    string
+		SNMPWarnings []SNMPUIWarning
 	}{
-		Version:   version,
-		Commit:    commit,
-		BuildDate: buildDate,
+		Version:      version,
+		Commit:       commit,
+		BuildDate:    buildDate,
+		SNMPWarnings: snmpUIWarnings(wizCfg),
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
