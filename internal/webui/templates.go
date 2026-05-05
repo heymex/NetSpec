@@ -648,7 +648,6 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                             return o.channel + ': ' + st + msg;
                         })
                         .join('\n');
-                    if (data.error) summary += '\n— ' + data.error;
                 } else {
                     summary = data.error || 'Notification test returned no channel outcomes.';
                 }
