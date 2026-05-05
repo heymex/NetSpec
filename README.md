@@ -83,6 +83,44 @@ To pin a specific image tag instead of `latest`:
 NETSPEC_IMAGE_TAG=v1.0.0 docker compose up -d
 ```
 
+### Komodo, Portainer, and similar UIs
+
+If you manage stacks with **Komodo**, **Portainer**, **Dockge**, or another Compose-based UI instead of typing `docker compose` by hand, the same **`docker-compose.yml`** applies—plus a few constraints these tools hide behind a form.
+
+#### 1. Project directory must include `tools/sidecar/`
+
+**Telegraf** bind-mounts a path **relative to the compose file**:
+
+```yaml
+./tools/sidecar/telegraf-mdt.conf:/etc/telegraf/telegraf.conf:ro
+```
+
+So the directory the UI treats as the **Compose project root** must be a **NetSpec repo checkout** (or a copy) that still contains **`tools/sidecar/`** next to **`docker-compose.yml`**. A compose file alone in an empty folder **will not** start Telegraf correctly.
+
+#### 2. `NETSPEC_DATA_DIR` and YAML config (outside the repo)
+
+Runtime config lives under **`${NETSPEC_DATA_DIR}`** on the host (default **`/opt/netspec`**): **`config/`** (read-only for NetSpec), **`data/`**, **`mdt-sidecar/`**, **`apprise-config/`**. You can create that tree with **`./scripts/setup-netspec.sh`** on the server once, or by hand. The UI does not replace editing **`desired-state.yaml`** / **`alerts.yaml`** on disk—after changes, **reload** NetSpec (`POST /api/reload` or the dashboard button).
+
+#### 3. Environment: `.env` next to the compose file
+
+Compose loads **`.env`** in the project directory for **`${VAR}`** interpolation, and **`netspec-netspec`** uses **`env_file: .env`** to pass **`APPRISE_SLACK_WEBHOOK`** and other **`url_env`** secrets into the container.
+
+- **Komodo / file-based stacks:** Keep **`compose.yaml`** (or **`docker-compose.yml`**) and **`.env`** in the same stack folder (this matches Docker Compose’s usual layout). Komodo labels expose **`com.docker.compose.project.environment_file`** for the `.env` path—ensure it points at the real file after deploy.
+- **Portainer (stack from Git):** Set the **compose path** (e.g. **`docker-compose.yml`**), branch, and **environment variables** in the UI for secrets you do not commit (GHCR pull, **`SNMP_COMMUNITY`**, **`NETSPEC_DATA_DIR`**, Apprise URLs). You can paste the contents of **`.env.example`** and fill in values.
+- **Portainer (web editor):** Upload or paste compose **from the repo**, set **Working directory** / bind-mount base if the UI supports it so **`./tools/sidecar`** resolves, and add env vars in the stack’s **Environment** section.
+
+#### 4. Image registry (GHCR)
+
+Published images are **`ghcr.io/heymex/netspec`** and **`ghcr.io/heymex/netspec-mdt-translator`**. The Docker host (or registry settings in the UI) must be able to **`docker pull`**—log in with a GitHub token where required (see **Running** above).
+
+#### 5. Host networking and ports
+
+NetSpec and the sidecars use **`network_mode: host`** where noted. **Apprise** publishes **`8086:8000`**. Expect host listeners on **`8088`** (web/API), **`8086`** (Apprise), and **`57500/tcp`** (ingest) when using the default sample. Ensure the orchestrator allows **host** network mode on Linux (standard for this compose file).
+
+#### 6. Use **Docker Compose** stacks, not raw Swarm-only manifests
+
+This repository’s file is aimed at **`docker compose`** (Compose spec v2/v3). In Portainer, prefer **Stacks → Add stack → Web editor / Git** using the **Compose** format rather than translating to Swarm Services by hand.
+
 ### Building from Source
 
 ```bash

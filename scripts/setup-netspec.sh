@@ -160,4 +160,8 @@ log "  2. Edit $DATA_DIR/config/alerts.yaml and $env_dest (APPRISE_* / url_env �
 log "  3. docker compose pull && docker compose up -d   # includes Apprise-API on :8086"
 log "  4. Reload after YAML edits: POST /api/reload or the dashboard button."
 log ""
+log "If you deploy with Komodo, Portainer, or similar: keep this checkout as the Compose"
+log "project root (needs ./tools/sidecar next to docker-compose.yml) and point NETSPEC_DATA_DIR"
+log "at the same path you used here. Details: README «Komodo, Portainer, and similar UIs»."
+log ""
 log "NETSPEC_DATA_DIR=$DATA_DIR"
