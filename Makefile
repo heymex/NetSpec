@@ -17,7 +17,11 @@ export NETSPEC_LOCAL_COMMIT     ?= $(shell git rev-parse --short HEAD 2>/dev/nul
 export NETSPEC_LOCAL_BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 export NETSPEC_LOCAL_VERSION    ?= dev
 
-.PHONY: docker-build-netspec docker-build-mdt-translator docker-rebuild docker-up docker-down docker-logs-netspec
+.PHONY: setup docker-build-netspec docker-build-mdt-translator docker-rebuild docker-up docker-down docker-logs-netspec
+
+# First-time host bootstrap: data dirs, sample config, .env (see scripts/setup-netspec.sh --help)
+setup:
+	./scripts/setup-netspec.sh
 
 docker-build-netspec:
 	$(COMPOSE_LOCAL) build netspec-netspec

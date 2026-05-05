@@ -83,7 +83,7 @@ Notes:
 - Exact telemetry CLI can vary by IOS-XE train/platform; use `telemetry ietf ?` and `subscription ?` to discover valid syntax.
 - Start with a narrow XPath/filter and low receiver count, then expand.
 - Keep SNMP targeted validation enabled in NetSpec to confirm telemetry events.
-- NetSpec `telemetry_ingest_push` listens for **newline-delimited JSON** on `global.ingest.listen_address` / `global.ingest.port` (defaults `0.0.0.0:57500`). IOS-XE dial-out uses **grpc-tcp** to Telegraf (or another collector), not directly to NetSpec. **Telegraf** decodes MDT to `${NETSPEC_DATA_DIR}/mdt-sidecar/decoded.json`, and **`mdt-translator`** forwards NetSpec-shaped JSON lines to `NETSPEC_INGEST_HOST:NETSPEC_INGEST_PORT` — both run as part of the standard `docker compose up -d` stack (see `.env.example` and [README](../README.md#running)).
+- NetSpec `telemetry_ingest_push` listens for **newline-delimited JSON** on `global.ingest.listen_address` / `global.ingest.port` (defaults `0.0.0.0:57500`). IOS-XE dial-out uses **grpc-tcp** to Telegraf (or another collector), not directly to NetSpec. **Telegraf** decodes MDT to `${NETSPEC_DATA_DIR}/mdt-sidecar/decoded.json`, and **`mdt-translator`** forwards NetSpec-shaped JSON lines to `NETSPEC_INGEST_HOST:NETSPEC_INGEST_PORT` — both run as part of the standard `docker compose up -d` stack together with NetSpec and Apprise-API (see [README](../README.md#running)).
 - Optional `MDT_ALLOWED_DEVICES` restricts which device names the translator forwards.
 - In isolated management VRF/firewall environments, token-based payload auth can be omitted and transport isolation can be the primary control. For payload-level checks, set `global.ingest.token_env` in YAML and set that environment variable for NetSpec.
 

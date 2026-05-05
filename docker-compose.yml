@@ -1,7 +1,9 @@
-# NetSpec + Apprise + Telegraf MDT + mdt-translator.
-# All services required for the standard IOS-XE dial-out → MDT → NetSpec push pipeline.
+# NetSpec + Apprise-API + Telegraf MDT + mdt-translator.
+#
+# NetSpec’s job is to detect drift from desired state and surface it (including via alerts).
+# Apprise-API receives NetSpec POST /notify traffic and fans out to Slack, email, Teams, etc.
 # Service names use a netspec- prefix so the project groups cleanly in tooling and avoids
-# clashing with other Apprise stacks on the same host (unique container names).
+# clashing with other stacks on the same host (unique container names).
 # For local builds from source, merge docker-compose.build-local.yml.
 
 services:
@@ -34,7 +36,7 @@ services:
     cpus: "${NETSPEC_CPU_LIMIT:-1.0}"
     pids_limit: ${NETSPEC_PIDS_LIMIT:-256}
     depends_on:
-      # Startup ordering only; does not wait for Apprise health/readiness.
+      # Ordering only; does not wait for Apprise readiness.
       - netspec-apprise
 
   netspec-apprise:

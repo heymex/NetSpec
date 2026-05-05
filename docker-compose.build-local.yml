@@ -1,5 +1,4 @@
 # Merge with docker-compose.yml to build images from this repo instead of pulling from GHCR.
-#
 # Example:
 #   export NETSPEC_DATA_DIR=/opt/netspec
 #   docker compose -f docker-compose.yml -f docker-compose.build-local.yml build

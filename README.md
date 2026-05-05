@@ -1,6 +1,6 @@
 # NetSpec: Declarative Network State Monitor
 
-NetSpec is a next-generation, declarative network monitoring system designed for environments where *state correctness matters more than metrics*.
+NetSpec is a declarative network monitor: you define how the network *should* behave, and NetSpec **evaluates reality against that desired state** and **raises alerts** when they diverge (SNMP, telemetry ingest, Apprise-backed delivery). It is built for environments where *state correctness matters more than metrics*.
 
 ## Quick Start
 
@@ -13,7 +13,7 @@ NetSpec is a next-generation, declarative network monitoring system designed for
 
 1. Edit `config/desired-state.yaml` with global settings.
 2. Define devices either in `config/desired-state.yaml` (monolithic) or as split files in `config/devices/*.yaml`.
-3. Optional: edit `config/alerts.yaml` for alert channels and routing (`alerts:` does not belong in `desired-state.yaml`; it is not loaded from there).
+3. Edit `config/alerts.yaml` for channels and routing (the repo ships a sample; **`./scripts/setup-netspec.sh`** installs it — `alerts:` does not belong in `desired-state.yaml` and is not loaded from there).
 4. Copy `.env.example` to `.env` and update with your credentials:
 
 ```bash
@@ -21,12 +21,12 @@ cp .env.example .env
 # Edit .env with your actual values
 ```
 
-Steps 1–2 are required for a minimal deployment; step 3 only if you use Apprise alerting; step 4 supplies runtime credentials for Compose or local runs.
+Steps 1–2 define what “correct” means; step 3 defines **where drift alerts are delivered** (channels and routing — repository sample + **`setup-netspec.sh`**). Step 4 supplies Compose/runtime credentials. An `alerts:` block inside `desired-state.yaml` is **not** read (that file unmarshals to only **`global`** and **`devices`** — routing belongs in **`alerts.yaml`** only).
 
 The `.env` file should contain:
 - `SNMP_COMMUNITY` - SNMPv2c community (used by SNMP validation and push-confirmation paths)
 - `API_PORT` - web UI/API listen port override (default `8088`)
-- `APPRISE_API_URL` - Apprise-API **base URL** (required for notifications). NetSpec POSTs JSON to `{APPRISE_API_URL}/notify/` (stateless Apprise-API `notify` endpoint). With `network_mode: host` for NetSpec, use `http://127.0.0.1:8086` (or your host-mapped port), not `http://netspec-apprise:8000` (that hostname only resolves inside the Compose **`netspec`** bridge, not on the host network namespace).
+- `APPRISE_API_URL` - Apprise-API **base URL** NetSpec uses to deliver alerts (`{APPRISE_API_URL}/notify/`). With the default compose stack and host-network NetSpec, use **`http://127.0.0.1:8086`**, not `http://netspec-apprise:8000` (that hostname only resolves on the Compose **`netspec`** bridge).
 - Channel targets come from env vars named in `config/alerts.yaml` under `channels.*.url_env` (for example `APPRISE_SLACK_WEBHOOK`). See `.env.example` for placeholders.
 - Optional: `APPRISE_NOTIFY_TIMEOUT` (HTTP timeout per notify, e.g. `15s`). Troubleshooting: [Apprise alerting](docs/APPRISE_ALERTING.md).
 - `NETSPEC_INGEST_HOST` / `NETSPEC_INGEST_PORT` - where **`mdt-translator`** sends NetSpec JSON lines (must match `global.ingest` when `telemetry_mode` is `telemetry_ingest_push`)
@@ -43,6 +43,20 @@ The `.env` file should contain:
 
 In `telemetry_ingest_push` mode you can optionally enable `global.snmp.telemetry_fallback_enabled` to run periodic full-device SNMP polling as a safety net when telemetry is missing. This fallback can significantly increase SNMP/device load and slow large deployments; use conservative intervals (for example `5m` or longer).
 
+### First-time setup script
+
+From the repo root, run **`./scripts/setup-netspec.sh`** (use `sudo` if `/opt/netspec` should own persistent data). It:
+
+1. Creates **`NETSPEC_DATA_DIR`** (`config/`, `data/`, `mdt-sidecar/`, `apprise-config/`).
+2. Seeds **`config/desired-state.yaml`** and **`config/alerts.yaml`** from the repository samples (drift evaluation + alert routing). Skips existing files unless **`--force`**.
+3. Creates or updates **`.env`**: copies from **`.env.example`** when missing; always sets **`NETSPEC_DATA_DIR`** and **`SNMP_COMMUNITY`**.
+
+Non-interactive example:
+
+`sudo ./scripts/setup-netspec.sh --data-dir /opt/netspec --non-interactive`
+
+Then edit devices and notification destinations, **`docker compose pull`** (if using GHCR), **`docker compose up -d`**, and reload after YAML edits (`POST /api/reload` or the dashboard).
+
 ### Running
 
 GitHub Actions builds and publishes all images (NetSpec and mdt-translator) to GitHub Container Registry on every merge to main.
@@ -58,7 +72,7 @@ echo $GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
 docker compose up -d
 ```
 
-This starts all four services: **`netspec-netspec`**, **`netspec-apprise`**, **`netspec-telegraf-mdt`** (MDT in on `tcp/57500`), and **`netspec-mdt-translator`** (forwards NetSpec-shaped JSON lines to `NETSPEC_INGEST_HOST:NETSPEC_INGEST_PORT`). Compose uses a **`netspec-` service prefix** and a **`netspec` bridge network** so names stay unique alongside other stacks on the same host.
+This starts **NetSpec**, **Apprise-API** (notification relay on host **8086**), **Telegraf MDT** (listen **57500/tcp** for dial-out MDT), and **mdt-translator**. Compose uses a **`netspec-` service prefix** and a **`netspec` bridge network** for Apprise; NetSpec and the sidecars use host networking where configured.
 
 Runtime artifacts: `${NETSPEC_DATA_DIR}/mdt-sidecar` (`decoded.json`, `forwarder.log`).
 
@@ -94,11 +108,11 @@ Stop any host `nohup ./netspec` or old containers first so port **8088** / inges
 | Make target | What it does |
 |---------------|----------------|
 | `make docker-rebuild` | Build `netspec:local` and `netspec-mdt-translator:local` |
-| `make docker-up` | Start all four services (local images) |
+| `make docker-up` | Start full stack (local images) |
 | `make docker-down` | Stop the stack |
 | `make docker-logs-netspec` | Follow NetSpec container logs |
 
-Because **`netspec-netspec`** uses `network_mode: host` in the default compose stack, `APPRISE_API_URL` must target the host-mapped Apprise port (for example `http://127.0.0.1:8086`), not `http://netspec-apprise:8000` (that DNS name only resolves for containers attached to the **`netspec`** bridge). In this topology, `depends_on` controls startup order only and does not guarantee Apprise is fully ready before NetSpec starts.
+Because **`netspec-netspec`** uses `network_mode: host`, **`APPRISE_API_URL`** must target the **host** Apprise port (for example `http://127.0.0.1:8086`), not `http://netspec-apprise:8000` (that DNS name only resolves on the Compose **`netspec`** bridge). For a **remote** Apprise-API only, change **`APPRISE_API_URL`** accordingly and adjust or remove the local **`netspec-apprise`** service for your environment.
 
 ## MVP Features
 
@@ -107,7 +121,7 @@ This MVP includes:
 - ✅ SNMP validator with targeted polling
 - ✅ Interface state evaluation (including **port-channel** members, `member_policy` thresholds, and high-speed interface alias normalization for SNMP vs. telemetry name drift)
 - ✅ Push telemetry ingest via **Telegraf MDT + `mdt-translator`** (newline-delimited JSON into NetSpec)
-- ✅ Alerting via **Apprise-API** (`/notify/`) using channels defined in `config/alerts.yaml`
+- ✅ **Alerts on desired-state mismatch**, delivered via **Apprise-API** (`/notify/`) and channels in `config/alerts.yaml`
 - ✅ YAML configuration (split devices, optional credentials and maintenance files)
 - ✅ Docker deployment and **local parity** Makefile workflow
 - ✅ Web status interface, discovery wizard, API browser (OpenAPI/Swagger)
@@ -191,7 +205,7 @@ NetSpec loads all files from the **`config/`** directory next to `desired-state.
 | File | Required | Purpose |
 |------|----------|---------|
 | `config/desired-state.yaml` | Yes | Global settings plus optional monolithic device/interface definitions |
-| `config/alerts.yaml` | No | Alert channels, routing rules, and alert behavior |
+| `config/alerts.yaml` | No (loader skips if missing) | **Default:** use the sample (routing + destinations). Without it, drift is still evaluated but **not delivered** anywhere. |
 | `config/credentials.yaml` | No | Named credential sets for device authentication references |
 | `config/maintenance.yaml` | No | Scheduled maintenance windows (currently loaded but not yet enforced for alert suppression) |
 | `config/devices/*.yaml` | No | Legacy location for per-device split YAML (still loaded) |
