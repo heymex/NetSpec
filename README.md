@@ -226,10 +226,6 @@ See `config/desired-state.yaml`, `config/alerts.yaml`, and `config/devices/examp
 
 For `Port-channel` (or equivalent) interfaces you can declare `members.required` and a `member_policy` with `mode`: `all_active`, `min_active`, or `per_stack_minimum`, plus optional `critical_threshold_pct` / `warning_threshold_pct` for member-down severity escalation. Invalid combinations (for example warning threshold ≥ critical) are rejected at config load time.
 
-## Bundled Tools
-
-The container image bundles `gnmic` for operator debugging workflows (for example ad-hoc in-container gNMI queries while troubleshooting). The NetSpec application itself does not shell out to `gnmic` at runtime.
-
 ### Cisco IOS-XE Telemetry Setup
 
 For detailed instructions on IOS-XE telemetry and validation patterns, see the [Cisco telemetry setup guide](docs/CISCO_GNMI_SETUP.md).

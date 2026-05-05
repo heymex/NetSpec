@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 FROM golang:1.21-alpine AS builder
 
 WORKDIR /build
@@ -9,13 +10,17 @@ ARG BUILD_DATE=unknown
 
 # Copy go mod files
 COPY go.mod go.sum* ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
 
-# Copy source
-COPY . .
+# Copy only build-relevant source
+COPY cmd ./cmd
+COPY internal ./internal
 
 # Build with version information
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo \
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath \
     -ldflags "-X github.com/netspec/netspec/internal/version.Version=${VERSION} \
               -X github.com/netspec/netspec/internal/version.Commit=${COMMIT} \
               -X github.com/netspec/netspec/internal/version.BuildDate=${BUILD_DATE}" \
@@ -24,31 +29,12 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo \
 # Final stage
 FROM alpine:latest
 
-# Install wget for downloading gnmic, and keep ca-certificates for HTTPS
-RUN apk --no-cache add ca-certificates tzdata wget
+# Keep runtime certs/timezone data
+RUN apk --no-cache add ca-certificates tzdata
 
 WORKDIR /app
 
 COPY --from=builder /build/netspec .
-
-# Download and install gnmic (gNMI CLI client).
-# NetSpec does not invoke gnmic directly; it is bundled for operator
-# troubleshooting and ad-hoc gNMI queries inside the running container.
-# Supports both amd64 and arm64 architectures
-ARG TARGETARCH
-ARG GNMIC_VERSION=0.26.0
-RUN case ${TARGETARCH} in \
-        amd64) ARCH="Linux_x86_64" ;; \
-        arm64) ARCH="Linux_aarch64" ;; \
-        *) echo "Unsupported architecture: ${TARGETARCH}" && exit 1 ;; \
-    esac && \
-    wget -q -O /tmp/gnmic.tar.gz \
-        "https://github.com/karimra/gnmic/releases/download/v${GNMIC_VERSION}/gnmic_${GNMIC_VERSION}_${ARCH}.tar.gz" && \
-    tar -xzf /tmp/gnmic.tar.gz -C /tmp && \
-    mv /tmp/gnmic /usr/local/bin/gnmic && \
-    chmod +x /usr/local/bin/gnmic && \
-    rm -rf /tmp/gnmic.tar.gz /tmp/gnmic_* && \
-    gnmic version
 
 # Create config and data directories
 RUN mkdir -p /config /data

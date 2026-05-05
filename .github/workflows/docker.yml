@@ -26,6 +26,23 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Detect image-related changes
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            netspec:
+              - 'Dockerfile'
+              - '.dockerignore'
+              - 'go.mod'
+              - 'go.sum'
+              - 'cmd/**'
+              - 'internal/**'
+              - '.github/workflows/docker.yml'
+            translator:
+              - 'tools/sidecar/**'
+              - '.github/workflows/docker.yml'
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -66,10 +83,11 @@ jobs:
           echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_OUTPUT
 
       - name: Build and push
+        if: steps.changes.outputs.netspec == 'true'
         uses: docker/build-push-action@v5
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -95,11 +113,12 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push mdt-translator
+        if: steps.changes.outputs.translator == 'true'
         uses: docker/build-push-action@v5
         with:
           context: ./tools/sidecar
           file: ./tools/sidecar/Dockerfile
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta_mdt.outputs.tags }}
           labels: ${{ steps.meta_mdt.outputs.labels }}

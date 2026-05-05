@@ -1,0 +1,16 @@
+.git
+.github
+.cursor
+.vscode
+tmp
+dist
+bin
+coverage
+*.log
+*.tmp
+*.swp
+*.swo
+README.md
+docs
+upcoming_development
+tools/sidecar
