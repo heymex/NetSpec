@@ -41,7 +41,7 @@ NetSpec sends firing and resolved alerts to [Apprise-API](https://github.com/car
 |---------|----------------|
 | `Connection reset` on `curl` to `:8086` | Docker published **host 8086 → container 8086** but linuxserver **apprise-api** listens on **8000** inside the image. Use **`8086:8000`** (see repo `docker-compose.yml`). |
 | `APPRISE_API_URL is not set` | Missing env in the NetSpec process (compose `.env`, `netspec.env`, or systemd `Environment=`). |
-| `environment variable X is not set or empty` | `url_env` in YAML does not match a populated variable. |
+| `environment variable X is not set or empty` | Variable is absent in the NetSpec **process**. With Docker Compose you must declare **`env_file`** and/or **`environment`** entries so each `url_env` name reaches the container; presence in compose `.env` alone only interpolates **`${VAR}`** lines in the YAML—see **`netspec-netspec`** in `docker-compose.yml`. |
 | `unknown alert channel` | `alert_rules` references a name missing from `alerts.channels`. |
 | HTTP **424** from `/notify` | Apprise accepted the HTTP request but could not deliver to the given `urls` (bad token, network from container, etc.). Inspect **`details`** in the JSON body. |
 | Channel skipped (debug only) | **`severity_filter`** on that channel excludes the alert’s severity. |

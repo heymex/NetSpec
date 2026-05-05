@@ -14,6 +14,12 @@ services:
     volumes:
       - ${NETSPEC_DATA_DIR:-/opt/netspec}/config:/config:ro
       - ${NETSPEC_DATA_DIR:-/opt/netspec}/data:/data
+    # Pass through variables named in alerts.channels.*.url_env (e.g. APPRISE_SLACK_WEBHOOK).
+    # Compose only interpolates ${VAR} keys that appear in `environment:` unless you also
+    # load the project .env into the container via env_file.
+    env_file:
+      - path: .env
+        required: false
     environment:
       - SNMP_COMMUNITY=${SNMP_COMMUNITY}
       # With host networking, use 127.0.0.1 and the host-mapped Apprise port.

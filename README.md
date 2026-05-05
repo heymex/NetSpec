@@ -35,7 +35,7 @@ The `.env` file should contain:
 - `NETSPEC_*`, `APPRISE_*`, `TELEGRAF_*`, `TRANSLATOR_*` runtime knobs - per-service `*_LOG_MAX_SIZE`, `*_LOG_MAX_FILE`, `*_MEM_LIMIT`, `*_CPU_LIMIT`, `*_PIDS_LIMIT` (see `.env.example`)
 - Other optional settings as documented in `.env.example`
 
-**Host / local binary:** When you run `./netspec -config /path/to/config/desired-state.yaml`, NetSpec loads environment defaults from **`/path/to/config/.env`** and **`/path/to/config/netspec.env`** if present (same directory as `desired-state.yaml`). Existing process environment variables are **not** overridden. Docker Compose still reads `.env` from the **repository root** for variable interpolation in compose files.
+**Host / local binary:** When you run `./netspec -config /path/to/config/desired-state.yaml`, NetSpec loads environment defaults from **`/path/to/config/.env`** and **`/path/to/config/netspec.env`** if present (same directory as `desired-state.yaml`). Existing process environment variables are **not** overridden. Docker Compose still reads `.env` from the **project directory** (next to `docker-compose.yml`) for `${VAR}` interpolation. The **`netspec-netspec`** service also declares **`env_file: .env`** (optional if the file is missing) so secrets such as **`APPRISE_SLACK_WEBHOOK`** are passed into the container—not only variables listed under `environment:`.
 
 `config/desired-state.yaml` sets `global.telemetry_mode`:
 - **`telemetry_ingest_push`** (default in the sample file): line-delimited JSON push ingest on `global.ingest` (default `0.0.0.0:57500`) with targeted SNMP confirmation per event — Telegraf + **`mdt-translator`** decode IOS-XE dial-out into that ingest.
