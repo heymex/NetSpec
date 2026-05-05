@@ -41,6 +41,8 @@ The `.env` file should contain:
 - **`telemetry_ingest_push`** (default in the sample file): line-delimited JSON push ingest on `global.ingest` (default `0.0.0.0:57500`) with targeted SNMP confirmation per event — Telegraf + **`mdt-translator`** decode IOS-XE dial-out into that ingest.
 - **`snmp_validate_only`**: SNMP validation only; no push ingest listener.
 
+In `telemetry_ingest_push` mode you can optionally enable `global.snmp.telemetry_fallback_enabled` to run periodic full-device SNMP polling as a safety net when telemetry is missing. This fallback can significantly increase SNMP/device load and slow large deployments; use conservative intervals (for example `5m` or longer).
+
 ### Running
 
 GitHub Actions builds and publishes all images (NetSpec and mdt-translator) to GitHub Container Registry on every merge to main.

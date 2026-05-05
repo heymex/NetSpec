@@ -87,6 +87,10 @@ func LoadConfigDir(dir string) (*Config, error) {
 	if cfg.DesiredState.Global.SNMP.ValidationInterval == 0 {
 		cfg.DesiredState.Global.SNMP.ValidationInterval = cfg.DesiredState.Global.CollectionInterval
 	}
+	if cfg.DesiredState.Global.SNMP.TelemetryFallbackEnabled &&
+		cfg.DesiredState.Global.SNMP.TelemetryFallbackInterval == 0 {
+		cfg.DesiredState.Global.SNMP.TelemetryFallbackInterval = 5 * time.Minute
+	}
 	if cfg.DesiredState.Global.SNMP.Timeout == 0 {
 		cfg.DesiredState.Global.SNMP.Timeout = 3 * time.Second
 	}
@@ -320,6 +324,10 @@ func ValidateConfig(cfg *Config) error {
 
 	if cfg.DesiredState.Global.SNMP.Version != "2c" {
 		return fmt.Errorf("global.snmp.version currently only supports '2c'")
+	}
+	if cfg.DesiredState.Global.SNMP.TelemetryFallbackEnabled &&
+		cfg.DesiredState.Global.SNMP.TelemetryFallbackInterval <= 0 {
+		return fmt.Errorf("global.snmp.telemetry_fallback_interval must be > 0 when telemetry_fallback_enabled=true")
 	}
 
 	// Validate alert channels

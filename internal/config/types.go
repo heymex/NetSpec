@@ -63,6 +63,13 @@ type SNMPConfig struct {
 	Version            string        `yaml:"version,omitempty"` // currently supports "2c"
 	CommunityEnv       string        `yaml:"community_env,omitempty"`
 	ValidationInterval time.Duration `yaml:"validation_interval,omitempty"`
+	// TelemetryFallbackEnabled enables periodic full SNMP polling while in
+	// telemetry_ingest_push mode. This is a safety net for missed telemetry and
+	// increases SNMP/device load significantly.
+	TelemetryFallbackEnabled bool          `yaml:"telemetry_fallback_enabled,omitempty"`
+	// TelemetryFallbackInterval controls how often fallback full-device SNMP
+	// polls run when telemetry_fallback_enabled is true.
+	TelemetryFallbackInterval time.Duration `yaml:"telemetry_fallback_interval,omitempty"`
 	Timeout            time.Duration `yaml:"timeout,omitempty"`
 	Retries            int           `yaml:"retries,omitempty"`
 }

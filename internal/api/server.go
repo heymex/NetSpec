@@ -272,6 +272,8 @@ func (s *Server) handleDevicesAPI(w http.ResponseWriter, r *http.Request) {
 			"address":         dev.Address,
 			"description":     dev.Description,
 			"interface_count": len(dev.Interfaces),
+			// Default to unknown so never-polled devices do not render as healthy.
+			"snmp_reachability": collector.SNMPReachUnknown,
 		}
 		if tr != nil {
 			rs := tr.Status(name)
@@ -764,10 +766,16 @@ func (s *Server) handleDevicePage(w http.ResponseWriter, r *http.Request) {
 
 // snmpReachForHex maps device names to reachability strings for honeycomb merge (ok omitted).
 func snmpReachForHex(tracker *collector.ReachabilityTracker, deviceNames []string) map[string]string {
-	if tracker == nil || len(deviceNames) == 0 {
+	if len(deviceNames) == 0 {
 		return nil
 	}
 	out := make(map[string]string)
+	if tracker == nil {
+		for _, dn := range deviceNames {
+			out[dn] = collector.SNMPReachUnknown
+		}
+		return out
+	}
 	for _, dn := range deviceNames {
 		st := tracker.Status(dn)
 		if st.Reachability == collector.SNMPReachOK {

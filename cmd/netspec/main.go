@@ -275,6 +275,55 @@ func main() {
 				}
 			}
 		}()
+
+		// Optional heavy fallback: full SNMP polling in telemetry mode.
+		if cfg.DesiredState.Global.SNMP.TelemetryFallbackEnabled {
+			fallbackInterval := cfg.DesiredState.Global.SNMP.TelemetryFallbackInterval
+			if fallbackInterval <= 0 {
+				fallbackInterval = 5 * time.Minute
+			}
+			logger.Warn().
+				Dur("fallback_interval", fallbackInterval).
+				Msg("SNMP telemetry fallback polling ENABLED: this can significantly increase SNMP load and reduce performance on larger fleets")
+			go func() {
+				ticker := time.NewTicker(fallbackInterval)
+				defer ticker.Stop()
+				for {
+					cur := runningCfg.Load()
+					if cur != nil {
+						for name, dc := range cur.DesiredState.Devices {
+							monitored := 0
+							for _, ic := range dc.Interfaces {
+								if ic.Monitor {
+									monitored++
+								}
+							}
+							snapshots, err := validator.PollDevice(name, dc)
+							reachTracker.RecordPoll(name, err, len(snapshots), monitored)
+							syncSNMPReachAlerts(alertEngine, reachTracker, name)
+							if err != nil {
+								logger.Warn().
+									Err(err).
+									Str("device", name).
+									Msg("Telemetry fallback SNMP poll failed")
+								continue
+							}
+							for _, snap := range snapshots {
+								changes := eval.EvaluateInterfaceSnapshotWithSource(name, snap.Interface, snap.OperStatus, snap.AdminStatus, "snmp")
+								for _, change := range changes {
+									alertEngine.ProcessStateChange(change)
+								}
+							}
+						}
+					}
+					select {
+					case <-ctx.Done():
+						return
+					case <-ticker.C:
+					}
+				}
+			}()
+		}
 	default:
 		logger.Fatal().
 			Str("telemetry_mode", cfg.DesiredState.Global.TelemetryMode).

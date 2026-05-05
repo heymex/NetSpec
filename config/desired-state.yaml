@@ -14,6 +14,10 @@ global:
     port: 161
     community_env: SNMP_COMMUNITY
     validation_interval: 10s
+    # Optional fallback in telemetry_ingest_push mode: run periodic full SNMP polls.
+    # WARNING: increases SNMP/device load and can slow larger deployments.
+    telemetry_fallback_enabled: false
+    telemetry_fallback_interval: 5m
     timeout: 3s
     retries: 1
   ingest:

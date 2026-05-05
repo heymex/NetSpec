@@ -62,8 +62,9 @@ func (t *ReachabilityTracker) RecordPoll(device string, err error, snapshotCount
 		st.Reachability = SNMPReachFail
 		st.LastError = err.Error()
 	case monitoredIfaceCount == 0:
-		st.Reachability = SNMPReachOK
-		st.LastOKAt = now
+		// No monitored interfaces means we have no validation signal yet.
+		st.Reachability = SNMPReachUnknown
+		st.LastError = "device has no monitored interfaces"
 	case snapshotCount == 0:
 		st.Reachability = SNMPReachFail
 		st.LastError = "no SNMP data for monitored interfaces"
