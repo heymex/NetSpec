@@ -1,5 +1,7 @@
 # NetSpec: Declarative Network State Monitor
 
+**Current release: [v1.0.0](https://github.com/heymex/NetSpec/releases/tag/v1.0.0)** ([CHANGELOG](CHANGELOG.md)) — pin **`NETSPEC_IMAGE_TAG=v1.0.0`** in `.env` for reproducible deploys, or use **`latest`** to track `main`.
+
 NetSpec is a declarative network monitor: you define how the network *should* behave, and NetSpec **evaluates reality against that desired state** and **raises alerts** when they diverge (SNMP, telemetry ingest, Apprise-backed delivery). It is built for environments where *state correctness matters more than metrics*.
 
 ## Quick Start
@@ -152,9 +154,9 @@ Stop any host `nohup ./netspec` or old containers first so port **8088** / inges
 
 Because **`netspec-netspec`** uses `network_mode: host`, **`APPRISE_API_URL`** must target the **host** Apprise port (for example `http://127.0.0.1:8086`), not `http://netspec-apprise:8000` (that DNS name only resolves on the Compose **`netspec`** bridge). For a **remote** Apprise-API only, change **`APPRISE_API_URL`** accordingly and adjust or remove the local **`netspec-apprise`** service for your environment.
 
-## MVP Features
+## Features
 
-This MVP includes:
+Version **1.0** includes:
 
 - ✅ SNMP validator with targeted polling
 - ✅ Interface state evaluation (including **port-channel** members, `member_policy` thresholds, and high-speed interface alias normalization for SNMP vs. telemetry name drift)

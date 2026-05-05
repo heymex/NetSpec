@@ -67,7 +67,7 @@ The target is modeled on the **Host Overview** panel visible in Checkmk's main d
 ### In Scope
 
 - SVG-based hexagonal grid rendered in the existing Go HTML template (or as a self-contained `<div>` served by the `/` handler)
-- State data sourced from **`/api/devices`** (configured device names) and **`/alerts`** (active alerts with `Device` + `Severity`) — **no new backend endpoints** for MVP  
+- State data sourced from **`/api/devices`** (configured device names) and **`/alerts`** (active alerts with `Device` + `Severity`) — **no new backend endpoints** for this iteration  
   - *Note:* `/status` today returns uptime/version and alert **count** only, not a device list; polling uses `/api/devices` instead.
 - Hex count and layout scale dynamically with device count (cap **64** hexes per panel; see code constants)
 - Tooltip on hover: device hostname + worst interface state
