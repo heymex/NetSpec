@@ -32,6 +32,7 @@ The `.env` file should contain:
 - `NETSPEC_INGEST_HOST` / `NETSPEC_INGEST_PORT` - where **`mdt-translator`** sends NetSpec JSON lines (must match `global.ingest` when `telemetry_mode` is `telemetry_ingest_push`)
 - `MDT_ALLOWED_DEVICES` - optional comma-separated device-name allowlist for the translator sidecar
 - `NETSPEC_IMAGE_TAG` - optional container image tag override
+- `NETSPEC_*`, `APPRISE_*`, `TELEGRAF_*`, `TRANSLATOR_*` runtime knobs - per-service `*_LOG_MAX_SIZE`, `*_LOG_MAX_FILE`, `*_MEM_LIMIT`, `*_CPU_LIMIT`, `*_PIDS_LIMIT` (see `.env.example`)
 - Other optional settings as documented in `.env.example`
 
 **Host / local binary:** When you run `./netspec -config /path/to/config/desired-state.yaml`, NetSpec loads environment defaults from **`/path/to/config/.env`** and **`/path/to/config/netspec.env`** if present (same directory as `desired-state.yaml`). Existing process environment variables are **not** overridden. Docker Compose still reads `.env` from the **repository root** for variable interpolation in compose files.
@@ -58,6 +59,8 @@ docker compose up -d
 This starts all four services: **`netspec-netspec`**, **`netspec-apprise`**, **`netspec-telegraf-mdt`** (MDT in on `tcp/57500`), and **`netspec-mdt-translator`** (forwards NetSpec-shaped JSON lines to `NETSPEC_INGEST_HOST:NETSPEC_INGEST_PORT`). Compose uses a **`netspec-` service prefix** and a **`netspec` bridge network** so names stay unique alongside other stacks on the same host.
 
 Runtime artifacts: `${NETSPEC_DATA_DIR}/mdt-sidecar` (`decoded.json`, `forwarder.log`).
+
+All services use Docker log rotation via the `json-file` driver with per-service overrides. Tune `NETSPEC_*`, `APPRISE_*`, `TELEGRAF_*`, and `TRANSLATOR_*` limits in `.env` to avoid multi-GB container logs on low-activity stacks.
 
 To pin a specific image tag instead of `latest`:
 ```bash

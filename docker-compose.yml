@@ -19,6 +19,14 @@ services:
       # With host networking, use 127.0.0.1 and the host-mapped Apprise port.
       - APPRISE_API_URL=${APPRISE_API_URL:-http://127.0.0.1:8086}
       - LOG_LEVEL=${LOG_LEVEL:-info}
+    logging:
+      driver: json-file
+      options:
+        max-size: ${NETSPEC_LOG_MAX_SIZE:-10m}
+        max-file: "${NETSPEC_LOG_MAX_FILE:-5}"
+    mem_limit: ${NETSPEC_MEM_LIMIT:-512m}
+    cpus: "${NETSPEC_CPU_LIMIT:-1.0}"
+    pids_limit: ${NETSPEC_PIDS_LIMIT:-256}
     depends_on:
       # Startup ordering only; does not wait for Apprise health/readiness.
       - netspec-apprise
@@ -41,6 +49,14 @@ services:
       - "8086:8000"
     networks:
       - netspec
+    logging:
+      driver: json-file
+      options:
+        max-size: ${APPRISE_LOG_MAX_SIZE:-10m}
+        max-file: "${APPRISE_LOG_MAX_FILE:-5}"
+    mem_limit: ${APPRISE_MEM_LIMIT:-512m}
+    cpus: "${APPRISE_CPU_LIMIT:-1.0}"
+    pids_limit: ${APPRISE_PIDS_LIMIT:-256}
 
   netspec-telegraf-mdt:
     image: telegraf:1.31
@@ -50,6 +66,14 @@ services:
     volumes:
       - ./tools/sidecar/telegraf-mdt.conf:/etc/telegraf/telegraf.conf:ro
       - ${NETSPEC_DATA_DIR:-/opt/netspec}/mdt-sidecar:/sidecar
+    logging:
+      driver: json-file
+      options:
+        max-size: ${TELEGRAF_LOG_MAX_SIZE:-10m}
+        max-file: "${TELEGRAF_LOG_MAX_FILE:-5}"
+    mem_limit: ${TELEGRAF_MEM_LIMIT:-512m}
+    cpus: "${TELEGRAF_CPU_LIMIT:-1.0}"
+    pids_limit: ${TELEGRAF_PIDS_LIMIT:-256}
 
   netspec-mdt-translator:
     image: ghcr.io/heymex/netspec-mdt-translator:${NETSPEC_IMAGE_TAG:-latest}
@@ -66,6 +90,14 @@ services:
       - MDT_ALLOWED_DEVICES=${MDT_ALLOWED_DEVICES:-}
     volumes:
       - ${NETSPEC_DATA_DIR:-/opt/netspec}/mdt-sidecar:/sidecar
+    logging:
+      driver: json-file
+      options:
+        max-size: ${TRANSLATOR_LOG_MAX_SIZE:-10m}
+        max-file: "${TRANSLATOR_LOG_MAX_FILE:-5}"
+    mem_limit: ${TRANSLATOR_MEM_LIMIT:-512m}
+    cpus: "${TRANSLATOR_CPU_LIMIT:-1.0}"
+    pids_limit: ${TRANSLATOR_PIDS_LIMIT:-256}
 
 networks:
   netspec:
