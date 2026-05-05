@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -102,6 +103,77 @@ func (n *Notifier) SendAlert(alert *types.Alert, channelNames []string) error {
 		return errors.Join(errs...)
 	}
 	return errors.Join(errs...)
+}
+
+// ChannelTestOutcome is one channel's result from NotifyAppriseTest.
+type ChannelTestOutcome struct {
+	Channel string `json:"channel"`
+	OK      bool   `json:"ok"`
+	Message string `json:"message,omitempty"`
+}
+
+// NotifyAppriseTest sends a synthetic warning to Apprise for each named channel (or all channels if names is empty).
+// Uses the same delivery path as real alerts. Channels whose severity_filter excludes "warning" are reported as ok with a skip message.
+func (n *Notifier) NotifyAppriseTest(channelNames []string) ([]ChannelTestOutcome, error) {
+	apiBase := strings.TrimSpace(os.Getenv("APPRISE_API_URL"))
+	if apiBase == "" {
+		return nil, fmt.Errorf("APPRISE_API_URL is not set; cannot deliver notifications (set it to your Apprise-API base URL, e.g. http://localhost:8086)")
+	}
+
+	names := append([]string(nil), channelNames...)
+	if len(names) == 0 {
+		for name := range n.channels {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+	}
+	if len(names) == 0 {
+		return nil, fmt.Errorf("no alert channels are configured in alerts.yaml")
+	}
+
+	const testSeverity = "warning"
+	title := "NetSpec: notification test"
+	body := "This is a manual test from the NetSpec web UI. If you see this, Apprise routing and your destination URL are working."
+	notifyType := appriseNotifyType(testSeverity, "firing")
+
+	outcomes := make([]ChannelTestOutcome, 0, len(names))
+	var errs []error
+
+	for _, name := range names {
+		ch, ok := n.channels[name]
+		if !ok {
+			outcomes = append(outcomes, ChannelTestOutcome{Channel: name, OK: false, Message: "unknown channel (not in alerts.yaml)"})
+			errs = append(errs, fmt.Errorf("channel %q: not defined in alerts.channels", name))
+			continue
+		}
+		if !severityAllows(ch.SeverityFilter, testSeverity) {
+			outcomes = append(outcomes, ChannelTestOutcome{
+				Channel: name,
+				OK:      true,
+				Message: fmt.Sprintf("skipped: channel severity_filter does not include %q (test uses warning severity)", testSeverity),
+			})
+			continue
+		}
+		serviceURL := strings.TrimSpace(os.Getenv(ch.URLEnv))
+		if serviceURL == "" {
+			outcomes = append(outcomes, ChannelTestOutcome{
+				Channel: name,
+				OK:      false,
+				Message: fmt.Sprintf("environment variable %s is not set or empty", ch.URLEnv),
+			})
+			errs = append(errs, fmt.Errorf("channel %q: environment variable %s is not set or empty", name, ch.URLEnv))
+			continue
+		}
+		if err := n.deliver(apiBase, serviceURL, title, body, notifyType, name, scrubServiceURL(serviceURL)); err != nil {
+			outcomes = append(outcomes, ChannelTestOutcome{Channel: name, OK: false, Message: err.Error()})
+			errs = append(errs, fmt.Errorf("channel %q: %w", name, err))
+		} else {
+			outcomes = append(outcomes, ChannelTestOutcome{Channel: name, OK: true, Message: "delivered"})
+			n.logger.Info().Str("channel", name).Msg("apprise test notification sent")
+		}
+	}
+
+	return outcomes, errors.Join(errs...)
 }
 
 func severityAllows(filter []string, severity string) bool {

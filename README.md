@@ -124,6 +124,7 @@ NetSpec includes a built-in web UI accessible at `http://localhost:8088` (or you
 - **Live Logs** - Auto-refreshing log stream (newest entries first; periodic refresh)
 - **Configuration View** - Collection interval and dedup settings
 - **Config Reload** - Button to reload all configuration files from the config directory without restart
+- **Test alerts** - Dashboard button that POSTs to Apprise for every channel in `alerts.yaml` (synthetic **warning**, same URLs and **severity_filter** behavior as production alerts); per-channel results appear in a toast
 - **API Browser** - Interactive OpenAPI documentation at `/api-browser` (Swagger UI with try-it-out; machine-readable spec at `/openapi.json`). Interface names in URLs must be **percent-encoded** (for example `GigabitEthernet1%2F0%2F1`).
 - **SNMP notices** - When SNMP matters for your deployment (fallback polling, snmp-only mode, or telemetry + SNMP reachability), the dashboard, device pages, wizard, and `/status` surface short **banner warnings** so operators see load/behavior expectations beyond log lines alone.
 
@@ -143,6 +144,7 @@ NetSpec includes a built-in web UI accessible at `http://localhost:8088` (or you
 | `/api/devices/{name}` | DELETE | Remove device from desired-state YAML (and split device file if present), reload when configured, clear active alerts for that device |
 | `/api/devices/{name}/interfaces/{iface}` | PATCH | Update interface policy fields (`monitor`, `desired_state`, `admin_state`, `description`, `alert_severity`, etc.) |
 | `/api/reload` | POST | Reload configuration |
+| `/api/notifications/test` | POST | Optional JSON body `{"channels":["name",...]}`; send synthetic Apprise **warning** to those channels or to **all** when omitted (`all_ok`, per-channel `outcomes` in response; **502**/**503** on prerequisites errors) |
 | `/api/telemetry/stats` | GET | Push ingest counters, **events/sec**, last event time, top talkers, and unknown devices (with wizard URLs; telemetry source IP can prefill the wizard when the device is not in config yet) |
 | `/api/discovery/probe` | POST | SNMP probe (wizard) |
 | `/api/discovery/walk` | POST | SNMP interface walk |

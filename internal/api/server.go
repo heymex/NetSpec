@@ -16,6 +16,7 @@ import (
 	"github.com/netspec/netspec/internal/config"
 	"github.com/netspec/netspec/internal/discovery"
 	"github.com/netspec/netspec/internal/evaluator"
+	"github.com/netspec/netspec/internal/notifier"
 	"github.com/netspec/netspec/internal/webui"
 	"github.com/rs/zerolog"
 )
@@ -141,6 +142,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/alerts", s.handleAlerts)
 	mux.HandleFunc("/api/logs", s.handleLogsAPI)
 	mux.HandleFunc("/api/reload", s.handleReload)
+	mux.HandleFunc("/api/notifications/test", s.handleNotificationTest)
 	mux.HandleFunc("/api/devices", s.handleDevicesAPI)
 	mux.HandleFunc("/api/devices/", s.handleDeviceDetailAPI)
 	mux.HandleFunc("/api/telemetry/stats", s.handleTelemetryStatsAPI)
@@ -453,6 +455,59 @@ func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
 		"success":      true,
 		"device_count": len(newCfg.DesiredState.Devices),
 	})
+}
+
+// handleNotificationTest sends a synthetic warning through Apprise for each configured alert channel (or a named subset).
+func (s *Server) handleNotificationTest(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	var req struct {
+		Channels []string `json:"channels"`
+	}
+	if r.Body != nil {
+		defer r.Body.Close()
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+
+	s.reloadMu.RLock()
+	cfg := s.config
+	s.reloadMu.RUnlock()
+	if cfg == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "configuration not loaded"})
+		return
+	}
+
+	n := notifier.NewNotifier(s.logger, cfg.Alerts.Channels)
+	outcomes, err := n.NotifyAppriseTest(req.Channels)
+
+	resp := map[string]interface{}{
+		"outcomes": outcomes,
+	}
+	allOK := false
+	if len(outcomes) > 0 {
+		allOK = true
+		for _, o := range outcomes {
+			if !o.OK {
+				allOK = false
+				break
+			}
+		}
+	}
+	resp["all_ok"] = allOK
+	if err != nil {
+		resp["error"] = err.Error()
+	}
+
+	if outcomes == nil && err != nil {
+		w.WriteHeader(http.StatusBadGateway)
+	}
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // DeviceInfo holds device information for the web UI

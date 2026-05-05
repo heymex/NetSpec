@@ -10,7 +10,7 @@
     { "name": "Alerts & logs", "description": "Active alerts and recent log lines" },
     { "name": "Devices", "description": "Device inventory, detail, interface updates, and deletion" },
     { "name": "Telemetry", "description": "Push ingest statistics" },
-    { "name": "Configuration", "description": "Reload YAML configuration" },
+    { "name": "Configuration", "description": "Reload YAML configuration and notification tests" },
     { "name": "Discovery", "description": "SNMP wizard / device onboarding" }
   ],
   "paths": {
@@ -218,6 +218,39 @@
           },
           "405": { "description": "Method not allowed (use POST)" },
           "500": { "description": "Reload failed" }
+        }
+      }
+    },
+    "/api/notifications/test": {
+      "post": {
+        "tags": ["Configuration"],
+        "summary": "Test Apprise notification channels",
+        "description": "Delivers a synthetic **warning** through Apprise for each channel listed in the body, or **all** channels defined in `alerts.yaml` when omitted. Uses the same URLs and `severity_filter` behavior as real alerts.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/NotificationTestRequest" },
+              "example": { "channels": ["ops-slack"] }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completed (check `all_ok` and per-channel outcomes)",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/NotificationTestResponse" }
+              }
+            }
+          },
+          "405": { "description": "Method not allowed (use POST)" },
+          "502": {
+            "description": "Apprise prerequisites missing (e.g. no channels or APPRISE_API_URL unset)"
+          },
+          "503": {
+            "description": "Configuration not loaded"
+          }
         }
       }
     },
@@ -447,6 +480,39 @@
           "success": { "type": "boolean" },
           "device": { "type": "string" },
           "interface": { "type": "string" }
+        }
+      },
+      "NotificationTestRequest": {
+        "type": "object",
+        "properties": {
+          "channels": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Channel names from `alerts.yaml`; omit to attempt every configured channel."
+          }
+        }
+      },
+      "NotificationTestOutcome": {
+        "type": "object",
+        "required": ["channel", "ok"],
+        "properties": {
+          "channel": { "type": "string" },
+          "ok": { "type": "boolean", "description": "`true` includes skipped channels (severity filter)." },
+          "message": { "type": "string" }
+        }
+      },
+      "NotificationTestResponse": {
+        "type": "object",
+        "properties": {
+          "all_ok": { "type": "boolean", "description": "`true` only if every outcome has `ok` and there is at least one outcome." },
+          "outcomes": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/NotificationTestOutcome" }
+          },
+          "error": {
+            "type": "string",
+            "description": "Joined delivery errors when any channel failed (may still be partial success)."
+          }
         }
       },
       "ReloadResponse": {

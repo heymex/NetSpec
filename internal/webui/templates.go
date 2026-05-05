@@ -499,12 +499,17 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
             position: fixed;
             bottom: 2rem;
             right: 2rem;
+            max-width: min(520px, calc(100vw - 3rem));
             padding: 1rem 1.5rem;
             background: var(--bg-secondary);
             border: 1px solid var(--accent-green);
             border-radius: 8px;
             display: none;
             animation: slideIn 0.3s ease;
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-size: 0.875rem;
+            z-index: 1000;
         }
 
         .toast.show {
@@ -570,11 +575,12 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
     </div>
     <div id="toast" class="toast"></div>
     <script>
-        function showToast(message, isError) {
+        function showToast(message, isError, durationMs) {
             const toast = document.getElementById('toast');
             toast.textContent = message;
             toast.className = 'toast show' + (isError ? ' error' : '');
-            setTimeout(() => toast.className = 'toast', 3000);
+            const ms = durationMs != null ? durationMs : 3000;
+            setTimeout(() => toast.className = 'toast', ms);
         }
 
         function formatLocalTimestamp(value, withDate) {
@@ -610,6 +616,52 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
             }
             btn.disabled = false;
             btn.textContent = '↻ Reload Config';
+        }
+
+        async function testNotifications(ev) {
+            const btn = ev && ev.target;
+            const prev = btn && btn.textContent;
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = 'Testing…';
+            }
+            try {
+                const res = await fetch('/api/notifications/test', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: '{}',
+                });
+                let data = {};
+                try {
+                    data = await res.json();
+                } catch (_) {
+                    showToast('Notification test failed: invalid JSON response', true);
+                    return;
+                }
+                const outcomes = Array.isArray(data.outcomes) ? data.outcomes : [];
+                let summary;
+                if (outcomes.length) {
+                    summary = outcomes
+                        .map(function (o) {
+                            const st = o.ok ? 'OK' : 'FAIL';
+                            const msg = o.message ? ' — ' + o.message : '';
+                            return o.channel + ': ' + st + msg;
+                        })
+                        .join('\n');
+                    if (data.error) summary += '\n— ' + data.error;
+                } else {
+                    summary = data.error || 'Notification test returned no channel outcomes.';
+                }
+                const uiOk = res.ok && data.all_ok === true;
+                showToast(summary, !uiOk, outcomes.length > 1 ? 9000 : 5000);
+            } catch (e) {
+                showToast('Notification test failed: ' + e.message, true);
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = prev || 'Test alerts';
+                }
+            }
         }
 
         localizeTimestamps(document);
@@ -661,6 +713,7 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                 </div>
                 <a class="btn btn-secondary" href="/api-browser">API</a>
                 <a class="btn btn-secondary" href="/wizard">+ Add Device</a>
+                <button type="button" class="btn btn-secondary" onclick="testNotifications(event)">🔔 Test alerts</button>
                 <button class="btn btn-primary" onclick="reloadConfig()">↻ Reload Config</button>
             </div>
         </header>
