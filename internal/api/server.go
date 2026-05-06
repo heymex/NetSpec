@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"net/http"
 	"strconv"
@@ -44,6 +45,27 @@ type UnknownTelemetryDevice struct {
 	Count      uint64    `json:"count"`
 	LastSeenAt time.Time `json:"last_seen_at"`
 	WizardURL  string    `json:"wizard_url"`
+}
+
+type DeviceTelemetryDiagnostics struct {
+	DeviceName                string    `json:"device_name"`
+	Address                   string    `json:"address"`
+	ConfiguredInterfaces      int       `json:"configured_interfaces"`
+	MonitoredInterfaces       int       `json:"monitored_interfaces"`
+	RuntimeInterfaces         int       `json:"runtime_interfaces"`
+	RuntimeTelemetryInterfaces int      `json:"runtime_telemetry_interfaces"`
+	TelemetryEventsSeen       uint64    `json:"telemetry_events_seen"`
+	LastTelemetryAt           time.Time `json:"last_telemetry_at"`
+	CoveragePct               float64   `json:"coverage_pct"`
+	SuspectedNameMismatch     bool      `json:"suspected_name_mismatch"`
+}
+
+type DiagnosticsCoverage struct {
+	GeneratedAt      time.Time                    `json:"generated_at"`
+	TelemetryMode    string                       `json:"telemetry_mode"`
+	FallbackEnabled  bool                         `json:"fallback_enabled"`
+	FallbackInterval string                       `json:"fallback_interval"`
+	Devices          []DeviceTelemetryDiagnostics `json:"devices"`
 }
 
 // Server provides HTTP API endpoints and web UI
@@ -146,6 +168,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/devices", s.handleDevicesAPI)
 	mux.HandleFunc("/api/devices/", s.handleDeviceDetailAPI)
 	mux.HandleFunc("/api/telemetry/stats", s.handleTelemetryStatsAPI)
+	mux.HandleFunc("/api/diagnostics/coverage", s.handleDiagnosticsCoverageAPI)
 	mux.HandleFunc("/api/discovery/probe", s.handleDiscoveryProbe)
 	mux.HandleFunc("/api/discovery/walk", s.handleDiscoveryWalk)
 	mux.HandleFunc("/api/discovery/commit", s.handleDiscoveryCommit)
@@ -155,6 +178,7 @@ func (s *Server) Start() error {
 	// Web UI routes
 	mux.HandleFunc("/device/", s.handleDevicePage)
 	mux.HandleFunc("/wizard", s.handleWizardPage)
+	mux.HandleFunc("/diagnostics", s.handleDiagnosticsPage)
 
 	// Web UI
 	mux.HandleFunc("/", s.handleWebUI)
@@ -680,6 +704,131 @@ func (s *Server) handleTelemetryStatsAPI(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	_ = json.NewEncoder(w).Encode(tg())
+}
+
+func (s *Server) buildDiagnosticsCoverage() DiagnosticsCoverage {
+	out := DiagnosticsCoverage{
+		GeneratedAt: time.Now().UTC(),
+	}
+
+	s.reloadMu.RLock()
+	cfg := s.config
+	s.reloadMu.RUnlock()
+	if cfg == nil {
+		return out
+	}
+
+	out.TelemetryMode = cfg.DesiredState.Global.TelemetryMode
+	out.FallbackEnabled = cfg.DesiredState.Global.SNMP.TelemetryFallbackEnabled
+	out.FallbackInterval = cfg.DesiredState.Global.SNMP.TelemetryFallbackInterval.String()
+
+	var topByDevice map[string]collector.DeviceTelemetryStat
+	var lastEventAt time.Time
+	s.telemetryMu.RLock()
+	tg := s.telemetryGetter
+	s.telemetryMu.RUnlock()
+	if tg != nil {
+		stats := tg()
+		lastEventAt = stats.LastEventAt
+		topByDevice = make(map[string]collector.DeviceTelemetryStat, len(stats.TopDevices))
+		for _, td := range stats.TopDevices {
+			topByDevice[td.Device] = td
+		}
+	}
+
+	s.evaluatorMu.RLock()
+	evalGetter := s.evaluatorGetter
+	s.evaluatorMu.RUnlock()
+	var eval *evaluator.Evaluator
+	if evalGetter != nil {
+		eval = evalGetter()
+	}
+
+	deviceNames := make([]string, 0, len(cfg.DesiredState.Devices))
+	for dn := range cfg.DesiredState.Devices {
+		deviceNames = append(deviceNames, dn)
+	}
+	sort.Strings(deviceNames)
+
+	for _, dn := range deviceNames {
+		dev := cfg.DesiredState.Devices[dn]
+		item := DeviceTelemetryDiagnostics{
+			DeviceName:           dn,
+			Address:              dev.Address,
+			ConfiguredInterfaces: len(dev.Interfaces),
+			LastTelemetryAt:      lastEventAt,
+		}
+
+		for ifName, ifCfg := range dev.Interfaces {
+			if ifCfg.Monitor {
+				item.MonitoredInterfaces++
+			}
+			if eval == nil {
+				continue
+			}
+			st, ok := eval.GetInterfaceState(dn, ifName)
+			if !ok {
+				continue
+			}
+			item.RuntimeInterfaces++
+			if !st.LastTelemetryValidation.IsZero() {
+				item.RuntimeTelemetryInterfaces++
+			}
+		}
+
+		if item.MonitoredInterfaces > 0 {
+			item.CoveragePct = float64(item.RuntimeTelemetryInterfaces) * 100.0 / float64(item.MonitoredInterfaces)
+		}
+
+		if td, ok := topByDevice[dn]; ok {
+			item.TelemetryEventsSeen = td.Count
+		}
+
+		item.SuspectedNameMismatch = item.TelemetryEventsSeen > 0 &&
+			item.MonitoredInterfaces > 0 &&
+			item.RuntimeTelemetryInterfaces == 0
+
+		out.Devices = append(out.Devices, item)
+	}
+
+	return out
+}
+
+func (s *Server) handleDiagnosticsCoverageAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(s.buildDiagnosticsCoverage())
+}
+
+func (s *Server) handleDiagnosticsPage(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/diagnostics" {
+		http.NotFound(w, r)
+		return
+	}
+	d := s.buildDiagnosticsCoverage()
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = fmt.Fprint(w, "<!doctype html><html><head><meta charset=\"utf-8\"><title>NetSpec Diagnostics</title><style>body{font-family:system-ui,sans-serif;background:#0d1117;color:#e6edf3;padding:24px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #30363d;padding:8px;text-align:left}th{background:#161b22}.warn{color:#d29922}.bad{color:#f85149}.ok{color:#3fb950}a{color:#58a6ff}code{background:#161b22;padding:2px 6px;border-radius:4px}</style></head><body>")
+	_, _ = fmt.Fprintf(w, "<h1>Diagnostics Coverage</h1><p>Mode: <code>%s</code> | SNMP fallback: <code>%t</code> (%s) | Generated: %s</p>", d.TelemetryMode, d.FallbackEnabled, d.FallbackInterval, d.GeneratedAt.Format(time.RFC3339))
+	_, _ = fmt.Fprint(w, "<p><a href=\"/\">Back to Dashboard</a> | <a href=\"/api/diagnostics/coverage\">JSON API</a></p>")
+	_, _ = fmt.Fprint(w, "<table><thead><tr><th>Device</th><th>Monitored</th><th>Telemetry Runtime</th><th>Coverage</th><th>Telemetry Events</th><th>Suspected Mapping Issue</th></tr></thead><tbody>")
+	for _, x := range d.Devices {
+		coverageClass := "ok"
+		if x.CoveragePct < 50 {
+			coverageClass = "bad"
+		} else if x.CoveragePct < 90 {
+			coverageClass = "warn"
+		}
+		issue := "no"
+		issueClass := "ok"
+		if x.SuspectedNameMismatch {
+			issue = "yes"
+			issueClass = "bad"
+		}
+		_, _ = fmt.Fprintf(w,
+			"<tr><td><a href=\"/device/%s\">%s</a></td><td>%d</td><td>%d</td><td class=\"%s\">%.1f%%</td><td>%d</td><td class=\"%s\">%s</td></tr>",
+			url.PathEscape(x.DeviceName), x.DeviceName, x.MonitoredInterfaces, x.RuntimeTelemetryInterfaces, coverageClass, x.CoveragePct, x.TelemetryEventsSeen, issueClass, issue)
+	}
+	_, _ = fmt.Fprint(w, "</tbody></table></body></html>")
 }
 
 // DevicePageData holds data for the device detail page

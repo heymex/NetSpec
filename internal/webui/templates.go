@@ -711,6 +711,7 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                     Running
                 </div>
                 <a class="btn btn-secondary" href="/api-browser">API</a>
+                <a class="btn btn-secondary" href="/diagnostics">Diagnostics</a>
                 <a class="btn btn-secondary" href="/wizard">+ Add Device</a>
                 <button type="button" class="btn btn-secondary" onclick="testNotifications(event)">🔔 Test alerts</button>
                 <button class="btn btn-primary" onclick="reloadConfig()">↻ Reload Config</button>
