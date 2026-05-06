@@ -107,9 +107,19 @@ Runtime config lives under **`${NETSPEC_DATA_DIR}`** on the host (default **`/op
 
 Compose loads **`.env`** in the project directory for **`${VAR}`** interpolation, and **`netspec-netspec`** uses **`env_file: .env`** to pass **`APPRISE_SLACK_WEBHOOK`** and other **`url_env`** secrets into the container.
 
+Set **`NETSPEC_DATA_DIR`** explicitly in `.env` (for example `/opt/netspec`) so runtime mounts never silently fall back to defaults. For push ingest, keep **`global.ingest.port`** in `${NETSPEC_DATA_DIR}/config/desired-state.yaml` aligned with **`NETSPEC_INGEST_PORT`** in `.env` (common split: Telegraf on `57500`, NetSpec ingest on `57501`).
+
 - **Komodo / file-based stacks:** Keep **`compose.yaml`** (or **`docker-compose.yml`**) and **`.env`** in the same stack folder (this matches Docker Compose’s usual layout). Komodo labels expose **`com.docker.compose.project.environment_file`** for the `.env` path—ensure it points at the real file after deploy.
 - **Portainer (stack from Git):** Set the **compose path** (e.g. **`docker-compose.yml`**), branch, and **environment variables** in the UI for secrets you do not commit (GHCR pull, **`SNMP_COMMUNITY`**, **`NETSPEC_DATA_DIR`**, Apprise URLs). You can paste the contents of **`.env.example`** and fill in values.
 - **Portainer (web editor):** Upload or paste compose **from the repo**, set **Working directory** / bind-mount base if the UI supports it so **`./tools/sidecar`** resolves, and add env vars in the stack’s **Environment** section.
+
+Preflight before each `docker compose up -d` or UI restart:
+
+```bash
+./scripts/validate-netspec-stack.sh --project-dir /etc/komodo/stacks/NetSpec
+```
+
+The validator fails fast on common drift: missing `NETSPEC_DATA_DIR`, ingest port mismatch (`desired-state.yaml` vs `.env`), accidental use of `57500` for NetSpec ingest, or missing split-device YAML files.
 
 #### 4. Image registry (GHCR)
 
