@@ -564,13 +564,17 @@ func canonicalInterfaceName(name string) string {
 	replacer := strings.NewReplacer(
 		"gigabitethernet", "gi",
 		"tengigabitethernet", "te",
+		"twentyfivegigabitethernet", "tw",
 		"twentyfivegige", "tw",
 		"twentyfivegigabite", "tw",
-		"hundredgige", "hu",
 		"hundredgigabitethernet", "hu",
+		"hundredgige", "hu",
+		"fortygigabitethernet", "fo",
+		"fortygige", "fo",
 		"port-channel", "po",
 		"portchannel", "po",
 		" ", "",
+		"twe", "tw",
 	)
 	return replacer.Replace(s)
 }
