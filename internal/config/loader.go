@@ -330,6 +330,10 @@ func ValidateConfig(cfg *Config) error {
 		return fmt.Errorf("global.snmp.telemetry_fallback_interval must be > 0 when telemetry_fallback_enabled=true")
 	}
 
+	if err := validateIngestListeners(&cfg.DesiredState.Global.Ingest); err != nil {
+		return err
+	}
+
 	// Validate alert channels
 	for name, channel := range cfg.Alerts.Channels {
 		if channel.Type != "apprise" {
@@ -350,5 +354,30 @@ func ValidateConfig(cfg *Config) error {
 		}
 	}
 
+	return nil
+}
+
+func validateIngestListeners(ing *IngestConfig) error {
+	if ing == nil {
+		return nil
+	}
+	seen := make(map[uint16]struct{})
+	primary := ing.Port
+	if primary == 0 {
+		primary = 57500
+	}
+	ports := []uint16{primary}
+	for _, add := range ing.AdditionalListeners {
+		ports = append(ports, add.Port)
+	}
+	for _, p := range ports {
+		if p == 0 {
+			return fmt.Errorf("global.ingest: listener port cannot be 0")
+		}
+		if _, dup := seen[p]; dup {
+			return fmt.Errorf("global.ingest: duplicate listener port %d", p)
+		}
+		seen[p] = struct{}{}
+	}
 	return nil
 }

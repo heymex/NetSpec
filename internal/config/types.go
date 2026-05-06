@@ -75,10 +75,23 @@ type SNMPConfig struct {
 }
 
 // IngestConfig contains push telemetry ingest listener configuration.
+// Use one TCP port per upstream pipeline (e.g. Cribl destination) and optional
+// source labels — same NDJSON body format on every port; only the listening
+// port selects how events are tagged (similar to syslog sourcetype per input).
 type IngestConfig struct {
 	ListenAddress string `yaml:"listen_address,omitempty"`
 	Port          uint16 `yaml:"port,omitempty"`
-	TokenEnv      string `yaml:"token_env,omitempty"`
+	// Source is applied to PushTelemetryEvent.Source for the primary port when non-empty.
+	Source string `yaml:"source,omitempty"`
+	// AdditionalListeners binds more TCP ports to optional source labels. Ports must be unique with Port.
+	AdditionalListeners []IngestListenerEntry `yaml:"additional_listeners,omitempty"`
+	TokenEnv            string                `yaml:"token_env,omitempty"`
+}
+
+// IngestListenerEntry is an extra TCP listener with the same auth and address as the primary ingest block.
+type IngestListenerEntry struct {
+	Port   uint16 `yaml:"port"`
+	Source string `yaml:"source,omitempty"`
 }
 
 // DeviceConfig defines a device to monitor

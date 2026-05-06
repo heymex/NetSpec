@@ -173,6 +173,45 @@ devices:
 	}
 }
 
+func TestValidateIngestDuplicateListenerPorts(t *testing.T) {
+	t.Parallel()
+	cfg := &Config{
+		DesiredState: DesiredStateConfig{
+			Global: GlobalConfig{
+				TelemetryMode: "telemetry_ingest_push",
+				SNMP: SNMPConfig{
+					Version: "2c",
+				},
+				Ingest: IngestConfig{
+					ListenAddress: "0.0.0.0",
+					Port:          57500,
+					AdditionalListeners: []IngestListenerEntry{
+						{Port: 57500, Source: "duplicate"},
+					},
+				},
+			},
+			Devices: map[string]DeviceConfig{
+				"sw1": {
+					Address: "10.0.0.1",
+					Interfaces: map[string]InterfaceConfig{
+						"Gi1/0/1": {DesiredState: "up", Monitor: true},
+					},
+				},
+			},
+		},
+		Alerts: AlertsConfig{
+			Channels:   map[string]ChannelConfig{},
+			AlertRules: map[string]AlertRule{},
+			AlertBehavior: AlertBehavior{
+				DeduplicationWindow: time.Minute,
+			},
+		},
+	}
+	if err := ValidateConfig(cfg); err == nil {
+		t.Fatal("expected duplicate ingest port validation error")
+	}
+}
+
 func TestLoadConfigDirMonolithicDeviceOverlay(t *testing.T) {
 	t.Parallel()
 	tmp := t.TempDir()
