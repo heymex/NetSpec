@@ -2,7 +2,7 @@ package version
 
 // These variables are set at build time using ldflags
 var (
-	// Version is the semantic version (e.g., "1.0.0")
+	// Version is the semantic version (e.g. "2.0.0-beta.1"); untagged builds stay "dev".
 	Version = "dev"
 	// Commit is the git commit hash
 	Commit = "unknown"

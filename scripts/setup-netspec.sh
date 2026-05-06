@@ -2,8 +2,8 @@
 # NetSpec first-time host setup: data tree, desired-state + alerts samples, .env seeding.
 #
 # NetSpec compares live state to desired state and raises alerts on mismatch. config/alerts.yaml
-# routes those events (Apprise-API + url_env secrets in .env). The compose stack includes
-# netspec-apprise so APPRISE_API_URL=http://127.0.0.1:8086 works by default.
+# routes those events (Apprise-API + url_env secrets in .env). The default compose stack uses
+# Docker bridge networking; NetSpec reaches Apprise at http://netspec-apprise:8000 (see .env.example).
 #
 # UX: no flags needed for a runnable sample. NETSPEC_DATA_DIR is taken from .env when set;
 # otherwise /opt/netspec or ~/netspec-data. Split device YAMLs are always seeded unless opted out.
@@ -24,7 +24,7 @@ SEED_EXAMPLE_DEVICES=1
 usage() {
 	cat <<'EOF'
 Bootstrap NETSPEC_DATA_DIR, copy desired-state + alerts samples, merge .env — run with no options
-for a working sample stack (split devices + ingest 57501 vs Telegraf 57500).
+for a working sample stack (split devices; ingest port matches global.ingest.port / NETSPEC_INGEST_PORT).
 
 Options:
   --data-dir PATH           Override NETSPEC_DATA_DIR (else use .env or default path)
@@ -163,20 +163,6 @@ else
 	log "Leaving existing $dest_desired (use --force to replace)."
 fi
 
-# Default new deployments to 57501 for NetSpec ingest (57500 is commonly Telegraf input).
-tmp=$(mktemp)
-awk '
-BEGIN { in_ingest=0 }
-/^[[:space:]]*ingest:[[:space:]]*$/ { in_ingest=1; print; next }
-in_ingest && /^[[:space:]]*port:[[:space:]]*57500[[:space:]]*$/ {
-	sub(/57500/, "57501")
-	print
-	next
-}
-in_ingest && /^[^[:space:]]/ { in_ingest=0 }
-{ print }
-' "$dest_desired" >"$tmp" && mv "$tmp" "$dest_desired"
-
 dest_alerts="$DATA_DIR/config/alerts.yaml"
 if [[ ! -f "$dest_alerts" || "$FORCE" -eq 1 ]]; then
 	cp "$sample_alerts" "$dest_alerts"
@@ -237,12 +223,9 @@ esc_snmp=$(printf '%s' "$SNMP_COMMUNITY" | sed 's/[\/&|]/\\&/g')
 tmp=$(mktemp)
 sed "s/^SNMP_COMMUNITY=.*/SNMP_COMMUNITY=$esc_snmp/" "$env_dest" >"$tmp" && mv "$tmp" "$env_dest"
 
-# Keep translator target aligned with new-deploy ingest default unless overridden later.
-if grep -q '^NETSPEC_INGEST_PORT=' "$env_dest" 2>/dev/null; then
-	tmp=$(mktemp)
-	sed "s/^NETSPEC_INGEST_PORT=.*/NETSPEC_INGEST_PORT=57501/" "$env_dest" >"$tmp" && mv "$tmp" "$env_dest"
-else
-	printf 'NETSPEC_INGEST_PORT=57501\n' >>"$env_dest"
+# Default translator target port when absent (must match global.ingest.port in desired-state.yaml).
+if ! grep -q '^NETSPEC_INGEST_PORT=' "$env_dest" 2>/dev/null; then
+	printf '\nNETSPEC_INGEST_PORT=57500\n' >>"$env_dest"
 fi
 
 # Telegraf container writes /sidecar as uid/gid 999.

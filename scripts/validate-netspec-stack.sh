@@ -4,7 +4,6 @@
 # Fails fast when common drift causes startup issues:
 # - NETSPEC_DATA_DIR missing in .env (falls back to defaults unexpectedly)
 # - global.ingest.port mismatch with NETSPEC_INGEST_PORT
-# - ingest port accidentally set to 57500 (reserved for telegraf listener)
 # - runtime split-device directory empty
 #
 # Usage:
@@ -102,11 +101,6 @@ if [[ "$INGEST_PORT_YAML" != "$INGEST_PORT_ENV" ]]; then
 	die "ingest port mismatch: desired-state.yaml=$INGEST_PORT_YAML, .env NETSPEC_INGEST_PORT=$INGEST_PORT_ENV"
 fi
 ok "ingest ports match: $INGEST_PORT_YAML"
-
-if [[ "$INGEST_PORT_YAML" == "57500" ]]; then
-	die "global.ingest.port is 57500; reserve 57500 for telegraf and use 57501 for NetSpec ingest"
-fi
-ok "NetSpec ingest port is not 57500"
 
 if [[ -d "$DATA_DIR/config/devices" ]]; then
 	if ! ls -1 "$DATA_DIR/config/devices"/*.yaml >/dev/null 2>&1; then

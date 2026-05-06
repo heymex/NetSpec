@@ -1,5 +1,7 @@
 # NetSpec Dev Host Runbook
 
+> **v2.x compose** uses **Docker bridge** networking by default (`APPRISE_API_URL=http://netspec-apprise:8000`, `NETSPEC_INGEST_HOST=netspec-netspec`, ingest **57500** in the sample). Legacy **host-network** notes below are marked where they still apply to **bare-metal `./netspec`** debugging. See **[MIGRATION_BRIDGE_AND_AUTH.md](MIGRATION_BRIDGE_AND_AUTH.md)** for the production cutover story.
+
 This runbook documents the standard operational flow for `derek-ghrunner` so telemetry and UI behavior are reproducible and recoverable.
 
 ## Scope
@@ -14,18 +16,17 @@ This runbook documents the standard operational flow for `derek-ghrunner` so tel
 
 ## Recommended: containerized dev (matches prod)
 
-Use the same **`docker-compose.yml`** (plus **`docker-compose.build-local.yml`** for local builds) so Apprise port mapping, volumes, and NetSpec **host networking** match production. Build **`netspec:local`** and **`netspec-mdt-translator:local`** on the dev host instead of waiting for GHCR.
+Use the same **`docker-compose.yml`** (plus **`docker-compose.build-local.yml`** for local builds) so volumes and **bridge** service wiring match production `main`. Build **`netspec:local`** and **`netspec-mdt-translator:local`** on the dev host instead of waiting for GHCR.
 
-1. **Stop legacy processes** so ports **8088**, **57501** (or your ingest port), and **8086** are not double-bound: `pkill -x netspec` and stop any host `python3 …/mdt_to_netspec.py` (see §6 for `ps`/`grep` that avoids matching `ssh`).
+1. **Stop legacy processes** so ports **8088**, **57500** (default MDT / ingest publish), and **8086** are not double-bound: `pkill -x netspec` and stop any host `python3 …/mdt_to_netspec.py` (see §6 for `ps`/`grep` that avoids matching `ssh`).
 2. **`NETSPEC_DATA_DIR`** should be one tree containing **`config/`**, **`data/`**, **`apprise-config/`**, **`mdt-sidecar/`** (same layout as prod). Example: `/opt/netspec` with your files symlinked or copied there.
-3. **Compose env interpolation:** from the repo directory, Docker Compose reads **`.env`** in that directory for `${SNMP_COMMUNITY}`, `${APPRISE_API_URL}`, etc. Either copy/link `netspec.env` → `.env` in the checkout or `export` those variables before `make`. For host-network NetSpec talking to Apprise on the host, use **`APPRISE_API_URL=http://127.0.0.1:8086`** (not `http://apprise:8000`).
-4. **Ingest port for the sidecar:** set **`NETSPEC_INGEST_PORT`** (and ingest in `desired-state.yaml`) consistently, e.g. `57501`.
-5. Build and start:
+3. **Compose env:** `.env` supplies `${SNMP_COMMUNITY}`, **`APPRISE_API_URL=http://netspec-apprise:8000`**, **`NETSPEC_INGEST_HOST=netspec-netspec`**, **`NETSPEC_INGEST_PORT`** matching **`global.ingest.port`** (sample **57500**), etc. If you still run a **host** NetSpec binary instead of the container, **`APPRISE_API_URL=http://127.0.0.1:8086`** can still work because Apprise is published on the host—but the **containerized** path should use Docker DNS.
+4. Build and start:
 
 ```bash
 cd /home/derek/NetSpec-dev
 export NETSPEC_DATA_DIR=/opt/netspec
-export NETSPEC_INGEST_PORT=57501
+export NETSPEC_INGEST_PORT=57500
 sudo -E make docker-rebuild
 sudo -E make docker-up
 ```
@@ -36,7 +37,9 @@ Do **not** run **`restart-netspec-dev.sh`** at the same time as the NetSpec cont
 
 ## 0) Apprise and `APPRISE_API_URL`
 
-NetSpec runs on the **host**, so `APPRISE_API_URL` in `netspec.env` must reach the published Apprise port on **localhost** (e.g. `http://127.0.0.1:8086`). A value like `http://apprise:8000` only works **inside** Docker DNS and will fail DNS resolution on the host.
+**Compose (default):** NetSpec containers use **`APPRISE_API_URL=http://netspec-apprise:8000`** (bridge DNS). Operators can still **`curl http://127.0.0.1:8086`** from the host because Apprise publishes **`8086:8000`**.
+
+**Legacy bare-metal NetSpec** on the host: `APPRISE_API_URL` in `netspec.env` must reach the published Apprise port on **localhost** (e.g. `http://127.0.0.1:8086`). A Docker-only hostname like `http://netspec-apprise:8000` will fail unless the host participates in that network namespace.
 
 If `curl http://127.0.0.1:8086/status` returns `Connection reset by peer`, the host port may be mapped to the **wrong container port**. The linuxserver `apprise-api` image serves uWSGI on **8000** inside the container; the publish mapping must be **`8086:8000`** (not `8086:8086`). Fix with sudo: `sudo docker stop apprise && sudo docker rm apprise` then `docker run ... -p 8086:8000 ...` (see repo `docker-compose.yml`).
 
@@ -94,7 +97,7 @@ tsh ssh derek@derek-ghrunner "curl -sS http://localhost:8088/api/telemetry/stats
 ```
 
 Expected:
-- NetSpec listens on `:8088` and ingest port from config (currently `:57501`).
+- NetSpec listens on `:8088` (inside the container; mapped to host) and ingest port from **`global.ingest`** (sample **57500** on bridge).
 - `received` and `accepted` counters increase.
 
 ## 6) Sidecar forwarder checks
