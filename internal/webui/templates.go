@@ -819,6 +819,14 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                             <div class="telemetry-pill"><div class="k">Rejected</div><div class="v">{{add .Telemetry.RejectedInvalidJSON .Telemetry.RejectedAuth .Telemetry.RejectedMissing}}</div></div>
                             <div class="telemetry-pill"><div class="k">Events/Sec</div><div class="v">{{printf "%.1f" .Telemetry.EventsPerSecond}}</div></div>
                         </div>
+                        {{if .Telemetry.Listeners}}
+                        <div style="margin-top:0.45rem; font-size:0.74rem; color: var(--text-secondary); line-height:1.35;">
+                            <div style="margin-bottom:0.2rem;">TCP listeners (port → source tag, same NDJSON format on each)</div>
+                            {{range .Telemetry.Listeners}}
+                            <div>:{{.Port}}{{if .Source}} <span style="color:var(--text-muted);">({{.Source}})</span>{{end}} — rcv {{.Received}}, ok {{.Accepted}}</div>
+                            {{end}}
+                        </div>
+                        {{end}}
                         {{if .Telemetry.LastEventAt.IsZero}}
                         <div style="font-size:0.75rem;color:var(--accent-yellow);">No accepted telemetry events yet.</div>
                         {{else}}

@@ -23,5 +23,10 @@ global:
   ingest:
     listen_address: 0.0.0.0
     port: 57500
+    # Optional per-pipeline tags (stored on push events as PushTelemetryEvent.source).
+    # source: telegraf
+    # additional_listeners:
+    #   - port: 57501
+    #     source: cribl_mdt
 
 devices: {}

@@ -38,6 +38,8 @@ type TelemetryStats struct {
 	EventsPerSecond     float64                         `json:"events_per_second"`
 	TopDevices          []collector.DeviceTelemetryStat `json:"top_devices"`
 	UnknownDevices      []UnknownTelemetryDevice        `json:"unknown_devices"`
+	// Listeners is per-TCP-port ingest (same wire format); use for pipeline / sourcetype mapping from Cribl, etc.
+	Listeners []collector.PushIngestorStats `json:"listeners,omitempty"`
 }
 
 type UnknownTelemetryDevice struct {

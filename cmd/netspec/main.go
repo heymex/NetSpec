@@ -90,7 +90,7 @@ func main() {
 	// Create evaluator
 	eval := evaluator.NewEvaluator(cfg, logger)
 
-	var pushIngestor *collector.PushIngestor
+	var pushIngestors []*collector.PushIngestor
 	var unknownTelemetryMu sync.Mutex
 	unknownTelemetryCount := map[string]uint64{}
 	unknownTelemetryLast := map[string]time.Time{}
@@ -151,10 +151,25 @@ func main() {
 			}(deviceName, deviceCfg)
 		}
 	case "telemetry_ingest_push":
+		inger := cfg.DesiredState.Global.Ingest
+		listenerDefs := []struct {
+			port   uint16
+			source string
+		}{{inger.Port, strings.TrimSpace(inger.Source)}}
+		for _, al := range inger.AdditionalListeners {
+			listenerDefs = append(listenerDefs, struct {
+				port   uint16
+				source string
+			}{al.Port, strings.TrimSpace(al.Source)})
+		}
+		portsLog := make([]uint16, len(listenerDefs))
+		for i, d := range listenerDefs {
+			portsLog[i] = d.port
+		}
 		logger.Info().
-			Str("listen_address", cfg.DesiredState.Global.Ingest.ListenAddress).
-			Uint16("listen_port", cfg.DesiredState.Global.Ingest.Port).
-			Msg("Starting push telemetry ingest listener")
+			Str("listen_address", inger.ListenAddress).
+			Interface("listen_ports", portsLog).
+			Msg("Starting push telemetry ingest listeners")
 
 		validator := collector.NewSNMPValidator(
 			cfg.DesiredState.Global.SNMP,
@@ -163,16 +178,11 @@ func main() {
 		)
 
 		ingestToken := ""
-		if cfg.DesiredState.Global.Ingest.TokenEnv != "" {
-			ingestToken = os.Getenv(cfg.DesiredState.Global.Ingest.TokenEnv)
+		if inger.TokenEnv != "" {
+			ingestToken = os.Getenv(inger.TokenEnv)
 		}
 
-		ingestor := collector.NewPushIngestor(
-			cfg.DesiredState.Global.Ingest.ListenAddress,
-			cfg.DesiredState.Global.Ingest.Port,
-			ingestToken,
-			logger.With().Str("component", "push-ingestor").Logger(),
-			func(event collector.PushTelemetryEvent) {
+		onEvent := func(event collector.PushTelemetryEvent) {
 				deviceName, deviceCfg, ok := resolveDeviceForEvent(cfg, event)
 				if !ok {
 					unknownTelemetryMu.Lock()
@@ -237,16 +247,25 @@ func main() {
 				for _, change := range changes {
 					alertEngine.ProcessStateChange(change)
 				}
-			},
-		)
-		pushIngestor = ingestor
+		}
 
-		go func() {
-			if err := ingestor.Start(ctx); err != nil {
-				logger.Error().Err(err).Msg("Push telemetry ingestor stopped")
-				cancel()
-			}
-		}()
+		for _, def := range listenerDefs {
+			ing := collector.NewPushIngestor(
+				inger.ListenAddress,
+				def.port,
+				def.source,
+				ingestToken,
+				logger.With().Str("component", "push-ingestor").Uint16("listen_port", def.port).Logger(),
+				onEvent,
+			)
+			pushIngestors = append(pushIngestors, ing)
+			go func(inst *collector.PushIngestor, listenPort uint16) {
+				if err := inst.Start(ctx); err != nil {
+					logger.Error().Err(err).Uint16("listen_port", listenPort).Msg("Push telemetry ingestor stopped")
+					cancel()
+				}
+			}(ing, def.port)
+		}
 
 		// Periodic SNMP reachability so configured devices do not appear healthy when no telemetry arrives.
 		go func() {
@@ -351,16 +370,21 @@ func main() {
 	})
 	apiServer.SetTelemetryStatsGetter(func() api.TelemetryStats {
 		stats := api.TelemetryStats{}
-		if pushIngestor != nil {
-			s := pushIngestor.Stats()
-			stats.Received = s.Received
-			stats.Accepted = s.Accepted
-			stats.RejectedInvalidJSON = s.RejectedInvalidJSON
-			stats.RejectedAuth = s.RejectedAuth
-			stats.RejectedMissing = s.RejectedMissing
-			stats.LastEventAt = s.LastEventAt
-			stats.EventsPerSecond = s.EventsPerSecond
-			stats.TopDevices = collector.TopDeviceStats(s.ByDevice, 10)
+		if len(pushIngestors) > 0 {
+			perListener := make([]collector.PushIngestorStats, 0, len(pushIngestors))
+			for _, ing := range pushIngestors {
+				perListener = append(perListener, ing.Stats())
+			}
+			merged := collector.AggregatePushIngestorStats(perListener)
+			stats.Received = merged.Received
+			stats.Accepted = merged.Accepted
+			stats.RejectedInvalidJSON = merged.RejectedInvalidJSON
+			stats.RejectedAuth = merged.RejectedAuth
+			stats.RejectedMissing = merged.RejectedMissing
+			stats.LastEventAt = merged.LastEventAt
+			stats.EventsPerSecond = merged.EventsPerSecond
+			stats.TopDevices = collector.TopDeviceStats(merged.ByDevice, 10)
+			stats.Listeners = perListener
 		}
 
 		unknownTelemetryMu.Lock()
