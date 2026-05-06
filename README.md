@@ -224,7 +224,7 @@ NetSpec includes a built-in web UI accessible at `http://localhost:8088` (or you
 | `/api/telemetry/stats` | GET | Push ingest counters, **events/sec**, last event time, top talkers, and unknown devices (with wizard URLs; telemetry source IP can prefill the wizard when the device is not in config yet) |
 | `/api/discovery/probe` | POST | SNMP probe (wizard) |
 | `/api/discovery/walk` | POST | SNMP interface walk |
-| `/api/discovery/commit` | POST | Write discovery selection to YAML |
+| `/api/discovery/commit` | POST | Write discovery selection to YAML (`sync_discovered_interfaces` on patch = full SNMP walk snapshot: unchecked interfaces are removed from desired state for names present on the walk) |
 | `/device/{name}` | GET | Device detail HTML page |
 | `/wizard` | GET | Discovery wizard HTML page |
 
@@ -339,6 +339,6 @@ docker pull ghcr.io/OWNER/REPO:v1.0.0
 
 ## Notes
 
-- Use `/wizard` in the web UI to discover and add devices/interfaces. Unknown push-telemetry sources appear under **Telemetry** stats with a link into the wizard (address prefill uses the TCP sender when available).
+- Use `/wizard` in the web UI to discover and add devices/interfaces. Unknown push-telemetry sources appear under **Telemetry** stats with a link into the wizard (address prefill uses the TCP sender when available). Existing devices can use **Re-walk interfaces** on the device page (or `/wizard?device_key=...&address=...`): after probe + walk, the wizard prefills monitors from YAML and patch commits sync the walk—unchecked names drop out of desired state (interfaces never seen on the walk are left unchanged).
 - Interface policies can be edited inline from each device page (monitor flag, desired/admin state, alert severity).
 - Prefer **`docker compose`** (v2) over legacy `docker-compose` where possible.

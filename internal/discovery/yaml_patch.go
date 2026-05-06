@@ -42,7 +42,7 @@ func PatchDesiredState(configPath string, req *CommitRequest) (*CommitResult, er
 			Description: req.DeviceDescription,
 			Interfaces:  make(map[string]config.InterfaceConfig),
 		}
-		applyInterfaces(&dev, req.Interfaces)
+		applyInterfacesMerge(&dev, req.Interfaces)
 		if err := writeSplitDeviceFile(writeDevicesDir, targetKey, dev); err != nil {
 			return nil, err
 		}
@@ -71,7 +71,11 @@ func PatchDesiredState(configPath string, req *CommitRequest) (*CommitResult, er
 			if req.Address != "" {
 				dev.Address = req.Address
 			}
-			applyInterfaces(&dev, req.Interfaces)
+			if req.SyncDiscoveredInterfaces {
+				applyInterfacesSync(&dev, req.Interfaces)
+			} else {
+				applyInterfacesMerge(&dev, req.Interfaces)
+			}
 			fileDevices[targetKey] = dev
 			if err := writeSplitFile(splitPath, fileDevices); err != nil {
 				return nil, err
@@ -89,7 +93,11 @@ func PatchDesiredState(configPath string, req *CommitRequest) (*CommitResult, er
 			dev.Interfaces = make(map[string]config.InterfaceConfig)
 		}
 		desired.Devices[targetKey] = dev
-		applyInterfaces(&dev, req.Interfaces)
+		if req.SyncDiscoveredInterfaces {
+			applyInterfacesSync(&dev, req.Interfaces)
+		} else {
+			applyInterfacesMerge(&dev, req.Interfaces)
+		}
 		desired.Devices[targetKey] = dev
 		delete(desired.Devices, targetKey)
 		if err := writeDesiredStateAdaptive(configPath, desired); err != nil {
@@ -120,34 +128,55 @@ func PatchDesiredState(configPath string, req *CommitRequest) (*CommitResult, er
 	}, nil
 }
 
-func applyInterfaces(dev *config.DeviceConfig, interfaces []CommitInterface) {
+func upsertCommitInterface(dev *config.DeviceConfig, iface CommitInterface) {
+	if dev.Interfaces == nil {
+		dev.Interfaces = make(map[string]config.InterfaceConfig)
+	}
+	ifaceName := strings.TrimSpace(iface.Name)
+	if ifaceName == "" || !iface.Monitor {
+		return
+	}
+	cfgIface := config.InterfaceConfig{
+		Description:  iface.Alias,
+		DesiredState: iface.DesiredState,
+		AdminState:   iface.AdminState,
+		Monitor:      true,
+		Alerts: config.AlertSeverity{
+			StateMismatch: iface.AlertSeverity,
+		},
+	}
+	if iface.IsPortChannel && len(iface.Members) > 0 {
+		members := uniqueSorted(iface.Members)
+		cfgIface.Members = &config.MemberConfig{Required: members}
+		cfgIface.MemberPolicy = &config.MemberPolicy{
+			Mode: "min_active",
+			// >=50% members down is critical; this threshold makes <=50% active critical.
+			Minimum: (len(members) + 1) / 2,
+		}
+	}
+	dev.Interfaces[ifaceName] = cfgIface
+}
+
+func applyInterfacesMerge(dev *config.DeviceConfig, interfaces []CommitInterface) {
+	for _, iface := range interfaces {
+		upsertCommitInterface(dev, iface)
+	}
+}
+
+func applyInterfacesSync(dev *config.DeviceConfig, interfaces []CommitInterface) {
 	if dev.Interfaces == nil {
 		dev.Interfaces = make(map[string]config.InterfaceConfig)
 	}
 	for _, iface := range interfaces {
-		ifaceName := strings.TrimSpace(iface.Name)
-		if ifaceName == "" {
+		name := strings.TrimSpace(iface.Name)
+		if name == "" {
 			continue
 		}
-		cfgIface := config.InterfaceConfig{
-			Description:  iface.Alias,
-			DesiredState: iface.DesiredState,
-			AdminState:   iface.AdminState,
-			Monitor:      iface.Monitor,
-			Alerts: config.AlertSeverity{
-				StateMismatch: iface.AlertSeverity,
-			},
+		if iface.Monitor {
+			upsertCommitInterface(dev, iface)
+			continue
 		}
-		if iface.IsPortChannel && len(iface.Members) > 0 {
-			members := uniqueSorted(iface.Members)
-			cfgIface.Members = &config.MemberConfig{Required: members}
-			cfgIface.MemberPolicy = &config.MemberPolicy{
-				Mode: "min_active",
-				// >=50% members down is critical; this threshold makes <=50% active critical.
-				Minimum: (len(members) + 1) / 2,
-			}
-		}
-		dev.Interfaces[ifaceName] = cfgIface
+		delete(dev.Interfaces, name)
 	}
 }
 
@@ -340,6 +369,9 @@ func validateCommitRequest(req *CommitRequest) error {
 	if req.Action != "add" && req.Action != "patch" {
 		return errors.New("action must be add or patch")
 	}
+	if req.SyncDiscoveredInterfaces && req.Action != "patch" {
+		return errors.New("sync_discovered_interfaces requires action patch")
+	}
 	if !deviceKeyPattern.MatchString(req.DeviceKey) {
 		return errors.New("device_key must match [A-Za-z0-9_-]{1,64}")
 	}
@@ -349,19 +381,31 @@ func validateCommitRequest(req *CommitRequest) error {
 	if len(req.Interfaces) == 0 {
 		return errors.New("at least one interface is required")
 	}
+	var monitored int
 	for _, iface := range req.Interfaces {
-		if strings.TrimSpace(iface.Name) == "" {
+		name := strings.TrimSpace(iface.Name)
+		if name == "" {
 			return errors.New("interface name is required")
 		}
-		if iface.DesiredState != "up" && iface.DesiredState != "down" {
-			return errors.New("desired_state must be up or down")
+		if iface.Monitor {
+			monitored++
+			if iface.DesiredState != "up" && iface.DesiredState != "down" {
+				return errors.New("desired_state must be up or down")
+			}
+			if iface.AdminState != "enabled" && iface.AdminState != "disabled" {
+				return errors.New("admin_state must be enabled or disabled")
+			}
+			if iface.AlertSeverity != "info" && iface.AlertSeverity != "warning" && iface.AlertSeverity != "critical" {
+				return errors.New("alert_severity must be info, warning, or critical")
+			}
+			continue
 		}
-		if iface.AdminState != "enabled" && iface.AdminState != "disabled" {
-			return errors.New("admin_state must be enabled or disabled")
+		if !req.SyncDiscoveredInterfaces {
+			return errors.New("interface entries with monitor=false require sync_discovered_interfaces")
 		}
-		if iface.AlertSeverity != "info" && iface.AlertSeverity != "warning" && iface.AlertSeverity != "critical" {
-			return errors.New("alert_severity must be info, warning, or critical")
-		}
+	}
+	if req.Action == "add" && monitored == 0 {
+		return errors.New("add requires at least one monitored interface")
 	}
 	return nil
 }
