@@ -89,6 +89,31 @@ Notes:
 
 ## Troubleshooting
 
+### TCP handshake never completes (`SYN`, `SYN-ACK`, then `RST` from the router)
+
+**Symptom**: `tcpdump` on the collector shows the switch (source IP) repeatedly sending **`SYN`** to `:57500`, the host answers **`SYN-ACK`**, then the switch sends **`RST`** almost immediately — **no gRPC session**, **`decoded.json` stays empty**, NetSpec **`/api/telemetry/stats`** stays at zero.
+
+That pattern is usually a **receiver protocol mismatch**, not firewall or NetSpec:
+
+| Switch subscription (`receiver … protocol`) | Collector must |
+|--------------------------------------------|----------------|
+| **`grpc-tcp`**                             | Plain gRPC listener (matches the shipped **`telegraf-mdt.conf`**: `transport = "grpc"` with **no** `tls_cert` / `tls_key`) |
+| **`grpc-tls`**                             | Telegraf gRPC **with TLS** (`tls_cert`, `tls_key`, and optionally `tls_allowed_cacerts`); device needs matching **trustpoint** / profile |
+
+**Fix (pick one)**
+
+1. **Plaintext on a trusted management network (simplest)** — On IOS-XE, use **`receiver ip address <collector-ip> 57500 protocol grpc-tcp`** (not `grpc-tls`) so it matches the default Telegraf sidecar config in this repo.
+2. **Keep `grpc-tls` on the device** — Configure Telegraf with **`tls_cert`** / **`tls_key`** pointing at PEM files in the **`netspec-telegraf-mdt`** container (compose bind-mount), reusing the trust model you already use elsewhere.
+
+Sanity-check on the device:
+
+```text
+show telemetry ietf subscriptions all
+show telemetry receiver sessions
+```
+
+Confirm the receiver entry shows **`grpc-tcp`** versus **`grpc-tls`** exactly as deployed on the collectors (**10.x.x.x / 57500** per VM).
+
 ### No Telemetry Data Received
 
 **Symptom**: Connection succeeds but no interface state updates
