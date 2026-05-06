@@ -2,6 +2,7 @@ package webui
 
 import (
 	"html/template"
+	"net/url"
 )
 
 // Templates contains all HTML templates for the web UI
@@ -21,6 +22,7 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
 	"add": func(a, b, c uint64) uint64 {
 		return a + b + c
 	},
+	"queryEscape": url.QueryEscape,
 }).Parse(`
 {{define "base"}}
 <!DOCTYPE html>
@@ -1127,6 +1129,7 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                     <div class="field"><label>SNMP Port</label><input id="port" type="number" value="161"></div>
                     <div></div>
                 </div>
+                <div id="editHint" class="warn" style="display:none;"></div>
                 <div class="actions"><button class="btn primary" id="probeBtn">Probe Device</button></div>
                 <div id="probeMsg" class="msg"></div>
             </div>
@@ -1211,6 +1214,13 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
             if (devKey) {
                 prefillDeviceKey = devKey;
             }
+            if (addr && devKey) {
+                var h = document.getElementById('editHint');
+                if (h) {
+                    h.style.display = 'block';
+                    h.textContent = 'Re-walk mode for device \"' + devKey + '\" at ' + addr + '. Probe, then walk—unchecked interfaces are removed from desired state on commit.';
+                }
+            }
         })();
         function showStep(id) {
             ['step1','step2','step3','step4','step5'].forEach(function(s){ document.getElementById(s).classList.remove('active'); });
@@ -1230,7 +1240,7 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                 state.probe = data;
                 var info = 'Hostname: '+esc(data.sys_name||'-')+' | Address: '+esc(data.address)+' | Vendor: '+esc(data.vendor_hint)+' | Location: '+esc(data.sys_location||'-');
                 document.getElementById('probeInfo').innerHTML = info;
-                document.getElementById('deviceKey').value = slugify(prefillDeviceKey || data.sys_name || data.address);
+                document.getElementById('deviceKey').value = (data.existing_device_key || slugify(prefillDeviceKey || data.sys_name || data.address));
                 document.getElementById('deviceDescription').value = (data.sys_name || data.sys_descr || '').slice(0,120);
                 if(data.already_configured){
                     var w = document.getElementById('configuredWarn');
@@ -1258,13 +1268,22 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                 state.walk = data;
                 state.ifSelections = {};
                 (state.walk.interfaces || []).forEach(function(it){
+                    var ex = it.existing_config;
+                    var defMon = ex ? !!ex.monitor : false;
+                    var defAlias = (ex && ex.description) ? ex.description : (it.alias || '');
+                    var defDesired = (ex && ex.desired_state) ? ex.desired_state : (it.oper_status === 'up' ? 'up' : 'down');
+                    var defSev = (ex && ex.alert_severity) ? ex.alert_severity : 'warning';
+                    var defPC = ex ? !!ex.is_port_channel : !!it.is_port_channel;
+                    var defMem = (ex && Array.isArray(ex.members) && ex.members.length)
+                        ? ex.members.slice()
+                        : (Array.isArray(it.channel_members) ? it.channel_members.slice() : []);
                     state.ifSelections[it.name] = {
-                        monitor: false, // default to monitoring nothing until explicitly selected
-                        alias: it.alias || '',
-                        desired_state: (it.oper_status === 'up' ? 'up' : 'down'),
-                        alert_severity: 'warning',
-                        is_port_channel: !!it.is_port_channel,
-                        members: Array.isArray(it.channel_members) ? it.channel_members : []
+                        monitor: defMon,
+                        alias: defAlias,
+                        desired_state: defDesired,
+                        alert_severity: defSev,
+                        is_port_channel: defPC,
+                        members: defMem
                     };
                 });
                 renderIfRows();
@@ -1334,35 +1353,46 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
         document.getElementById('toReview').addEventListener('click', function(){
             var payload = [];
             var discoveredCount = (state.walk.interfaces || []).length;
+            var action = state.probe.already_configured ? 'patch' : 'add';
+            var sync = action === 'patch';
+            var monitoredCount = 0;
             (state.walk.interfaces || []).forEach(function(src){
                 var sel = state.ifSelections[src.name] || {};
                 var ifName = (src.name || '').trim();
-                if (!ifName || !sel.monitor) {
+                if (!ifName) {
                     return;
                 }
-                payload.push({
+                if (!sync && !sel.monitor) {
+                    return;
+                }
+                var mon = !!sel.monitor;
+                if (mon) { monitoredCount++; }
+                var row = {
                     name: ifName,
                     alias: sel.alias || '',
-                    monitor: true,
-                    desired_state: sel.desired_state || (src.oper_status === 'up' ? 'up' : 'down'),
+                    monitor: mon,
+                    desired_state: mon ? (sel.desired_state || (src.oper_status === 'up' ? 'up' : 'down')) : 'up',
                     admin_state: 'enabled',
-                    alert_severity: sel.alert_severity || 'warning',
+                    alert_severity: mon ? (sel.alert_severity || 'warning') : 'warning',
                     is_port_channel: !!sel.is_port_channel,
                     members: Array.isArray(sel.members) ? sel.members : []
-                });
+                };
+                payload.push(row);
             });
-            if (payload.length === 0) {
+            if (!sync && monitoredCount === 0) {
                 msg('walkMsg', 'Select at least one interface to monitor before committing.', true);
                 return;
             }
             msg('walkMsg', '');
             state.commitInterfaces = payload;
-            var action = state.probe.already_configured ? 'patch' : 'add';
+            var sumExtra = sync
+                ? '<br><span class="small">Patch uses full walk sync: interfaces you leave unchecked are <b>removed</b> from desired state (interfaces not seen on this walk are unchanged).</span>'
+                : '';
             document.getElementById('summary').innerHTML =
                 'Device key: <b>'+esc(document.getElementById('deviceKey').value)+'</b><br>'+
-                'Action: <b>'+action+'</b><br>'+
+                'Action: <b>'+action+'</b>' + (sync ? ' (sync discovered)' : '') + '<br>'+
                 'Address: <b>'+esc(state.probe.address)+'</b><br>'+
-                'Interfaces discovered: <b>'+discoveredCount+'</b>, selected for monitoring: <b>'+payload.length+'</b>';
+                'Interfaces discovered: <b>'+discoveredCount+'</b>, monitored after commit: <b>'+monitoredCount+'</b>' + sumExtra;
             showStep('step4');
         });
 
@@ -1376,6 +1406,7 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                 device_description: document.getElementById('deviceDescription').value,
                 existing_device_key: state.probe.existing_device_key || '',
                 action: action,
+                sync_discovered_interfaces: action === 'patch',
                 interfaces: state.commitInterfaces || []
             };
             try{
@@ -1788,6 +1819,7 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
             </div>
             <div>
                 <button class="btn btn-danger" onclick="deleteDevice()">Delete Device</button>
+                <a href="/wizard?device_key={{queryEscape .Device.Name}}&amp;address={{queryEscape .Device.Address}}" class="btn btn-secondary">Re-walk interfaces</a>
                 <a href="/api-browser" class="btn btn-secondary">API</a>
                 <a href="/" class="btn btn-secondary">← Back to Dashboard</a>
             </div>

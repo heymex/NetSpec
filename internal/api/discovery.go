@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/netspec/netspec/internal/config"
 	"github.com/netspec/netspec/internal/discovery"
 	"github.com/netspec/netspec/internal/webui"
 )
@@ -104,19 +105,45 @@ func (s *Server) handleDiscoveryWalk(w http.ResponseWriter, r *http.Request) {
 	cfg := s.config
 	s.reloadMu.RUnlock()
 	if cfg != nil {
-		var existing map[string]bool
+		var match *config.DeviceConfig
 		for _, dev := range cfg.DesiredState.Devices {
 			if strings.EqualFold(strings.TrimSpace(dev.Address), strings.TrimSpace(req.Address)) {
-				existing = make(map[string]bool, len(dev.Interfaces))
-				for name := range dev.Interfaces {
-					existing[name] = true
-				}
+				d := dev
+				match = &d
 				break
 			}
 		}
-		if existing != nil {
+		if match != nil {
 			for i := range result.Interfaces {
-				result.Interfaces[i].AlreadyConfigured = existing[result.Interfaces[i].Name]
+				it := &result.Interfaces[i]
+				ic, ok := match.Interfaces[it.Name]
+				if !ok {
+					it.AlreadyConfigured = false
+					continue
+				}
+				it.AlreadyConfigured = true
+				sev := strings.TrimSpace(ic.Alerts.StateMismatch)
+				if sev == "" {
+					sev = "warning"
+				}
+				admin := strings.TrimSpace(ic.AdminState)
+				if admin == "" {
+					admin = "enabled"
+				}
+				var members []string
+				isPC := ic.Members != nil && len(ic.Members.Required) > 0
+				if ic.Members != nil {
+					members = append(members, ic.Members.Required...)
+				}
+				it.ExistingConfig = &discovery.InterfaceConfigWish{
+					Monitor:       ic.Monitor,
+					Description:   ic.Description,
+					DesiredState:  ic.DesiredState,
+					AdminState:    admin,
+					AlertSeverity: sev,
+					IsPortChannel: isPC || it.IsPortChannel,
+					Members:       members,
+				}
 			}
 		}
 	}
