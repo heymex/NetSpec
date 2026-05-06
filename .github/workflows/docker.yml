@@ -83,7 +83,8 @@ jobs:
           echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_OUTPUT
 
       - name: Build and push
-        if: steps.changes.outputs.netspec == 'true'
+        # Always publish tagged releases, even if this commit touched docs only.
+        if: github.ref_type == 'tag' || steps.changes.outputs.netspec == 'true'
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -113,7 +114,8 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push mdt-translator
-        if: steps.changes.outputs.translator == 'true'
+        # Always publish tagged releases, even if translator paths were unchanged.
+        if: github.ref_type == 'tag' || steps.changes.outputs.translator == 'true'
         uses: docker/build-push-action@v5
         with:
           context: ./tools/sidecar
