@@ -1,6 +1,6 @@
 # NetSpec + Apprise-API + Telegraf MDT + mdt-translator.
 #
-# NetSpec’s job is to detect drift from desired state and surface it (including via alerts).
+# NetSpec's job is to detect drift from desired state and surface it (including via alerts).
 # Apprise-API receives NetSpec POST /notify traffic and fans out to Slack, email, Teams, etc.
 # Service names use a netspec- prefix so the project groups cleanly in tooling and avoids
 # clashing with other stacks on the same host (unique container names).
@@ -11,8 +11,10 @@ services:
     image: ghcr.io/heymex/netspec:${NETSPEC_IMAGE_TAG:-latest}
     container_name: netspec-netspec
     restart: unless-stopped
-    # Use host networking so NetSpec can reach devices on management VLANs.
-    network_mode: host
+    networks:
+      - netspec
+    ports:
+      - "${API_PORT:-8088}:${API_PORT:-8088}"
     volumes:
       # Read-write so dashboard/API can persist split devices and desired-state edits under /config.
       # (Mounting :ro breaks deletes and patches to config/devices/*.yaml with "read-only file system".)
@@ -26,9 +28,11 @@ services:
         required: false
     environment:
       - SNMP_COMMUNITY=${SNMP_COMMUNITY}
-      # With host networking, use 127.0.0.1 and the host-mapped Apprise port.
-      - APPRISE_API_URL=${APPRISE_API_URL:-http://127.0.0.1:8086}
+      - APPRISE_API_URL=${APPRISE_API_URL:-http://netspec-apprise:8000}
       - LOG_LEVEL=${LOG_LEVEL:-info}
+      - NETSPEC_ADMIN_PASSWORD_HASH=${NETSPEC_ADMIN_PASSWORD_HASH:-}
+      - NETSPEC_SESSION_SECRET=${NETSPEC_SESSION_SECRET:-}
+      - NETSPEC_API_TOKEN=${NETSPEC_API_TOKEN:-}
     logging:
       driver: json-file
       options:
@@ -56,6 +60,7 @@ services:
       - ${NETSPEC_DATA_DIR:-/opt/netspec}/apprise-config:/config
     ports:
       # Apprise-API uWSGI listens on 8000 inside the container (linuxserver image).
+      # Published on 8086 for direct access; netspec reaches it via Docker DNS (netspec-apprise:8000).
       - "8086:8000"
     networks:
       - netspec
@@ -72,7 +77,11 @@ services:
     image: telegraf:1.31
     container_name: netspec-telegraf-mdt
     restart: unless-stopped
-    network_mode: host
+    networks:
+      - netspec
+    ports:
+      # Switch MDT dial-out target. Switches point to the host IP; Docker publishes to the container.
+      - "57500:57500"
     volumes:
       - ./tools/sidecar/telegraf-mdt.conf:/etc/telegraf/telegraf.conf:ro
       - ${NETSPEC_DATA_DIR:-/opt/netspec}/mdt-sidecar:/sidecar
@@ -89,13 +98,15 @@ services:
     image: ghcr.io/heymex/netspec-mdt-translator:${NETSPEC_IMAGE_TAG:-latest}
     container_name: netspec-mdt-translator
     restart: unless-stopped
-    network_mode: host
+    networks:
+      - netspec
     depends_on:
       - netspec-telegraf-mdt
     environment:
       - MDT_DECODED_FILE=/sidecar/decoded.json
       - MDT_FORWARDER_LOG=/sidecar/forwarder.log
-      - NETSPEC_INGEST_HOST=${NETSPEC_INGEST_HOST:-127.0.0.1}
+      # Reach netspec-netspec via Docker DNS on the bridge network.
+      - NETSPEC_INGEST_HOST=${NETSPEC_INGEST_HOST:-netspec-netspec}
       - NETSPEC_INGEST_PORT=${NETSPEC_INGEST_PORT:-57500}
       - MDT_ALLOWED_DEVICES=${MDT_ALLOWED_DEVICES:-}
     volumes:

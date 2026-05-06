@@ -20,6 +20,7 @@ import (
 
 	"github.com/netspec/netspec/internal/alerter"
 	"github.com/netspec/netspec/internal/api"
+	"github.com/netspec/netspec/internal/auth"
 	"github.com/netspec/netspec/internal/collector"
 	"github.com/netspec/netspec/internal/config"
 	"github.com/netspec/netspec/internal/evaluator"
@@ -30,6 +31,31 @@ import (
 )
 
 func main() {
+	// Subcommand: netspec hash-password [password]
+	if len(os.Args) > 1 && os.Args[1] == "hash-password" {
+		var password string
+		if len(os.Args) > 2 {
+			password = os.Args[2]
+		} else {
+			fmt.Print("Password: ")
+			scanner := bufio.NewScanner(os.Stdin)
+			if scanner.Scan() {
+				password = scanner.Text()
+			}
+		}
+		if password == "" {
+			fmt.Fprintln(os.Stderr, "error: password must not be empty")
+			os.Exit(1)
+		}
+		hash, err := auth.HashPassword(password)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println(hash)
+		return
+	}
+
 	configPath := flag.String("config", "/config/desired-state.yaml", "Path to desired state configuration")
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 	flag.Parse()
@@ -360,7 +386,19 @@ func main() {
 	}
 	apiServer := api.NewServer(alertEngine, logger, apiPort)
 
+	// Configure auth (disabled when NETSPEC_ADMIN_PASSWORD_HASH is unset).
+	authManager := auth.NewManager(
+		os.Getenv("NETSPEC_ADMIN_PASSWORD_HASH"),
+		os.Getenv("NETSPEC_API_TOKEN"),
+	)
+	if authManager.Enabled() {
+		logger.Info().Msg("Authentication enabled")
+	} else {
+		logger.Warn().Msg("Authentication disabled: set NETSPEC_ADMIN_PASSWORD_HASH to enable")
+	}
+
 	// Configure the API server with log buffer, config, version, and collector getter
+	apiServer.SetAuthManager(authManager)
 	apiServer.SetLogBuffer(logBuffer)
 	apiServer.SetConfig(cfg, *configPath)
 	apiServer.SetSNMPReachabilityTracker(reachTracker)

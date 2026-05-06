@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/netspec/netspec/internal/alerter"
+	"github.com/netspec/netspec/internal/auth"
 	"github.com/netspec/netspec/internal/collector"
 	"github.com/netspec/netspec/internal/config"
 	"github.com/netspec/netspec/internal/discovery"
@@ -89,8 +90,9 @@ type Server struct {
 	evaluatorMu     sync.RWMutex
 	telemetryGetter TelemetryStatsGetter
 	telemetryMu     sync.RWMutex
-	reachMu        sync.RWMutex
-	reachTracker   *collector.ReachabilityTracker
+	reachMu         sync.RWMutex
+	reachTracker    *collector.ReachabilityTracker
+	authManager     *auth.Manager
 }
 
 // NewServer creates a new API server
@@ -143,6 +145,11 @@ func (s *Server) SetTelemetryStatsGetter(getter TelemetryStatsGetter) {
 	s.telemetryGetter = getter
 }
 
+// SetAuthManager sets the authentication manager. If nil, auth is disabled.
+func (s *Server) SetAuthManager(m *auth.Manager) {
+	s.authManager = m
+}
+
 // SetSNMPReachabilityTracker supplies per-device SNMP contact state for the API and honeycomb.
 func (s *Server) SetSNMPReachabilityTracker(t *collector.ReachabilityTracker) {
 	s.reachMu.Lock()
@@ -159,6 +166,10 @@ func (s *Server) snmpReachTracker() *collector.ReachabilityTracker {
 // Start starts the HTTP server
 func (s *Server) Start() error {
 	mux := http.NewServeMux()
+
+	// Auth routes (always accessible)
+	mux.HandleFunc("/login", s.handleLogin)
+	mux.HandleFunc("/logout", s.handleLogout)
 
 	// API endpoints
 	mux.HandleFunc("/health", s.handleHealth)
@@ -190,7 +201,91 @@ func (s *Server) Start() error {
 		Str("address", addr).
 		Msg("Starting API server with Web UI")
 
-	return http.ListenAndServe(addr, mux)
+	return http.ListenAndServe(addr, s.requireAuth(mux))
+}
+
+// requireAuth wraps a handler and enforces authentication when enabled.
+// /health, /login, and /logout are always reachable without credentials.
+func (s *Server) requireAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.authManager == nil || !s.authManager.Enabled() {
+			next.ServeHTTP(w, r)
+			return
+		}
+		// Always-open paths.
+		p := r.URL.Path
+		if p == "/health" || p == "/login" || p == "/logout" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if s.authManager.IsAuthenticated(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		// API callers get 401; browser requests get a redirect.
+		accept := r.Header.Get("Accept")
+		if strings.Contains(accept, "application/json") || strings.HasPrefix(p, "/api/") {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+		http.Redirect(w, r, "/login?next="+url.QueryEscape(r.URL.RequestURI()), http.StatusSeeOther)
+	})
+}
+
+// handleLogin serves GET (login form) and POST (credential check).
+func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if s.authManager == nil || !s.authManager.Enabled() {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	if r.Method == http.MethodPost {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if s.authManager.ValidatePassword(r.FormValue("password")) {
+			id, err := s.authManager.CreateSession()
+			if err != nil {
+				http.Error(w, "internal error", http.StatusInternalServerError)
+				return
+			}
+			http.SetCookie(w, s.authManager.SessionCookie(id))
+			next := r.FormValue("next")
+			if next == "" || !strings.HasPrefix(next, "/") {
+				next = "/"
+			}
+			http.Redirect(w, r, next, http.StatusSeeOther)
+			return
+		}
+		next := r.FormValue("next")
+		redirectTo := "/login?error=1"
+		if next != "" {
+			redirectTo += "&next=" + url.QueryEscape(next)
+		}
+		http.Redirect(w, r, redirectTo, http.StatusSeeOther)
+		return
+	}
+	// GET — render login form.
+	loginErr := r.URL.Query().Get("error") == "1"
+	next := r.URL.Query().Get("next")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := webui.LoginTemplate.Execute(w, map[string]interface{}{
+		"Error": loginErr,
+		"Next":  next,
+	}); err != nil {
+		s.logger.Error().Err(err).Msg("Failed to render login template")
+	}
+}
+
+// handleLogout clears the session cookie and redirects to /login.
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if s.authManager != nil {
+		if c, err := r.Cookie("netspec_session"); err == nil {
+			s.authManager.DeleteSession(c.Value)
+		}
+		http.SetCookie(w, s.authManager.ClearCookie())
+	}
+	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
 // handleHealth returns service health status
