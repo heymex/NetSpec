@@ -256,6 +256,9 @@ else
 fi
 
 log ""
+log "If Telegraf logs \"permission denied\" on decoded.json after the first compose up:"
+log "  sudo chown -R 999:999 \"$DATA_DIR/mdt-sidecar\" && sudo docker restart netspec-telegraf-mdt netspec-mdt-translator"
+log ""
 log "Next steps (repo root: $REPO_ROOT):"
 log "  1. Edit $DATA_DIR/config/desired-state.yaml (devices, telemetry_mode, ingest)."
 log "  2. Edit $DATA_DIR/config/alerts.yaml and $env_dest (APPRISE_* / url_env — destinations for drift alerts)."

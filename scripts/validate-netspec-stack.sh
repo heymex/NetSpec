@@ -117,4 +117,18 @@ else
 	warn "split-device directory missing: $DATA_DIR/config/devices (monolithic devices may still be valid)"
 fi
 
+# Telegraf writes /sidecar/decoded.json as uid 999. If composer/translator creates these as root first,
+# Telegraf crash-loops and nothing listens on 57500 (MDT dial-out silently fails).
+SIDECAR_DIR="$DATA_DIR/mdt-sidecar"
+if [[ -d "$SIDECAR_DIR" ]]; then
+	for f in "$SIDECAR_DIR/decoded.json" "$SIDECAR_DIR/forwarder.log"; do
+		[[ -e "$f" ]] || continue
+		uid=$(stat -c '%u' "$f" 2>/dev/null || true)
+		if [[ -n "$uid" && "$uid" != "999" ]]; then
+			warn "mdt-sidecar file owned by uid $uid (Telegraf needs 999): $f — fix: sudo chown -R 999:999 \"$SIDECAR_DIR\" && sudo docker restart netspec-telegraf-mdt netspec-mdt-translator"
+		fi
+	done
+	ok "mdt-sidecar checked (decoded.json / forwarder.log must be uid 999 when present)"
+fi
+
 ok "validation passed"
