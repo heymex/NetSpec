@@ -8,6 +8,40 @@ import (
 	"github.com/rs/zerolog"
 )
 
+func TestEvaluateInterfaceSnapshotWithSource_pushSNMP_setsBothTimestamps(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{
+		DesiredState: config.DesiredStateConfig{
+			Devices: map[string]config.DeviceConfig{
+				"sw1": {
+					Interfaces: map[string]config.InterfaceConfig{
+						"Gi1/0/1": {DesiredState: "up", Monitor: true},
+					},
+				},
+			},
+		},
+	}
+	e := NewEvaluator(cfg, zerolog.Nop())
+	e.EvaluateInterfaceSnapshotWithSource("sw1", "Gi1/0/1", "up", "enabled", "push_snmp")
+	st, ok := e.GetInterfaceState("sw1", "Gi1/0/1")
+	if !ok {
+		t.Fatal("expected interface state")
+	}
+	if st.LastSNMPValidation.IsZero() {
+		t.Fatal("expected LastSNMPValidation")
+	}
+	if st.LastTelemetryValidation.IsZero() {
+		t.Fatal("expected LastTelemetryValidation")
+	}
+
+	e.EvaluateInterfaceSnapshotWithSource("sw1", "Gi1/0/1", "up", "enabled", "snmp")
+	st2, _ := e.GetInterfaceState("sw1", "Gi1/0/1")
+	if st2.LastTelemetryValidation.IsZero() {
+		t.Fatal("SNMP-only source must not zero out prior telemetry stamp")
+	}
+}
+
 func TestEvaluateChannelMembers_DefaultThresholds(t *testing.T) {
 	t.Parallel()
 

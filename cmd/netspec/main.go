@@ -225,9 +225,13 @@ func main() {
 					alertEngine.SyncSNMPReachability(deviceName, true, "")
 				}
 
-				validationSource := "snmp"
+				var validationSource string
 				if err != nil {
+					// Could not SNMP-confirm this push-driven update; evaluate from telemetry snapshot only.
 					validationSource = "telemetry"
+				} else {
+					// Normal push path: both telemetry (event) and SNMP confirmation succeeded — record both in the UI/runtime cache.
+					validationSource = "push_snmp"
 				}
 				changes := eval.EvaluateInterfaceSnapshotWithSource(deviceName, snapshot.Interface, snapshot.OperStatus, snapshot.AdminStatus, validationSource)
 				for _, change := range changes {

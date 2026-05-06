@@ -84,7 +84,10 @@ func (e *Evaluator) EvaluateInterfaceSnapshot(deviceName, ifaceName, operStatus,
 }
 
 // EvaluateInterfaceSnapshotWithSource evaluates interface state with explicit source.
-// Supported sources: "snmp", "telemetry".
+// Supported sources:
+//   - "snmp": periodic SNMP poll (updates LastSNMPValidation only)
+//   - "telemetry": push telemetry path when SNMP confirmation failed for that event (telemetry-only snapshot)
+//   - "push_snmp": push telemetry arrived and SNMP GET confirmed — updates BOTH LastSNMPValidation and LastTelemetryValidation
 func (e *Evaluator) EvaluateInterfaceSnapshotWithSource(deviceName, ifaceName, operStatus, adminStatus, source string) []StateChange {
 	return e.evaluateInterfaceSnapshotWithSource(deviceName, ifaceName, operStatus, adminStatus, source)
 }
@@ -119,6 +122,9 @@ func (e *Evaluator) evaluateInterfaceSnapshotWithSource(deviceName, ifaceName, o
 	case "snmp":
 		newState.LastSNMPValidation = time.Now()
 	case "telemetry":
+		newState.LastTelemetryValidation = time.Now()
+	case "push_snmp":
+		newState.LastSNMPValidation = time.Now()
 		newState.LastTelemetryValidation = time.Now()
 	}
 	e.stateCache[cacheKey] = newState
