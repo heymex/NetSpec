@@ -113,7 +113,7 @@ So the directory the UI treats as the **Compose project root** must be a **NetSp
 
 #### 2. `NETSPEC_DATA_DIR` and YAML config (outside the repo)
 
-Runtime config lives under **`${NETSPEC_DATA_DIR}`** on the host (default **`/opt/netspec`**): **`config/`** (read-only for NetSpec), **`data/`**, **`mdt-sidecar/`**, **`apprise-config/`**. You can create that tree with **`./scripts/setup-netspec.sh`** on the server once, or by hand. The UI does not replace editing **`desired-state.yaml`** / **`alerts.yaml`** on disk—after changes, **reload** NetSpec (`POST /api/reload` or the dashboard button).
+Runtime config lives under **`${NETSPEC_DATA_DIR}`** on the host (default **`/opt/netspec`**): **`config/`**, **`data/`**, **`mdt-sidecar/`**, **`apprise-config/`**. Compose mounts **`config/` read-write** into the NetSpec container so dashboard/API edits (including deleting **`config/devices/*.yaml`**) persist. Operator edits with **`nano`/`vim`** remain valid—after YAML changes outside the UI, **reload** NetSpec (`POST /api/reload` or the dashboard button).
 
 #### 3. Environment: `.env` next to the compose file
 
@@ -270,8 +270,8 @@ NetSpec loads all files from the **`config/`** directory next to `desired-state.
 | `config/alerts.yaml` | No (loader skips if missing) | **Default:** use the sample (routing + destinations). Without it, drift is still evaluated but **not delivered** anywhere. |
 | `config/credentials.yaml` | No | Named credential sets for device authentication references |
 | `config/maintenance.yaml` | No | Scheduled maintenance windows (currently loaded but not yet enforced for alert suppression) |
-| `config/devices/*.yaml` | No | Legacy location for per-device split YAML (still loaded) |
-| `data/devices/*.yaml` | No | **Writable** split device files (discovery wizard and API write here when `/config` is mounted read-only) |
+| `config/devices/*.yaml` | No | Split device YAML loaded from **`config/devices/`**; dashboard/API edits and deletes persist here (default compose mount is RW) |
+| `data/devices/*.yaml` | No | Split files created by **Add device** in the wizard (always written under **`data/devices/`**) |
 
 `desired-state.yaml` does not load an `alerts:` block; alert routing lives in `alerts.yaml`.
 

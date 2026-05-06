@@ -14,7 +14,9 @@ services:
     # Use host networking so NetSpec can reach devices on management VLANs.
     network_mode: host
     volumes:
-      - ${NETSPEC_DATA_DIR:-/opt/netspec}/config:/config:ro
+      # Read-write so dashboard/API can persist split devices and desired-state edits under /config.
+      # (Mounting :ro breaks deletes and patches to config/devices/*.yaml with "read-only file system".)
+      - ${NETSPEC_DATA_DIR:-/opt/netspec}/config:/config
       - ${NETSPEC_DATA_DIR:-/opt/netspec}/data:/data
     # Pass through variables named in alerts.channels.*.url_env (e.g. APPRISE_SLACK_WEBHOOK).
     # Compose only interpolates ${VAR} keys that appear in `environment:` unless you also
