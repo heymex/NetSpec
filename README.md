@@ -11,12 +11,25 @@ NetSpec is a declarative network monitor: you define how the network *should* be
 - Docker and Docker Compose v2 (`docker compose`)
 - Cisco IOS-XE devices using **dial-out MDT** (grpc-tcp) into the repo’s Telegraf path, plus SNMP for targeted confirmation
 
-### Configuration
+### Run a sample stack (recommended first boot)
 
-1. Edit `config/desired-state.yaml` with global settings.
-2. Define devices either in `config/desired-state.yaml` (monolithic) or as split files in `config/devices/*.yaml`.
-3. Edit `config/alerts.yaml` for channels and routing (the repo ships a sample; **`./scripts/setup-netspec.sh`** installs it — `alerts:` does not belong in `desired-state.yaml` and is not loaded from there).
-4. Copy `.env.example` to `.env` and update with your credentials:
+From a **repo checkout** (so `./tools/sidecar` exists next to `docker-compose.yml`):
+
+```bash
+./scripts/setup-netspec.sh
+docker compose pull && docker compose up -d
+```
+
+Then open **`http://127.0.0.1:8088`** (sample devices + alerting in the YAML; SNMP/Slack wiring is still yours to fix). **`docker compose up` alone is not sufficient**: the compose file mounts **`${NETSPEC_DATA_DIR}/config`**; that tree must contain **`desired-state.yaml`**, **`alerts.yaml`**, and **split devices under `config/devices/*.yaml`** because the shipped **`desired-state.yaml` uses `devices: {}`**. The setup script installs all of that, bumps NetSpec ingest to **57501** (Telegraf keeps **57500**), aligns **`.env`**, and fixes **mdt-sidecar** ownership for uid **999**.
+
+If **`NETSPEC_DATA_DIR` is already set in `.env`** (Komodo/Portainer-style), `./scripts/setup-netspec.sh` uses that path automatically — no **`--data-dir`** required.
+
+### Configuration (beyond the sample)
+
+1. Edit `${NETSPEC_DATA_DIR}/config/desired-state.yaml` with global settings (after setup), or rely on defaults.
+2. Define devices either in `desired-state.yaml` (monolithic) or as split files in `${NETSPEC_DATA_DIR}/config/devices/*.yaml`.
+3. Edit `${NETSPEC_DATA_DIR}/config/alerts.yaml` for channels and routing (the repo ships a sample; **`./scripts/setup-netspec.sh`** installs it — `alerts:` does not belong in `desired-state.yaml` and is not loaded from there).
+4. Ensure `.env` next to compose has your secrets ( **`./scripts/setup-netspec.sh`** creates it from **`.env.example`** when missing):
 
 ```bash
 cp .env.example .env
@@ -39,25 +52,24 @@ The `.env` file should contain:
 
 **Host / local binary:** When you run `./netspec -config /path/to/config/desired-state.yaml`, NetSpec loads environment defaults from **`/path/to/config/.env`** and **`/path/to/config/netspec.env`** if present (same directory as `desired-state.yaml`). Existing process environment variables are **not** overridden. Docker Compose still reads `.env` from the **project directory** (next to `docker-compose.yml`) for `${VAR}` interpolation. The **`netspec-netspec`** service also declares **`env_file: .env`** (optional if the file is missing) so secrets such as **`APPRISE_SLACK_WEBHOOK`** are passed into the container—not only variables listed under `environment:`.
 
-`config/desired-state.yaml` sets `global.telemetry_mode`:
-- **`telemetry_ingest_push`** (default in the sample file): line-delimited JSON push ingest on `global.ingest` (default `0.0.0.0:57500`) with targeted SNMP confirmation per event — Telegraf + **`mdt-translator`** decode IOS-XE dial-out into that ingest.
+`${NETSPEC_DATA_DIR}/config/desired-state.yaml` sets `global.telemetry_mode`:
+- **`telemetry_ingest_push`** (default in the sample file): line-delimited JSON push ingest on **`global.ingest`** ( **`./scripts/setup-netspec.sh` sets NetSpec to `57501`** so Telegraf can keep **`57500`** ) with targeted SNMP confirmation per event — Telegraf + **`mdt-translator`** decode IOS-XE dial-out into that ingest.
 - **`snmp_validate_only`**: SNMP validation only; no push ingest listener.
 
 In `telemetry_ingest_push` mode you can optionally enable `global.snmp.telemetry_fallback_enabled` to run periodic full-device SNMP polling as a safety net when telemetry is missing. This fallback can significantly increase SNMP/device load and slow large deployments; use conservative intervals (for example `5m` or longer).
 
 ### First-time setup script
 
-From the repo root, run **`./scripts/setup-netspec.sh`** (use `sudo` if `/opt/netspec` should own persistent data). It:
+From the repo root, run **`./scripts/setup-netspec.sh`** (no flags needed; use **`sudo`** if the data directory requires root).
 
-1. Creates **`NETSPEC_DATA_DIR`** (`config/`, `data/`, `mdt-sidecar/`, `apprise-config/`).
-2. Seeds **`config/desired-state.yaml`** and **`config/alerts.yaml`** from the repository samples (drift evaluation + alert routing). Skips existing files unless **`--force`**.
-3. Creates or updates **`.env`**: copies from **`.env.example`** when missing; always sets **`NETSPEC_DATA_DIR`** and **`SNMP_COMMUNITY`**.
+1. **`NETSPEC_DATA_DIR`**: taken from **`.env`** if present, otherwise **`/opt/netspec`** or **`~/netspec-data`**.
+2. Creates **`NETSPEC_DATA_DIR`** (`config/`, `config/devices/`, `data/`, `mdt-sidecar/`, `apprise-config/`).
+3. Seeds **`config/desired-state.yaml`** and **`config/alerts.yaml`**, and **always** installs sample split devices (**`config/devices/*.yaml`**) so NetSpec starts with **`devices: {}`** in **`desired-state`**. Skips replacing existing top-level YAML unless **`--force`**.
+4. Creates or updates **`.env`**: copies from **`.env.example`** when missing; syncs **`NETSPEC_DATA_DIR`**, **`SNMP_COMMUNITY`**, **`NETSPEC_INGEST_PORT=57501`**, and attempts **mdt-sidecar** **`chown`** for Telegraf (tries passwordless **`sudo`** if needed).
 
-Non-interactive example:
+Optional: **`--interactive`** to prompt for paths; **`--data-dir`** only when you want to override **`.env`**.
 
-`sudo ./scripts/setup-netspec.sh --data-dir /opt/netspec --non-interactive`
-
-Then edit devices and notification destinations, **`docker compose pull`** (if using GHCR), **`docker compose up -d`**, and reload after YAML edits (`POST /api/reload` or the dashboard).
+Then edit real devices and notification destinations, **`docker compose pull`** (if using GHCR), **`docker compose up -d`**, and reload after YAML edits (`POST /api/reload` or the dashboard).
 
 ### Running
 
