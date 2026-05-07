@@ -1,6 +1,6 @@
 # NetSpec: Declarative Network State Monitor
 
-**Current pre-release: [v2.0.0-beta.1](https://github.com/heymex/NetSpec/releases/tag/v2.0.0-beta.1)** ([CHANGELOG](CHANGELOG.md), [release notes](docs/RELEASE_NOTES.md)) — pin **`NETSPEC_IMAGE_TAG=v2.0.0-beta.1`** for this beta; **v1.0.0** remains the last stable line ([tag](https://github.com/heymex/NetSpec/releases/tag/v1.0.0)). Use **`latest`** only to track `main`.
+**Current pre-release: [v2.0.0-beta.2](https://github.com/heymex/NetSpec/releases/tag/v2.0.0-beta.2)** ([CHANGELOG](CHANGELOG.md), [release notes](docs/RELEASE_NOTES.md)) — pin **`NETSPEC_IMAGE_TAG=v2.0.0-beta.2`** for this beta; **v1.0.0** remains the last stable line ([tag](https://github.com/heymex/NetSpec/releases/tag/v1.0.0)). Use **`latest`** only to track `main`.
 
 NetSpec is a declarative network monitor: you define how the network *should* behave, and NetSpec **evaluates reality against that desired state** and **raises alerts** when they diverge (SNMP, telemetry ingest, Apprise-backed delivery). It is built for environments where *state correctness matters more than metrics*.
 
@@ -48,7 +48,7 @@ The `.env` file should contain:
 - `NETSPEC_ADMIN_PASSWORD_HASH` / `NETSPEC_SESSION_SECRET` - optional **browser session** login for the web UI and API HTML routes (see **`.env.example`**; use `netspec hash-password` or CI image entrypoint). Omit both (or leave hash empty) for open access.
 - `NETSPEC_API_TOKEN` - optional **bearer token** for scripted API access alongside session cookies
 - `MDT_ALLOWED_DEVICES` - optional comma-separated device-name allowlist for the translator sidecar
-- `NETSPEC_IMAGE_TAG` - optional container image tag override (**`v2.0.0-beta.1`**, **`v1.0.0`**, or **`latest`**)
+- `NETSPEC_IMAGE_TAG` - optional container image tag override (**`v2.0.0-beta.2`**, **`v2.0.0-beta.1`**, **`v1.0.0`**, or **`latest`**)
 - `NETSPEC_*`, `APPRISE_*`, `TELEGRAF_*`, `TRANSLATOR_*` runtime knobs - per-service `*_LOG_MAX_SIZE`, `*_LOG_MAX_FILE`, `*_MEM_LIMIT`, `*_CPU_LIMIT`, `*_PIDS_LIMIT` (see `.env.example`)
 - Other optional settings as documented in `.env.example`
 
@@ -96,7 +96,7 @@ All services use Docker log rotation via the `json-file` driver with per-service
 
 To pin a specific image tag instead of `latest`:
 ```bash
-NETSPEC_IMAGE_TAG=v2.0.0-beta.1 docker compose up -d
+NETSPEC_IMAGE_TAG=v2.0.0-beta.2 docker compose up -d
 ```
 
 ### Komodo, Portainer, and similar UIs
@@ -180,7 +180,7 @@ With the default **bridge** stack, set **`APPRISE_API_URL=http://netspec-apprise
 
 ## Features
 
-As of **v2.0.0-beta.1**, highlights include:
+As of **v2.0.0-beta.2**, highlights include:
 
 - ✅ SNMP validator with targeted polling
 - ✅ Interface state evaluation (including **port-channel** members, `member_policy` thresholds, and high-speed interface alias normalization for SNMP vs. telemetry name drift)
@@ -199,7 +199,8 @@ NetSpec includes a built-in web UI accessible at `http://localhost:8088` (or you
 
 ### Features
 
-- **Dashboard** - Overview of devices, interfaces, active alerts, push telemetry **events/sec**, and a **host overview** honeycomb (up to 64 devices; each cell reflects the worse of **active alerts** and **SNMP reachability** so unreachable or not-yet-polled devices are not shown as healthy; refreshes periodically)
+- **Dashboard** - Overview of devices, interfaces, active alerts, push telemetry **ingest rate (last 10m sparkline)**, and a **host overview** honeycomb (up to 64 devices; each cell reflects the worse of **active alerts** and **SNMP reachability** so unreachable or not-yet-polled devices are not shown as healthy; refreshes periodically)
+- **NOC View (`/noc`)** - High-density operational view that prioritizes fast triage with fleet matrix, host overview, and compact summary counters
 - **Device List** - All monitored devices with interface counts
 - **Active Alerts** - Current firing alerts with severity indicators (sorted by severity)
 - **Live Logs** - Auto-refreshing log stream (newest entries first; periodic refresh)
@@ -226,7 +227,8 @@ NetSpec includes a built-in web UI accessible at `http://localhost:8088` (or you
 | `/api/devices/{name}/interfaces/{iface}` | PATCH | Update interface policy fields (`monitor`, `desired_state`, `admin_state`, `description`, `alert_severity`, etc.) |
 | `/api/reload` | POST | Reload configuration |
 | `/api/notifications/test` | POST | Optional JSON body `{"channels":["name",...]}`; send synthetic Apprise **warning** to those channels or to **all** when omitted (`all_ok`, per-channel `outcomes` in response; **502**/**503** on prerequisites errors) |
-| `/api/telemetry/stats` | GET | Push ingest counters, **events/sec**, last event time, top talkers, and unknown devices (with wizard URLs; telemetry source IP can prefill the wizard when the device is not in config yet) |
+| `/api/telemetry/stats` | GET | Push ingest counters, **10-minute ingest-rate points**, listener stats, last event time, top talkers, and unknown devices (with wizard URLs; telemetry source IP can prefill the wizard when the device is not in config yet) |
+| `/noc` | GET | NOC wallboard-style high-density operational view |
 | `/api/discovery/probe` | POST | SNMP probe (wizard) |
 | `/api/discovery/walk` | POST | SNMP interface walk |
 | `/api/discovery/commit` | POST | Write discovery selection to YAML (`sync_discovered_interfaces` on patch = full SNMP walk snapshot: unchecked interfaces are removed from desired state for names present on the walk) |
@@ -339,8 +341,8 @@ docker pull ghcr.io/OWNER/REPO:latest
 docker pull ghcr.io/OWNER/REPO-mdt-translator:latest
 
 # Or pin a semver tag (stable v1.0.0 or pre-release beta)
-docker pull ghcr.io/OWNER/REPO:v2.0.0-beta.1
-docker pull ghcr.io/OWNER/REPO-mdt-translator:v2.0.0-beta.1
+docker pull ghcr.io/OWNER/REPO:v2.0.0-beta.2
+docker pull ghcr.io/OWNER/REPO-mdt-translator:v2.0.0-beta.2
 ```
 
 ## Notes

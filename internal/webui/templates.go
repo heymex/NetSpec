@@ -721,8 +721,6 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
             </div>
         </header>
 
-        {{template "snmp-banner-stack" .}}
-
         <div style="display:grid;grid-template-columns:2.2fr 1fr;gap:0.9rem;align-items:start;">
             <div class="card">
                 <div class="card-header">
@@ -759,6 +757,12 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
             </div>
             <div style="display:grid;gap:0.9rem;">
                 <div class="card">
+                    <div class="card-header"><span class="card-title">⬡ Host Overview</span></div>
+                    <div class="card-body">
+                        <div id="hex-overview-root">{{.HexMapSVG}}</div>
+                    </div>
+                </div>
+                <div class="card">
                     <div class="card-header"><span class="card-title">📈 Summary</span></div>
                     <div class="card-body">
                         <div class="telemetry-mini">
@@ -767,12 +771,6 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                             <div class="telemetry-pill"><div class="k">Alerts</div><div class="v">{{.AlertCount}}</div></div>
                             <div class="telemetry-pill"><div class="k">Uptime</div><div class="v">{{.Uptime}}</div></div>
                         </div>
-                    </div>
-                </div>
-                <div class="card">
-                    <div class="card-header"><span class="card-title">⬡ Host Overview</span></div>
-                    <div class="card-body">
-                        <div id="hex-overview-root">{{.HexMapSVG}}</div>
                     </div>
                 </div>
             </div>
