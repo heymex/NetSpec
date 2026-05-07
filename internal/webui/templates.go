@@ -1973,6 +1973,28 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
 
         <div class="card">
             <div class="card-header">
+                <span class="card-title">📋 Device Logs</span>
+                <button class="btn btn-secondary" onclick="document.querySelector('.log-container').scrollTop = document.querySelector('.log-container').scrollHeight">↓ Latest</button>
+            </div>
+            <div class="card-body" style="padding: 0;">
+                <div class="log-container">
+                    {{range .Device.Logs}}
+                    <div class="log-entry log-{{.Level}}">
+                        <span class="log-time" data-local-ts="{{.Timestamp.Format "2006-01-02T15:04:05Z07:00"}}" data-local-ts-mode="time"></span>
+                        <span class="log-level">{{.Level}}</span>
+                        <span class="log-message">{{.Message}}</span>
+                    </div>
+                    {{else}}
+                    <div style="padding: 2rem; text-align: center; color: var(--text-muted);">
+                        No logs available
+                    </div>
+                    {{end}}
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
                 <span class="card-title">🔌 Monitored Interfaces</span>
                 <span style="font-size: 0.8125rem; color: var(--text-secondary);">{{len .Device.Interfaces}} interfaces</span>
             </div>
@@ -2033,28 +2055,6 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                     No interfaces configured
                 </div>
                 {{end}}
-            </div>
-        </div>
-
-        <div class="card">
-            <div class="card-header">
-                <span class="card-title">📋 Device Logs</span>
-                <button class="btn btn-secondary" onclick="document.querySelector('.log-container').scrollTop = document.querySelector('.log-container').scrollHeight">↓ Latest</button>
-            </div>
-            <div class="card-body" style="padding: 0;">
-                <div class="log-container">
-                    {{range .Device.Logs}}
-                    <div class="log-entry log-{{.Level}}">
-                        <span class="log-time" data-local-ts="{{.Timestamp.Format "2006-01-02T15:04:05Z07:00"}}" data-local-ts-mode="time"></span>
-                        <span class="log-level">{{.Level}}</span>
-                        <span class="log-message">{{.Message}}</span>
-                    </div>
-                    {{else}}
-                    <div style="padding: 2rem; text-align: center; color: var(--text-muted);">
-                        No logs available
-                    </div>
-                    {{end}}
-                </div>
             </div>
         </div>
     </div>
