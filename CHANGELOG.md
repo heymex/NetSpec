@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented here. Release tags follow [Semantic Versioning](https://semver.org/).
 
+## [2.0.0] — 2026-05-07
+
+Stable release of the 2.x line, promoting the beta series with bridge-first deployment, hardened ingest, improved operations UX, and expanded operator documentation. Images publish as **`ghcr.io/heymex/netspec:v2.0.0`** and **`ghcr.io/heymex/netspec-mdt-translator:v2.0.0`**.
+
+### Included in 2.0.0
+
+- Bridge-first Docker Compose deployment model with updated migration/runbook guidance.
+- Optional web/API authentication (`NETSPEC_ADMIN_PASSWORD_HASH`, `NETSPEC_SESSION_SECRET`, optional `NETSPEC_API_TOKEN`).
+- Multi-port telemetry ingest with per-listener source tagging.
+- Discovery wizard re-walk/sync behavior for existing devices.
+- Dashboard ingest-rate sparkline (last 10m) and dedicated `/noc` high-density operations view.
+- Sticky source-aware device navigation (`/` vs `/noc`) for drill-down/back flow.
+- Dedicated operator guide for port-channel policy and evaluator behavior: `docs/PORT_CHANNEL_EVALUATOR_GUIDE.md`.
+
 ## [2.0.0-beta.3] — 2026-05-07
 
 Pre-release follow-up focused on navigation continuity and operator documentation depth. Images publish as **`ghcr.io/heymex/netspec:v2.0.0-beta.3`** and **`ghcr.io/heymex/netspec-mdt-translator:v2.0.0-beta.3`** on tag CI.
@@ -54,6 +68,7 @@ See also: [Migration: bridge networking and authentication](docs/MIGRATION_BRIDG
 - **CI**: always publish Docker images on **tag** pushes (`v*`), including docs-only tags.
 - **Ops**: **`scripts/validate-netspec-stack.sh`** preflight, telemetry **coverage diagnostics** API/page, **`setup-netspec.sh`** / README cleanup, **`mdt-sidecar`** ownership warnings, MDT grpc-tcp vs grpc-tls troubleshooting note.
 
+[2.0.0]: https://github.com/heymex/NetSpec/releases/tag/v2.0.0
 [2.0.0-beta.3]: https://github.com/heymex/NetSpec/releases/tag/v2.0.0-beta.3
 [2.0.0-beta.2]: https://github.com/heymex/NetSpec/releases/tag/v2.0.0-beta.2
 [2.0.0-beta.1]: https://github.com/heymex/NetSpec/releases/tag/v2.0.0-beta.1

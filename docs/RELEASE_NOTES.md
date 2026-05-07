@@ -2,6 +2,33 @@
 
 The authoritative changelog is [**CHANGELOG.md**](../CHANGELOG.md) (semver, dates, migration pointers).
 
+## v2.0.0 — 2026-05-07
+
+NetSpec **2.0.0** is the first stable release of the 2.x line. It promotes the beta series to production-ready status with bridge-first deployment defaults, improved NOC/operator UX, and complete port-channel evaluator guidance.
+
+### Highlights
+
+- Bridge-first Compose deployment and migration guidance from v1.x.
+- Optional web/API auth controls (`NETSPEC_ADMIN_PASSWORD_HASH`, `NETSPEC_SESSION_SECRET`, optional `NETSPEC_API_TOKEN`).
+- Multi-port push ingest with per-listener source tagging.
+- Discovery wizard re-walk/sync for existing devices.
+- Dashboard 10-minute ingest sparkline and `/noc` high-density operations view.
+- Sticky drill-down return context (`/` vs `/noc`) on device pages.
+- New operator document: **[PORT_CHANNEL_EVALUATOR_GUIDE.md](PORT_CHANNEL_EVALUATOR_GUIDE.md)**.
+
+### Upgrade path (from v2.0.0-beta.3)
+
+1. Pull `v2.0.0` images.
+2. `docker compose up -d` with your existing compose/env.
+3. Validate dashboard, NOC view, telemetry ingest trends, and drill-down navigation behavior.
+
+### Image tags
+
+- `ghcr.io/heymex/netspec:v2.0.0`
+- `ghcr.io/heymex/netspec-mdt-translator:v2.0.0`
+
+---
+
 ## v2.0.0-beta.3 — 2026-05-07
 
 NetSpec **2.0.0-beta.3** focuses on operator flow polish and clearer port-channel guidance.

@@ -1,6 +1,6 @@
 # NetSpec: Declarative Network State Monitor
 
-**Current pre-release: [v2.0.0-beta.3](https://github.com/heymex/NetSpec/releases/tag/v2.0.0-beta.3)** ([CHANGELOG](CHANGELOG.md), [release notes](docs/RELEASE_NOTES.md)) — pin **`NETSPEC_IMAGE_TAG=v2.0.0-beta.3`** for this beta; **v1.0.0** remains the last stable line ([tag](https://github.com/heymex/NetSpec/releases/tag/v1.0.0)). Use **`latest`** only to track `main`.
+**Current stable release: [v2.0.0](https://github.com/heymex/NetSpec/releases/tag/v2.0.0)** ([CHANGELOG](CHANGELOG.md), [release notes](docs/RELEASE_NOTES.md)) — pin **`NETSPEC_IMAGE_TAG=v2.0.0`** for stable deploys. Use **`latest`** only to track `main`.
 
 NetSpec is a declarative network monitor: you define how the network *should* behave, and NetSpec **evaluates reality against that desired state** and **raises alerts** when they diverge (SNMP, telemetry ingest, Apprise-backed delivery). It is built for environments where *state correctness matters more than metrics*.
 
@@ -48,7 +48,7 @@ The `.env` file should contain:
 - `NETSPEC_ADMIN_PASSWORD_HASH` / `NETSPEC_SESSION_SECRET` - optional **browser session** login for the web UI and API HTML routes (see **`.env.example`**; use `netspec hash-password` or CI image entrypoint). Omit both (or leave hash empty) for open access.
 - `NETSPEC_API_TOKEN` - optional **bearer token** for scripted API access alongside session cookies
 - `MDT_ALLOWED_DEVICES` - optional comma-separated device-name allowlist for the translator sidecar
-- `NETSPEC_IMAGE_TAG` - optional container image tag override (**`v2.0.0-beta.3`**, **`v2.0.0-beta.2`**, **`v2.0.0-beta.1`**, **`v1.0.0`**, or **`latest`**)
+- `NETSPEC_IMAGE_TAG` - optional container image tag override (**`v2.0.0`**, **`v2.0.0-beta.3`**, **`v2.0.0-beta.2`**, **`v2.0.0-beta.1`**, **`v1.0.0`**, or **`latest`**)
 - `NETSPEC_*`, `APPRISE_*`, `TELEGRAF_*`, `TRANSLATOR_*` runtime knobs - per-service `*_LOG_MAX_SIZE`, `*_LOG_MAX_FILE`, `*_MEM_LIMIT`, `*_CPU_LIMIT`, `*_PIDS_LIMIT` (see `.env.example`)
 - Other optional settings as documented in `.env.example`
 
