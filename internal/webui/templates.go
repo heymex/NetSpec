@@ -697,6 +697,90 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
 {{end}}
 
 {{define "content"}}
+        {{if .NOCView}}
+        <header>
+            <div class="logo">
+                <div class="logo-icon">N</div>
+                <div>
+                    <h1>NetSpec NOC View</h1>
+                    <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem;">
+                        {{if .Version}}{{.Version}}{{if ne .Commit "unknown"}} <span style="color: var(--text-muted);">({{.Commit | printf "%.7s"}})</span>{{end}}{{else}}dev{{end}}
+                    </div>
+                </div>
+            </div>
+            <div class="header-actions">
+                <div class="status-badge">
+                    <span class="status-dot"></span>
+                    Running
+                </div>
+                <a class="btn btn-secondary" href="/">Dashboard</a>
+                <a class="btn btn-secondary" href="/api-browser">API</a>
+                <a class="btn btn-secondary" href="/noc">NOC View</a>
+                <a class="btn btn-secondary" href="/diagnostics">Diagnostics</a>
+                <button class="btn btn-primary" onclick="reloadConfig()">↻ Reload Config</button>
+            </div>
+        </header>
+
+        {{template "snmp-banner-stack" .}}
+
+        <div style="display:grid;grid-template-columns:2.2fr 1fr;gap:0.9rem;align-items:start;">
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">🖥️ Fleet Matrix</span>
+                </div>
+                <div class="card-body no-padding">
+                    <div style="max-height:360px;overflow:auto;">
+                        <table style="width:100%;border-collapse:collapse;font-size:0.82rem;">
+                            <thead>
+                                <tr style="background:var(--bg-tertiary);">
+                                    <th style="padding:0.5rem;text-align:left;border-bottom:1px solid var(--border-color);">Device</th>
+                                    <th style="padding:0.5rem;text-align:left;border-bottom:1px solid var(--border-color);">Address</th>
+                                    <th style="padding:0.5rem;text-align:right;border-bottom:1px solid var(--border-color);">Ifaces</th>
+                                    <th style="padding:0.5rem;text-align:right;border-bottom:1px solid var(--border-color);">Alerts</th>
+                                    <th style="padding:0.5rem;text-align:left;border-bottom:1px solid var(--border-color);">Worst</th>
+                                    <th style="padding:0.5rem;text-align:left;border-bottom:1px solid var(--border-color);">SNMP</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {{range .NOCRows}}
+                                <tr onclick="window.location.href='/device/{{.Name}}'" style="cursor:pointer;border-bottom:1px solid var(--border-color);">
+                                    <td style="padding:0.45rem 0.5rem;font-weight:600;">{{.Name}}</td>
+                                    <td style="padding:0.45rem 0.5rem;color:var(--text-secondary);">{{.Address}}</td>
+                                    <td style="padding:0.45rem 0.5rem;text-align:right;">{{.InterfaceCount}}</td>
+                                    <td style="padding:0.45rem 0.5rem;text-align:right;{{if gt .AlertCount 0}}color:var(--accent-red);font-weight:600;{{else}}color:var(--accent-green);{{end}}">{{.AlertCount}}</td>
+                                    <td style="padding:0.45rem 0.5rem;">{{.WorstSeverity}}</td>
+                                    <td style="padding:0.45rem 0.5rem;">{{.SNMPReach}}</td>
+                                </tr>
+                                {{end}}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            <div style="display:grid;gap:0.9rem;">
+                <div class="card">
+                    <div class="card-header"><span class="card-title">📈 Summary</span></div>
+                    <div class="card-body">
+                        <div class="telemetry-mini">
+                            <div class="telemetry-pill"><div class="k">Devices</div><div class="v">{{.DeviceCount}}</div></div>
+                            <div class="telemetry-pill"><div class="k">Interfaces</div><div class="v">{{.InterfaceCount}}</div></div>
+                            <div class="telemetry-pill"><div class="k">Alerts</div><div class="v">{{.AlertCount}}</div></div>
+                            <div class="telemetry-pill"><div class="k">Uptime</div><div class="v">{{.Uptime}}</div></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header"><span class="card-title">⬡ Host Overview</span></div>
+                    <div class="card-body">
+                        <div id="hex-overview-root">{{.HexMapSVG}}</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <script>
+            setTimeout(function () { window.location.reload(); }, 15000);
+        </script>
+        {{else}}
         <header>
             <div class="logo">
                 <div class="logo-icon">N</div>
@@ -1044,6 +1128,7 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
             refreshHexOverview();
         })();
         </script>
+        {{end}}
 {{end}}
 
 {{define "snmp-banner-stack"}}
