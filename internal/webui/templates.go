@@ -819,7 +819,10 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                             <div class="telemetry-pill"><div class="k">Received</div><div class="v">{{.Telemetry.Received}}</div></div>
                             <div class="telemetry-pill"><div class="k">Accepted</div><div class="v">{{.Telemetry.Accepted}}</div></div>
                             <div class="telemetry-pill"><div class="k">Rejected</div><div class="v">{{add .Telemetry.RejectedInvalidJSON .Telemetry.RejectedAuth .Telemetry.RejectedMissing}}</div></div>
-                            <div class="telemetry-pill"><div class="k">Events/Sec</div><div class="v">{{printf "%.1f" .Telemetry.EventsPerSecond}}</div></div>
+                            <div class="telemetry-pill" style="min-width:260px; flex: 2 1 260px;">
+                                <div class="k">Ingest rate (last 10m)</div>
+                                <div class="v" style="line-height:1; margin-top: 0.2rem;">{{.TelemetrySparkline}}</div>
+                            </div>
                         </div>
                         {{if .Telemetry.Listeners}}
                         <div style="margin-top:0.45rem; font-size:0.74rem; color: var(--text-secondary); line-height:1.35;">

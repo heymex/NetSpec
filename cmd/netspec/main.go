@@ -209,70 +209,70 @@ func main() {
 		}
 
 		onEvent := func(event collector.PushTelemetryEvent) {
-				deviceName, deviceCfg, ok := resolveDeviceForEvent(cfg, event)
-				if !ok {
-					unknownTelemetryMu.Lock()
-					unknownTelemetryCount[event.Device]++
-					unknownTelemetryLast[event.Device] = time.Now()
-					if addr := eventAddressHint(event); addr != "" {
-						unknownTelemetryAddress[event.Device] = addr
-					}
-					unknownTelemetryMu.Unlock()
-					logger.Warn().Str("device", event.Device).Msg("Ignoring push telemetry for unknown device")
-					return
-				}
+			deviceName, deviceCfg, ok := resolveDeviceForEvent(cfg, event)
+			if !ok {
 				unknownTelemetryMu.Lock()
-				delete(unknownTelemetryCount, event.Device)
-				delete(unknownTelemetryLast, event.Device)
-				delete(unknownTelemetryAddress, event.Device)
-				delete(unknownTelemetryCount, deviceName)
-				delete(unknownTelemetryLast, deviceName)
-				delete(unknownTelemetryAddress, deviceName)
-				if addr := strings.TrimSpace(deviceCfg.Address); addr != "" {
-					delete(unknownTelemetryCount, addr)
-					delete(unknownTelemetryLast, addr)
-					delete(unknownTelemetryAddress, addr)
+				unknownTelemetryCount[event.Device]++
+				unknownTelemetryLast[event.Device] = time.Now()
+				if addr := eventAddressHint(event); addr != "" {
+					unknownTelemetryAddress[event.Device] = addr
 				}
 				unknownTelemetryMu.Unlock()
+				logger.Warn().Str("device", event.Device).Msg("Ignoring push telemetry for unknown device")
+				return
+			}
+			unknownTelemetryMu.Lock()
+			delete(unknownTelemetryCount, event.Device)
+			delete(unknownTelemetryLast, event.Device)
+			delete(unknownTelemetryAddress, event.Device)
+			delete(unknownTelemetryCount, deviceName)
+			delete(unknownTelemetryLast, deviceName)
+			delete(unknownTelemetryAddress, deviceName)
+			if addr := strings.TrimSpace(deviceCfg.Address); addr != "" {
+				delete(unknownTelemetryCount, addr)
+				delete(unknownTelemetryLast, addr)
+				delete(unknownTelemetryAddress, addr)
+			}
+			unknownTelemetryMu.Unlock()
 
-				matchedIface, ifaceCfg, ok := resolveInterfaceConfig(deviceCfg.Interfaces, event.Interface)
-				if !ok {
-					logger.Debug().
-						Str("device", deviceName).
-						Str("interface", event.Interface).
-						Msg("Ignoring push telemetry for untracked interface")
-					return
-				}
+			matchedIface, ifaceCfg, ok := resolveInterfaceConfig(deviceCfg.Interfaces, event.Interface)
+			if !ok {
+				logger.Debug().
+					Str("device", deviceName).
+					Str("interface", event.Interface).
+					Msg("Ignoring push telemetry for untracked interface")
+				return
+			}
 
-				snapshot, err := validator.PollInterface(deviceName, deviceCfg, matchedIface, ifaceCfg)
-				if err != nil {
-					logger.Warn().
-						Err(err).
-						Str("device", deviceName).
-						Str("interface", matchedIface).
-						Msg("SNMP validation failed for push event; using ingested status")
-					snapshot = collector.InterfaceSnapshot{
-						Interface:   matchedIface,
-						OperStatus:  event.OperStatus,
-						AdminStatus: event.AdminStatus,
-					}
-				} else {
-					reachTracker.RecordInterfaceSNMPSuccess(deviceName)
-					alertEngine.SyncSNMPReachability(deviceName, true, "")
+			snapshot, err := validator.PollInterface(deviceName, deviceCfg, matchedIface, ifaceCfg)
+			if err != nil {
+				logger.Warn().
+					Err(err).
+					Str("device", deviceName).
+					Str("interface", matchedIface).
+					Msg("SNMP validation failed for push event; using ingested status")
+				snapshot = collector.InterfaceSnapshot{
+					Interface:   matchedIface,
+					OperStatus:  event.OperStatus,
+					AdminStatus: event.AdminStatus,
 				}
+			} else {
+				reachTracker.RecordInterfaceSNMPSuccess(deviceName)
+				alertEngine.SyncSNMPReachability(deviceName, true, "")
+			}
 
-				var validationSource string
-				if err != nil {
-					// Could not SNMP-confirm this push-driven update; evaluate from telemetry snapshot only.
-					validationSource = "telemetry"
-				} else {
-					// Normal push path: both telemetry (event) and SNMP confirmation succeeded — record both in the UI/runtime cache.
-					validationSource = "push_snmp"
-				}
-				changes := eval.EvaluateInterfaceSnapshotWithSource(deviceName, snapshot.Interface, snapshot.OperStatus, snapshot.AdminStatus, validationSource)
-				for _, change := range changes {
-					alertEngine.ProcessStateChange(change)
-				}
+			var validationSource string
+			if err != nil {
+				// Could not SNMP-confirm this push-driven update; evaluate from telemetry snapshot only.
+				validationSource = "telemetry"
+			} else {
+				// Normal push path: both telemetry (event) and SNMP confirmation succeeded — record both in the UI/runtime cache.
+				validationSource = "push_snmp"
+			}
+			changes := eval.EvaluateInterfaceSnapshotWithSource(deviceName, snapshot.Interface, snapshot.OperStatus, snapshot.AdminStatus, validationSource)
+			for _, change := range changes {
+				alertEngine.ProcessStateChange(change)
+			}
 		}
 
 		for _, def := range listenerDefs {
@@ -421,6 +421,7 @@ func main() {
 			stats.RejectedMissing = merged.RejectedMissing
 			stats.LastEventAt = merged.LastEventAt
 			stats.EventsPerSecond = merged.EventsPerSecond
+			stats.RecentPerSecond = merged.RecentPerSecond
 			stats.TopDevices = collector.TopDeviceStats(merged.ByDevice, 10)
 			stats.Listeners = perListener
 		}

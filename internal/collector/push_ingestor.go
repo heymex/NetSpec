@@ -27,28 +27,34 @@ type PushTelemetryEvent struct {
 
 // PushIngestor receives line-delimited JSON telemetry over TCP.
 type PushIngestor struct {
-	listenAddress    string
-	port             uint16
-	sourceTag        string // when non-empty, sets PushTelemetryEvent.Source (pipeline / "sourcetype")
-	authToken        string
-	logger           zerolog.Logger
-	onEvent          func(PushTelemetryEvent)
-	statsMu          sync.Mutex
-	stats            PushIngestorStats
-	eventsBySec      map[int64]uint64
+	listenAddress string
+	port          uint16
+	sourceTag     string // when non-empty, sets PushTelemetryEvent.Source (pipeline / "sourcetype")
+	authToken     string
+	logger        zerolog.Logger
+	onEvent       func(PushTelemetryEvent)
+	statsMu       sync.Mutex
+	stats         PushIngestorStats
+	eventsBySec   map[int64]uint64
 }
 
 type PushIngestorStats struct {
-	Port                uint16 `json:"port,omitempty"`
-	Source              string `json:"source,omitempty"`
-	Received            uint64 `json:"received"`
-	Accepted            uint64 `json:"accepted"`
-	RejectedInvalidJSON uint64 `json:"rejected_invalid_json"`
-	RejectedAuth        uint64 `json:"rejected_auth"`
-	RejectedMissing     uint64 `json:"rejected_missing"`
+	Port                uint16            `json:"port,omitempty"`
+	Source              string            `json:"source,omitempty"`
+	Received            uint64            `json:"received"`
+	Accepted            uint64            `json:"accepted"`
+	RejectedInvalidJSON uint64            `json:"rejected_invalid_json"`
+	RejectedAuth        uint64            `json:"rejected_auth"`
+	RejectedMissing     uint64            `json:"rejected_missing"`
 	ByDevice            map[string]uint64 `json:"by_device,omitempty"`
-	LastEventAt         time.Time           `json:"last_event_at"`
-	EventsPerSecond     float64             `json:"events_per_second"`
+	LastEventAt         time.Time         `json:"last_event_at"`
+	EventsPerSecond     float64           `json:"events_per_second"`
+	RecentPerSecond     []EventRatePoint  `json:"recent_per_second,omitempty"`
+}
+
+type EventRatePoint struct {
+	Timestamp time.Time `json:"timestamp"`
+	Count     uint64    `json:"count"`
 }
 
 type DeviceTelemetryStat struct {
@@ -79,6 +85,7 @@ func AggregatePushIngestorStats(parts []PushIngestorStats) PushIngestorStats {
 	out := PushIngestorStats{
 		ByDevice: make(map[string]uint64),
 	}
+	seriesBySec := make(map[int64]uint64)
 	for _, p := range parts {
 		out.Received += p.Received
 		out.Accepted += p.Accepted
@@ -91,6 +98,24 @@ func AggregatePushIngestorStats(parts []PushIngestorStats) PushIngestorStats {
 		}
 		for d, n := range p.ByDevice {
 			out.ByDevice[d] += n
+		}
+		for _, pt := range p.RecentPerSecond {
+			sec := pt.Timestamp.Unix()
+			seriesBySec[sec] += pt.Count
+		}
+	}
+	if len(seriesBySec) > 0 {
+		secs := make([]int64, 0, len(seriesBySec))
+		for sec := range seriesBySec {
+			secs = append(secs, sec)
+		}
+		sort.Slice(secs, func(i, j int) bool { return secs[i] < secs[j] })
+		out.RecentPerSecond = make([]EventRatePoint, 0, len(secs))
+		for _, sec := range secs {
+			out.RecentPerSecond = append(out.RecentPerSecond, EventRatePoint{
+				Timestamp: time.Unix(sec, 0).UTC(),
+				Count:     seriesBySec[sec],
+			})
 		}
 	}
 	return out
@@ -228,22 +253,32 @@ func (i *PushIngestor) Stats() PushIngestorStats {
 		if age >= 0 && age < 10 {
 			totalRecent += count
 		}
-		if age > 120 {
+		if age > 1200 {
 			delete(i.eventsBySec, sec)
 		}
 	}
 
+	series := make([]EventRatePoint, 0, 600)
+	startSec := nowSec - 599
+	for sec := startSec; sec <= nowSec; sec++ {
+		series = append(series, EventRatePoint{
+			Timestamp: time.Unix(sec, 0).UTC(),
+			Count:     i.eventsBySec[sec],
+		})
+	}
+
 	out := PushIngestorStats{
-		Port:                  i.port,
-		Source:                i.sourceTag,
-		Received:              i.stats.Received,
-		Accepted:              i.stats.Accepted,
-		RejectedInvalidJSON:   i.stats.RejectedInvalidJSON,
-		RejectedAuth:          i.stats.RejectedAuth,
-		RejectedMissing:       i.stats.RejectedMissing,
-		ByDevice:              make(map[string]uint64, len(i.stats.ByDevice)),
-		LastEventAt:           i.stats.LastEventAt,
-		EventsPerSecond:       float64(totalRecent) / 10.0,
+		Port:                i.port,
+		Source:              i.sourceTag,
+		Received:            i.stats.Received,
+		Accepted:            i.stats.Accepted,
+		RejectedInvalidJSON: i.stats.RejectedInvalidJSON,
+		RejectedAuth:        i.stats.RejectedAuth,
+		RejectedMissing:     i.stats.RejectedMissing,
+		ByDevice:            make(map[string]uint64, len(i.stats.ByDevice)),
+		LastEventAt:         i.stats.LastEventAt,
+		EventsPerSecond:     float64(totalRecent) / 10.0,
+		RecentPerSecond:     series,
 	}
 	for k, v := range i.stats.ByDevice {
 		out.ByDevice[k] = v
