@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented here. Release tags follow [Semantic Versioning](https://semver.org/).
 
+## [2.0.0-beta.3] — 2026-05-07
+
+Pre-release follow-up focused on navigation continuity and operator documentation depth. Images publish as **`ghcr.io/heymex/netspec:v2.0.0-beta.3`** and **`ghcr.io/heymex/netspec-mdt-translator:v2.0.0-beta.3`** on tag CI.
+
+### Features
+
+- Added **sticky return context** for device drill-downs, so Back on `/device/{name}` returns to the originating view (`/noc` vs `/`).
+- Added dedicated **port-channel evaluator operations guide**: `docs/PORT_CHANNEL_EVALUATOR_GUIDE.md`.
+
+### Improvements
+
+- Updated release-facing docs to include the new guide and beta.3 tag references.
+
 ## [2.0.0-beta.2] — 2026-05-07
 
 Pre-release follow-up focused on operator UX and dashboard signal quality. Images publish as **`ghcr.io/heymex/netspec:v2.0.0-beta.2`** and **`ghcr.io/heymex/netspec-mdt-translator:v2.0.0-beta.2`** on tag CI.
@@ -41,6 +54,7 @@ See also: [Migration: bridge networking and authentication](docs/MIGRATION_BRIDG
 - **CI**: always publish Docker images on **tag** pushes (`v*`), including docs-only tags.
 - **Ops**: **`scripts/validate-netspec-stack.sh`** preflight, telemetry **coverage diagnostics** API/page, **`setup-netspec.sh`** / README cleanup, **`mdt-sidecar`** ownership warnings, MDT grpc-tcp vs grpc-tls troubleshooting note.
 
+[2.0.0-beta.3]: https://github.com/heymex/NetSpec/releases/tag/v2.0.0-beta.3
 [2.0.0-beta.2]: https://github.com/heymex/NetSpec/releases/tag/v2.0.0-beta.2
 [2.0.0-beta.1]: https://github.com/heymex/NetSpec/releases/tag/v2.0.0-beta.1
 

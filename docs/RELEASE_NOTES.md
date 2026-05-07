@@ -2,6 +2,28 @@
 
 The authoritative changelog is [**CHANGELOG.md**](../CHANGELOG.md) (semver, dates, migration pointers).
 
+## v2.0.0-beta.3 — 2026-05-07
+
+NetSpec **2.0.0-beta.3** focuses on operator flow polish and clearer port-channel guidance.
+
+### Included in beta.3
+
+- Device drill-down now preserves source context so Back returns to **NOC view** when opened from `/noc`, or **Dashboard** when opened from `/`.
+- Added dedicated port-channel operations/evaluator guide: **[PORT_CHANNEL_EVALUATOR_GUIDE.md](PORT_CHANNEL_EVALUATOR_GUIDE.md)**.
+
+### Upgrade path (from v2.0.0-beta.2)
+
+1. Pull beta.3 images.
+2. `docker compose up -d` with your existing compose/env.
+3. Validate device drill-down/back behavior from both `/` and `/noc`.
+
+### Image tags
+
+- `ghcr.io/heymex/netspec:v2.0.0-beta.3`
+- `ghcr.io/heymex/netspec-mdt-translator:v2.0.0-beta.3`
+
+---
+
 ## v2.0.0-beta.2 — 2026-05-07
 
 NetSpec **2.0.0-beta.2** is an operator-focused follow-up to beta.1. It improves dashboard signal quality and introduces a dedicated NOC wallboard view.
