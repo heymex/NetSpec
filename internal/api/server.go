@@ -670,16 +670,28 @@ type PageData struct {
 	BuildDate          string
 	Telemetry          TelemetryStats
 	TelemetrySparkline template.HTML   `json:"-"`
+	NOCView            bool            `json:"-"`
+	NOCRows            []NOCDeviceRow  `json:"-"`
 	HexMapSVG          template.HTML   `json:"-"`
 	SNMPWarnings       []SNMPUIWarning `json:"-"`
 }
 
+type NOCDeviceRow struct {
+	Name           string
+	Address        string
+	InterfaceCount int
+	AlertCount     int
+	WorstSeverity  string
+	SNMPReach      string
+}
+
 // handleWebUI renders the main web interface
 func (s *Server) handleWebUI(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
+	if r.URL.Path != "/" && r.URL.Path != "/noc" {
 		http.NotFound(w, r)
 		return
 	}
+	nocView := r.URL.Path == "/noc"
 
 	s.reloadMu.RLock()
 	cfg := s.config
@@ -702,6 +714,7 @@ func (s *Server) handleWebUI(w http.ResponseWriter, r *http.Request) {
 		Version:   version,
 		Commit:    commit,
 		BuildDate: buildDate,
+		NOCView:   nocView,
 	}
 
 	s.telemetryMu.RLock()
@@ -763,6 +776,47 @@ func (s *Server) handleWebUI(w http.ResponseWriter, r *http.Request) {
 			Entity:   alert.Entity,
 			Severity: alert.Severity,
 			Message:  alert.Message,
+		})
+	}
+	if nocView {
+		alertCounts := make(map[string]int, len(data.Devices))
+		worstSeverity := make(map[string]string, len(data.Devices))
+		for _, a := range data.Alerts {
+			alertCounts[a.Device]++
+			cur, ok := worstSeverity[a.Device]
+			if !ok || alertSeverityRank(a.Severity) < alertSeverityRank(cur) {
+				worstSeverity[a.Device] = a.Severity
+			}
+		}
+		tracker := s.snmpReachTracker()
+		for _, d := range data.Devices {
+			reach := collector.SNMPReachUnknown
+			if tracker != nil {
+				reach = tracker.Status(d.Name).Reachability
+			}
+			sev := worstSeverity[d.Name]
+			if sev == "" {
+				sev = "none"
+			}
+			data.NOCRows = append(data.NOCRows, NOCDeviceRow{
+				Name:           d.Name,
+				Address:        d.Address,
+				InterfaceCount: d.InterfaceCount,
+				AlertCount:     alertCounts[d.Name],
+				WorstSeverity:  sev,
+				SNMPReach:      reach,
+			})
+		}
+		sort.Slice(data.NOCRows, func(i, j int) bool {
+			ai := alertSeverityRank(data.NOCRows[i].WorstSeverity)
+			aj := alertSeverityRank(data.NOCRows[j].WorstSeverity)
+			if ai != aj {
+				return ai < aj
+			}
+			if data.NOCRows[i].AlertCount != data.NOCRows[j].AlertCount {
+				return data.NOCRows[i].AlertCount > data.NOCRows[j].AlertCount
+			}
+			return data.NOCRows[i].Name < data.NOCRows[j].Name
 		})
 	}
 
