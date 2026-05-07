@@ -3,11 +3,13 @@ package evaluator
 import (
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/netspec/netspec/internal/config"
+	"github.com/netspec/netspec/internal/ifname"
 	"github.com/openconfig/gnmi/proto/gnmi"
 	"github.com/rs/zerolog"
 )
@@ -97,6 +99,8 @@ func (e *Evaluator) evaluateInterfaceSnapshotWithSource(deviceName, ifaceName, o
 	if !ok {
 		return nil
 	}
+	ifaceKeys := sortedIfaceKeys(deviceCfg.Interfaces)
+	ifaceName = ifname.ResolveConfigKey(ifaceKeys, ifaceName)
 	ifCfg, ok := deviceCfg.Interfaces[ifaceName]
 	if !ok {
 		return nil
@@ -137,7 +141,7 @@ func (e *Evaluator) evaluateInterfaceSnapshotWithSource(deviceName, ifaceName, o
 	if operChange := e.evaluateOperChange(deviceName, ifaceName, ifCfg, newState); operChange != nil {
 		changes = append(changes, *operChange)
 	}
-	changes = append(changes, e.evaluatePortChannel(deviceName, ifaceName, deviceCfg, newState)...)
+	changes = append(changes, e.evaluatePortChannel(deviceName, ifaceName, deviceCfg)...)
 	return changes
 }
 
@@ -200,6 +204,8 @@ func (e *Evaluator) EvaluateNotification(deviceName string, notification *gnmi.N
 		}
 
 		// Check if interface is in desired state config
+		ifaceKeys := sortedIfaceKeys(deviceCfg.Interfaces)
+		ifaceName = ifname.ResolveConfigKey(ifaceKeys, ifaceName)
 		ifCfg, hasInterfaceConfig := deviceCfg.Interfaces[ifaceName]
 		if !hasInterfaceConfig {
 			// Interface not in desired state config, skip
@@ -253,7 +259,7 @@ func (e *Evaluator) EvaluateNotification(deviceName string, notification *gnmi.N
 
 		// Evaluate port-channel membership if this is an oper-status change
 		if stateType == "oper-status" {
-			pcChanges := e.evaluatePortChannel(deviceName, ifaceName, deviceCfg, state)
+			pcChanges := e.evaluatePortChannel(deviceName, ifaceName, deviceCfg)
 			changes = append(changes, pcChanges...)
 		}
 	}
@@ -378,7 +384,7 @@ func (e *Evaluator) evaluateOperChange(deviceName, ifaceName string, ifCfg confi
 }
 
 // evaluatePortChannel evaluates port-channel member requirements
-func (e *Evaluator) evaluatePortChannel(deviceName, ifaceName string, deviceCfg config.DeviceConfig, ifaceState interfaceState) []StateChange {
+func (e *Evaluator) evaluatePortChannel(deviceName, ifaceName string, deviceCfg config.DeviceConfig) []StateChange {
 	var changes []StateChange
 	channelNames := e.channelNamesForMember(deviceCfg, ifaceName)
 	if ifaceCfg, ok := deviceCfg.Interfaces[ifaceName]; ok && ifaceCfg.Members != nil && len(ifaceCfg.Members.Required) > 0 {
@@ -389,23 +395,37 @@ func (e *Evaluator) evaluatePortChannel(deviceName, ifaceName string, deviceCfg 
 		if !ok {
 			continue
 		}
-		channelAlerts := e.evaluateChannelMembers(deviceName, channelName, channelCfg, ifaceState)
+		channelAlerts := e.evaluateChannelMembers(deviceName, channelName, channelCfg, deviceCfg)
 		changes = append(changes, channelAlerts...)
 	}
 	return changes
 }
 
+func sortedIfaceKeys(ifaces map[string]config.InterfaceConfig) []string {
+	keys := make([]string, 0, len(ifaces))
+	for k := range ifaces {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 // evaluateChannelMembers evaluates port-channel member policies
-func (e *Evaluator) evaluateChannelMembers(deviceName, channelName string, ifaceCfg config.InterfaceConfig, ifaceState interfaceState) []StateChange {
+func (e *Evaluator) evaluateChannelMembers(deviceName, channelName string, ifaceCfg config.InterfaceConfig, deviceCfg config.DeviceConfig) []StateChange {
 	if ifaceCfg.Members == nil || len(ifaceCfg.Members.Required) == 0 {
 		return nil
 	}
 
+	ifaceKeys := sortedIfaceKeys(deviceCfg.Interfaces)
+	channelKey := ifname.ResolveConfigKey(ifaceKeys, channelName)
+
 	e.mu.RLock()
+	chState := e.stateCache[fmt.Sprintf("%s:%s", deviceName, channelKey)]
 	active := 0
 	var downMembers []string
 	for _, member := range ifaceCfg.Members.Required {
-		cacheKey := fmt.Sprintf("%s:%s", deviceName, member)
+		cacheKeyName := ifname.ResolveConfigKey(ifaceKeys, member)
+		cacheKey := fmt.Sprintf("%s:%s", deviceName, cacheKeyName)
 		memberState := e.stateCache[cacheKey]
 		if normalizeState(memberState.OperStatus) == "up" {
 			active++
@@ -418,8 +438,8 @@ func (e *Evaluator) evaluateChannelMembers(deviceName, channelName string, iface
 	totalMembers := len(ifaceCfg.Members.Required)
 	downCount := len(downMembers)
 
-	// Logical port-channel down should always be critical.
-	if normalizeState(ifaceState.OperStatus) == "down" {
+	// Logical port-channel down should always be critical (use Po interface cache, not a member).
+	if normalizeState(chState.OperStatus) == "down" {
 		return []StateChange{{
 			Device:    deviceName,
 			Interface: channelName,
@@ -427,7 +447,7 @@ func (e *Evaluator) evaluateChannelMembers(deviceName, channelName string, iface
 			Severity:  "critical",
 			Message:   fmt.Sprintf("port-channel %s is down", channelName),
 			RelatedState: map[string]string{
-				"actual_state": normalizeState(ifaceState.OperStatus),
+				"actual_state": normalizeState(chState.OperStatus),
 			},
 		}}
 	}
@@ -477,7 +497,7 @@ func (e *Evaluator) channelNamesForMember(deviceCfg config.DeviceConfig, member 
 			continue
 		}
 		for _, required := range ifaceCfg.Members.Required {
-			if required == member {
+			if ifname.Match(required, member) {
 				channels = append(channels, ifaceName)
 				break
 			}

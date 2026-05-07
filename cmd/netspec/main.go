@@ -24,6 +24,7 @@ import (
 	"github.com/netspec/netspec/internal/collector"
 	"github.com/netspec/netspec/internal/config"
 	"github.com/netspec/netspec/internal/evaluator"
+	"github.com/netspec/netspec/internal/ifname"
 	"github.com/netspec/netspec/internal/notifier"
 	"github.com/netspec/netspec/internal/version"
 	"github.com/netspec/netspec/internal/webui"
@@ -610,36 +611,16 @@ func resolveInterfaceConfig(
 	if cfg, ok := ifaces[eventIface]; ok {
 		return eventIface, cfg, true
 	}
-	target := canonicalInterfaceName(eventIface)
-	for name, cfg := range ifaces {
-		if canonicalInterfaceName(name) == target {
-			return name, cfg, true
-		}
+	keys := make([]string, 0, len(ifaces))
+	for k := range ifaces {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	matched := ifname.ResolveConfigKey(keys, eventIface)
+	if cfg, ok := ifaces[matched]; ok {
+		return matched, cfg, true
 	}
 	return "", config.InterfaceConfig{}, false
-}
-
-func canonicalInterfaceName(name string) string {
-	s := strings.ToLower(strings.TrimSpace(name))
-	if s == "" {
-		return ""
-	}
-	replacer := strings.NewReplacer(
-		"gigabitethernet", "gi",
-		"tengigabitethernet", "te",
-		"twentyfivegigabitethernet", "tw",
-		"twentyfivegige", "tw",
-		"twentyfivegigabite", "tw",
-		"hundredgigabitethernet", "hu",
-		"hundredgige", "hu",
-		"fortygigabitethernet", "fo",
-		"fortygige", "fo",
-		"port-channel", "po",
-		"portchannel", "po",
-		" ", "",
-		"twe", "tw",
-	)
-	return replacer.Replace(s)
 }
 
 func syncSNMPReachAlerts(engine *alerter.Engine, tr *collector.ReachabilityTracker, device string) {

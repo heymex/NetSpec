@@ -59,13 +59,22 @@ func TestEvaluateChannelMembers_DefaultThresholds(t *testing.T) {
 			Minimum: 2,
 		},
 	}
+	deviceCfg := config.DeviceConfig{
+		Interfaces: map[string]config.InterfaceConfig{
+			channel:   ifaceCfg,
+			"Gi1/0/1": {},
+			"Gi1/0/2": {},
+			"Gi1/0/3": {},
+			"Gi1/0/4": {},
+		},
+	}
 
 	setMemberState(e, device, "Gi1/0/1", "up")
 	setMemberState(e, device, "Gi1/0/2", "up")
 	setMemberState(e, device, "Gi1/0/3", "down")
 	setMemberState(e, device, "Gi1/0/4", "down")
 
-	changes := e.evaluateChannelMembers(device, channel, ifaceCfg, interfaceState{OperStatus: "up"})
+	changes := e.evaluateChannelMembers(device, channel, ifaceCfg, deviceCfg)
 	if len(changes) != 1 {
 		t.Fatalf("expected one change, got %d", len(changes))
 	}
@@ -96,12 +105,22 @@ func TestEvaluateChannelMembers_WarningThresholdSuppressesLowLoss(t *testing.T) 
 		},
 	}
 
+	deviceCfg := config.DeviceConfig{
+		Interfaces: map[string]config.InterfaceConfig{
+			channel:   ifaceCfg,
+			"Gi1/0/1": {},
+			"Gi1/0/2": {},
+			"Gi1/0/3": {},
+			"Gi1/0/4": {},
+		},
+	}
+
 	setMemberState(e, device, "Gi1/0/1", "up")
 	setMemberState(e, device, "Gi1/0/2", "up")
 	setMemberState(e, device, "Gi1/0/3", "up")
 	setMemberState(e, device, "Gi1/0/4", "down")
 
-	changes := e.evaluateChannelMembers(device, channel, ifaceCfg, interfaceState{OperStatus: "up"})
+	changes := e.evaluateChannelMembers(device, channel, ifaceCfg, deviceCfg)
 	if len(changes) != 0 {
 		t.Fatalf("expected no alert when down_pct <= warning threshold, got %d", len(changes))
 	}
@@ -127,16 +146,96 @@ func TestEvaluateChannelMembers_ChannelDownAlwaysCritical(t *testing.T) {
 			ChannelDown: "info",
 		},
 	}
+	deviceCfg := config.DeviceConfig{
+		Interfaces: map[string]config.InterfaceConfig{
+			channel:   ifaceCfg,
+			"Gi1/0/1": {},
+			"Gi1/0/2": {},
+		},
+	}
 
 	setMemberState(e, device, "Gi1/0/1", "down")
 	setMemberState(e, device, "Gi1/0/2", "down")
+	setMemberState(e, device, channel, "down")
 
-	changes := e.evaluateChannelMembers(device, channel, ifaceCfg, interfaceState{OperStatus: "down"})
+	changes := e.evaluateChannelMembers(device, channel, ifaceCfg, deviceCfg)
 	if len(changes) != 1 {
 		t.Fatalf("expected one change, got %d", len(changes))
 	}
 	if got := changes[0].Severity; got != "critical" {
 		t.Fatalf("expected critical severity for channel down, got %q", got)
+	}
+}
+
+func TestEvaluateChannelMembers_RequiredLongNamesMatchShortCacheKeys(t *testing.T) {
+	t.Parallel()
+
+	e := NewEvaluator(nil, zerolog.Nop())
+	device := "sw1"
+	channel := "Port-channel48"
+	ifaceCfg := config.InterfaceConfig{
+		Members: &config.MemberConfig{
+			Required: []string{
+				"TenGigabitEthernet8/1/1",
+				"TenGigabitEthernet8/1/2",
+				"TenGigabitEthernet8/1/3",
+				"TenGigabitEthernet8/1/4",
+			},
+		},
+		MemberPolicy: &config.MemberPolicy{},
+	}
+	deviceCfg := config.DeviceConfig{
+		Interfaces: map[string]config.InterfaceConfig{
+			channel:   ifaceCfg,
+			"Te8/1/1": {},
+			"Te8/1/2": {},
+			"Te8/1/3": {},
+			"Te8/1/4": {},
+		},
+	}
+
+	setMemberState(e, device, "Te8/1/1", "up")
+	setMemberState(e, device, "Te8/1/2", "up")
+	setMemberState(e, device, "Te8/1/3", "up")
+	setMemberState(e, device, "Te8/1/4", "down")
+
+	changes := e.evaluateChannelMembers(device, channel, ifaceCfg, deviceCfg)
+	if len(changes) != 1 {
+		t.Fatalf("expected one change, got %d", len(changes))
+	}
+	if got := changes[0].AlertType; got != alertTypeMemberDown {
+		t.Fatalf("expected member down alert, got %q", got)
+	}
+}
+
+func TestEvaluateChannelMembers_SingleMemberDownNotPortChannelDown(t *testing.T) {
+	t.Parallel()
+
+	e := NewEvaluator(nil, zerolog.Nop())
+	device := "sw1"
+	channel := "Port-channel48"
+	ifaceCfg := config.InterfaceConfig{
+		Members: &config.MemberConfig{
+			Required: []string{"Te8/1/1", "Te8/1/2"},
+		},
+		MemberPolicy: &config.MemberPolicy{},
+	}
+	deviceCfg := config.DeviceConfig{
+		Interfaces: map[string]config.InterfaceConfig{
+			channel:   ifaceCfg,
+			"Te8/1/1": {},
+			"Te8/1/2": {},
+		},
+	}
+
+	setMemberState(e, device, "Te8/1/1", "up")
+	setMemberState(e, device, "Te8/1/2", "down")
+
+	changes := e.evaluateChannelMembers(device, channel, ifaceCfg, deviceCfg)
+	for _, c := range changes {
+		if c.AlertType == alertTypeChannelDown {
+			t.Fatalf("unexpected port_channel_down when LAG oper state is unknown in cache")
+		}
 	}
 }
 
