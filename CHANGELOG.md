@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented here. Release tags follow [Semantic Versioning](https://semver.org/).
 
+## [2.0.0-beta.2] — 2026-05-07
+
+Pre-release follow-up focused on operator UX and dashboard signal quality. Images publish as **`ghcr.io/heymex/netspec:v2.0.0-beta.2`** and **`ghcr.io/heymex/netspec-mdt-translator:v2.0.0-beta.2`** on tag CI.
+
+### Features
+
+- **Dashboard telemetry ingest trendline** replaces single-point Events/Sec with a **10-minute ingest-rate sparkline** (with listener-aware stats for multi-port ingest).
+- New **NOC view** at **`/noc`** with high-density fleet matrix (device/address/interfaces/alerts/worst severity/SNMP reachability), summary counters, and host overview for faster triage.
+
+### Improvements
+
+- NOC layout tuned for wallboard operation: **SNMP active banner suppressed on `/noc`** and side-pane order optimized for host-overview-first scanning.
+- User-facing docs updated for beta.2 behavior, API descriptions, and image tag examples.
+
 ## [2.0.0-beta.1] — 2026-05-06
 
 Pre-release (**2.x API / deployment shape**). Use for testing before `v2.0.0`; images publish as **`ghcr.io/heymex/netspec:v2.0.0-beta.1`** and **`ghcr.io/heymex/netspec-mdt-translator:v2.0.0-beta.1`** on tag CI.
@@ -27,6 +41,7 @@ See also: [Migration: bridge networking and authentication](docs/MIGRATION_BRIDG
 - **CI**: always publish Docker images on **tag** pushes (`v*`), including docs-only tags.
 - **Ops**: **`scripts/validate-netspec-stack.sh`** preflight, telemetry **coverage diagnostics** API/page, **`setup-netspec.sh`** / README cleanup, **`mdt-sidecar`** ownership warnings, MDT grpc-tcp vs grpc-tls troubleshooting note.
 
+[2.0.0-beta.2]: https://github.com/heymex/NetSpec/releases/tag/v2.0.0-beta.2
 [2.0.0-beta.1]: https://github.com/heymex/NetSpec/releases/tag/v2.0.0-beta.1
 
 ---
