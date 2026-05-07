@@ -11,6 +11,7 @@ NetSpec **2.0.0-beta.2** is an operator-focused follow-up to beta.1. It improves
 - New **`/noc`** route with a high-density fleet matrix for quick triage (device, address, interfaces, alerts, worst severity, SNMP reachability).
 - Dashboard ingest telemetry now shows a **10-minute sparkline trend** instead of a single Events/Sec point.
 - NOC wallboard tuning: no SNMP active banner noise on `/noc`, with host-overview-first side-pane ordering.
+- Added dedicated operator documentation for port-channel management and evaluator behavior: **[PORT_CHANNEL_EVALUATOR_GUIDE.md](PORT_CHANNEL_EVALUATOR_GUIDE.md)**.
 
 ### Upgrade path (from v2.0.0-beta.1)
 

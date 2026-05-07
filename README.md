@@ -193,6 +193,8 @@ As of **v2.0.0-beta.2**, highlights include:
 - ✅ **Multi-port** push ingest with **`additional_listeners`** / per-port **source** tags
 - ✅ Telemetry **coverage diagnostics**, stack **preflight** script, bridge-first **Compose** networking
 
+Port-channel operations reference: **[docs/PORT_CHANNEL_EVALUATOR_GUIDE.md](docs/PORT_CHANNEL_EVALUATOR_GUIDE.md)**.
+
 ## Web Interface
 
 NetSpec includes a built-in web UI accessible at `http://localhost:8088` (or your configured host/port).

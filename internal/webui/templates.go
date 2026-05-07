@@ -741,7 +741,7 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                             </thead>
                             <tbody>
                                 {{range .NOCRows}}
-                                <tr onclick="window.location.href='/device/{{.Name}}'" style="cursor:pointer;border-bottom:1px solid var(--border-color);">
+                                <tr onclick="window.location.href='/device/{{.Name}}?from=noc'" style="cursor:pointer;border-bottom:1px solid var(--border-color);">
                                     <td style="padding:0.45rem 0.5rem;font-weight:600;">{{.Name}}</td>
                                     <td style="padding:0.45rem 0.5rem;color:var(--text-secondary);">{{.Address}}</td>
                                     <td style="padding:0.45rem 0.5rem;text-align:right;">{{.InterfaceCount}}</td>
@@ -843,7 +843,7 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                     {{if .Devices}}
                     <ul class="device-list">
                         {{range .Devices}}
-                        <li class="device-item" onclick="window.location.href='/device/{{.Name}}'" style="cursor: pointer;">
+                        <li class="device-item" onclick="window.location.href='/device/{{.Name}}?from=dashboard'" style="cursor: pointer;">
                             <div class="device-info">
                                 <h3>{{.Name}}</h3>
                                 <div class="device-meta">
@@ -1093,7 +1093,7 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                 var html = '<svg xmlns="http://www.w3.org/2000/svg" class="hex-map-svg" viewBox="' + layout.vx + ' ' + layout.vy + ' ' + layout.vw + ' ' + layout.vh + '" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Host overview honeycomb">';
                 for (var j = 0; j < layout.tiles.length; j++) {
                     var t = layout.tiles[j];
-                    var href = '/device/' + encodeURIComponent(t.name).replace(/'/g, '%27');
+                    var href = '/device/' + encodeURIComponent(t.name).replace(/'/g, '%27') + '?from=dashboard';
                     var title = escXml(hexTitle(t.name, t.raw));
                     var d = hexPathD(t.cx, t.cy, HEX_R);
                     html += '<a class="hex-link" href="' + href + '"><path class="hex-shape ' + t.cls + '" d="' + d + '" fill="' + t.fill + '" stroke="' + t.stroke + '" stroke-width="' + t.sw + '"/><title>' + title + '</title></a>';
@@ -1907,7 +1907,7 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                 <button class="btn btn-danger" onclick="deleteDevice()">Delete Device</button>
                 <a href="/wizard?device_key={{queryEscape .Device.Name}}&amp;address={{queryEscape .Device.Address}}" class="btn btn-secondary">Re-walk interfaces</a>
                 <a href="/api-browser" class="btn btn-secondary">API</a>
-                <a href="/" class="btn btn-secondary">← Back to Dashboard</a>
+                <a href="{{.BackURL}}" class="btn btn-secondary">{{.BackLabel}}</a>
             </div>
         </header>
 

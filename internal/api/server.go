@@ -683,8 +683,8 @@ type NOCDeviceRow struct {
 	AlertCount     int
 	WorstSeverity  string
 	SNMPReach      string
-	HexMapSVG          template.HTML   `json:"-"`
-	SNMPWarnings       []SNMPUIWarning `json:"-"`
+	HexMapSVG      template.HTML   `json:"-"`
+	SNMPWarnings   []SNMPUIWarning `json:"-"`
 }
 
 // handleWebUI renders the main web interface
@@ -834,7 +834,11 @@ func (s *Server) handleWebUI(w http.ResponseWriter, r *http.Request) {
 	reachAugment := snmpReachForHex(s.snmpReachTracker(), deviceNames)
 	mergedHex := webui.MergeHexSeverityWithSNMP(worstByDev, reachAugment)
 	hexLayout := webui.BuildHexMapLayout(deviceNames, mergedHex, webui.DefaultHexRadius)
-	data.HexMapSVG = webui.RenderHexMapSVG(hexLayout)
+	hexSource := "dashboard"
+	if nocView {
+		hexSource = "noc"
+	}
+	data.HexMapSVG = webui.RenderHexMapSVGWithSource(hexLayout, hexSource)
 	data.SNMPWarnings = snmpUIWarnings(cfg)
 
 	// Get recent logs
@@ -993,6 +997,8 @@ type DevicePageData struct {
 	Version      string
 	Commit       string
 	BuildDate    string
+	BackURL      string
+	BackLabel    string
 	SNMPWarnings []SNMPUIWarning `json:"-"`
 }
 
@@ -1126,12 +1132,21 @@ func (s *Server) handleDevicePage(w http.ResponseWriter, r *http.Request) {
 		Interfaces:                interfaces,
 		Logs:                      deviceLogs,
 	}
+	from := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("from")))
+	backURL := "/"
+	backLabel := "\u2190 Back to Dashboard"
+	if from == "noc" {
+		backURL = "/noc"
+		backLabel = "\u2190 Back to NOC View"
+	}
 
 	data := DevicePageData{
 		Device:       deviceDetail,
 		Version:      version,
 		Commit:       commit,
 		BuildDate:    buildDate,
+		BackURL:      backURL,
+		BackLabel:    backLabel,
 		SNMPWarnings: snmpUIWarnings(cfg),
 	}
 

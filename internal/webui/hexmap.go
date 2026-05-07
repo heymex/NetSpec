@@ -38,13 +38,13 @@ type HexTile struct {
 
 // HexMapLayout holds computed geometry for rendering.
 type HexMapLayout struct {
-	Radius    float64
-	ViewMinX  float64
-	ViewMinY  float64
-	ViewWidth float64
+	Radius     float64
+	ViewMinX   float64
+	ViewMinY   float64
+	ViewWidth  float64
 	ViewHeight float64
-	Tiles     []HexTile
-	Empty     bool // true when zero devices
+	Tiles      []HexTile
+	Empty      bool // true when zero devices
 }
 
 // WorstSeverityPerDevice returns the worst severity per device from active alerts.
@@ -255,9 +255,18 @@ func HexPathD(cx, cy, R float64) string {
 }
 
 // RenderHexMapSVG returns an HTML fragment with a single <svg> honeycomb (or empty-state div).
+// Links default to dashboard return context.
 func RenderHexMapSVG(layout HexMapLayout) template.HTML {
+	return RenderHexMapSVGWithSource(layout, "dashboard")
+}
+
+// RenderHexMapSVGWithSource renders honeycomb links with a source context.
+func RenderHexMapSVGWithSource(layout HexMapLayout, source string) template.HTML {
 	if layout.Empty {
 		return template.HTML(`<div class="hex-overview-empty"><p>No devices configured</p></div>`)
+	}
+	if source == "" {
+		source = "dashboard"
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, `<svg xmlns="http://www.w3.org/2000/svg" class="hex-map-svg" viewBox="%.4f %.4f %.4f %.4f" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Host overview honeycomb">`,
@@ -266,7 +275,7 @@ func RenderHexMapSVG(layout HexMapLayout) template.HTML {
 	for _, t := range layout.Tiles {
 		d := HexPathD(t.CX, t.CY, layout.Radius)
 		title := html.EscapeString(HumanHexTitle(t.DeviceName, t.RawSev, t.WorstSev))
-		href := "/device/" + url.PathEscape(t.DeviceName)
+		href := "/device/" + url.PathEscape(t.DeviceName) + "?from=" + url.QueryEscape(source)
 		fmt.Fprintf(&b, `<a class="hex-link" href="%s">`, html.EscapeString(href))
 		fmt.Fprintf(&b, `<path class="hex-shape %s" d="%s" fill="%s" stroke="%s" stroke-width="%.2f"/>`,
 			html.EscapeString(t.Class), d, html.EscapeString(t.Fill), html.EscapeString(t.Stroke), t.StrokeW)
