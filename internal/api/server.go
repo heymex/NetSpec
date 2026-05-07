@@ -683,6 +683,8 @@ type NOCDeviceRow struct {
 	AlertCount     int
 	WorstSeverity  string
 	SNMPReach      string
+	HexMapSVG          template.HTML   `json:"-"`
+	SNMPWarnings       []SNMPUIWarning `json:"-"`
 }
 
 // handleWebUI renders the main web interface
