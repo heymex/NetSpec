@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
-	"strconv"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -37,6 +37,7 @@ type TelemetryStats struct {
 	RejectedMissing     uint64                          `json:"rejected_missing"`
 	LastEventAt         time.Time                       `json:"last_event_at"`
 	EventsPerSecond     float64                         `json:"events_per_second"`
+	RecentPerSecond     []collector.EventRatePoint      `json:"recent_per_second,omitempty"`
 	TopDevices          []collector.DeviceTelemetryStat `json:"top_devices"`
 	UnknownDevices      []UnknownTelemetryDevice        `json:"unknown_devices"`
 	// Listeners is per-TCP-port ingest (same wire format); use for pipeline / sourcetype mapping from Cribl, etc.
@@ -51,16 +52,16 @@ type UnknownTelemetryDevice struct {
 }
 
 type DeviceTelemetryDiagnostics struct {
-	DeviceName                string    `json:"device_name"`
-	Address                   string    `json:"address"`
-	ConfiguredInterfaces      int       `json:"configured_interfaces"`
-	MonitoredInterfaces       int       `json:"monitored_interfaces"`
-	RuntimeInterfaces         int       `json:"runtime_interfaces"`
-	RuntimeTelemetryInterfaces int      `json:"runtime_telemetry_interfaces"`
-	TelemetryEventsSeen       uint64    `json:"telemetry_events_seen"`
-	LastTelemetryAt           time.Time `json:"last_telemetry_at"`
-	CoveragePct               float64   `json:"coverage_pct"`
-	SuspectedNameMismatch     bool      `json:"suspected_name_mismatch"`
+	DeviceName                 string    `json:"device_name"`
+	Address                    string    `json:"address"`
+	ConfiguredInterfaces       int       `json:"configured_interfaces"`
+	MonitoredInterfaces        int       `json:"monitored_interfaces"`
+	RuntimeInterfaces          int       `json:"runtime_interfaces"`
+	RuntimeTelemetryInterfaces int       `json:"runtime_telemetry_interfaces"`
+	TelemetryEventsSeen        uint64    `json:"telemetry_events_seen"`
+	LastTelemetryAt            time.Time `json:"last_telemetry_at"`
+	CoveragePct                float64   `json:"coverage_pct"`
+	SuspectedNameMismatch      bool      `json:"suspected_name_mismatch"`
 }
 
 type DiagnosticsCoverage struct {
@@ -527,8 +528,8 @@ func (s *Server) handleDeviceDetailAPI(w http.ResponseWriter, r *http.Request) {
 		"name":        deviceName,
 		"address":     deviceCfg.Address,
 		"description": deviceCfg.Description,
-		"interfaces": interfaces,
-		"logs":       deviceLogs,
+		"interfaces":  interfaces,
+		"logs":        deviceLogs,
 	}
 
 	json.NewEncoder(w).Encode(response)
@@ -656,20 +657,21 @@ type ConfigInfo struct {
 
 // PageData holds all data for the web UI template
 type PageData struct {
-	DeviceCount    int
-	InterfaceCount int
-	AlertCount     int
-	Uptime         string
-	Devices        []DeviceInfo
-	Alerts         []AlertInfo
-	Logs           []webui.LogEntry
-	Config         ConfigInfo
-	Version        string
-	Commit         string
-	BuildDate      string
-	Telemetry      TelemetryStats
-	HexMapSVG      template.HTML `json:"-"`
-	SNMPWarnings   []SNMPUIWarning `json:"-"`
+	DeviceCount        int
+	InterfaceCount     int
+	AlertCount         int
+	Uptime             string
+	Devices            []DeviceInfo
+	Alerts             []AlertInfo
+	Logs               []webui.LogEntry
+	Config             ConfigInfo
+	Version            string
+	Commit             string
+	BuildDate          string
+	Telemetry          TelemetryStats
+	TelemetrySparkline template.HTML   `json:"-"`
+	HexMapSVG          template.HTML   `json:"-"`
+	SNMPWarnings       []SNMPUIWarning `json:"-"`
 }
 
 // handleWebUI renders the main web interface
@@ -707,6 +709,7 @@ func (s *Server) handleWebUI(w http.ResponseWriter, r *http.Request) {
 	s.telemetryMu.RUnlock()
 	if tg != nil {
 		data.Telemetry = tg()
+		data.TelemetrySparkline = renderTelemetrySparkline(data.Telemetry.RecentPerSecond, 220, 46)
 	}
 
 	// Add config details
@@ -939,13 +942,13 @@ type DevicePageData struct {
 
 // DeviceDetailInfo holds detailed device information
 type DeviceDetailInfo struct {
-	Name           string
-	Address        string
-	Description    string
+	Name                      string
+	Address                   string
+	Description               string
 	LastSNMPValidationAt      time.Time
 	LastTelemetryValidationAt time.Time
-	Interfaces     []InterfaceInfo
-	Logs           []webui.LogEntry
+	Interfaces                []InterfaceInfo
+	Logs                      []webui.LogEntry
 }
 
 // InterfaceInfo holds interface configuration
@@ -1129,6 +1132,49 @@ func reverseLogEntries(entries []webui.LogEntry) {
 	for i, j := 0, len(entries)-1; i < j; i, j = i+1, j-1 {
 		entries[i], entries[j] = entries[j], entries[i]
 	}
+}
+
+func renderTelemetrySparkline(points []collector.EventRatePoint, width, height int) template.HTML {
+	if len(points) == 0 || width <= 0 || height <= 0 {
+		return template.HTML(`<svg viewBox="0 0 220 46" preserveAspectRatio="none" style="width:100%;height:46px;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-primary)"><text x="50%" y="55%" text-anchor="middle" fill="var(--text-muted)" font-size="10">No telemetry in last 10m</text></svg>`)
+	}
+	var maxCount uint64
+	for _, p := range points {
+		if p.Count > maxCount {
+			maxCount = p.Count
+		}
+	}
+	if maxCount == 0 {
+		return template.HTML(`<svg viewBox="0 0 220 46" preserveAspectRatio="none" style="width:100%;height:46px;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-primary)"><text x="50%" y="55%" text-anchor="middle" fill="var(--text-muted)" font-size="10">No telemetry in last 10m</text></svg>`)
+	}
+
+	w := float64(width)
+	h := float64(height)
+	stepX := 0.0
+	if len(points) > 1 {
+		stepX = w / float64(len(points)-1)
+	}
+
+	var line strings.Builder
+	for idx, p := range points {
+		x := float64(idx) * stepX
+		y := h - (float64(p.Count)/float64(maxCount))*h
+		if y < 0 {
+			y = 0
+		}
+		if y > h {
+			y = h
+		}
+		if idx > 0 {
+			line.WriteByte(' ')
+		}
+		line.WriteString(fmt.Sprintf("%.2f,%.2f", x, y))
+	}
+
+	return template.HTML(fmt.Sprintf(
+		`<svg viewBox="0 0 %d %d" preserveAspectRatio="none" style="width:100%%;height:%dpx;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-primary)"><polyline fill="none" stroke="var(--accent-blue)" stroke-width="1.8" points="%s" /></svg>`,
+		width, height, height, line.String(),
+	))
 }
 
 func alertSeverityRank(severity string) int {
