@@ -143,6 +143,9 @@ func upsertCommitInterface(dev *config.DeviceConfig, iface CommitInterface) {
 		Monitor:      true,
 		Alerts: config.AlertSeverity{
 			StateMismatch: iface.AlertSeverity,
+			MemberDown:    iface.MemberDownSeverity,
+			ChannelDown:   iface.ChannelDownSeverity,
+			AdminDown:     iface.AdminDownSeverity,
 		},
 	}
 	if iface.IsPortChannel && len(iface.Members) > 0 {
@@ -402,6 +405,11 @@ func validateCommitRequest(req *CommitRequest) error {
 		}
 		if !req.SyncDiscoveredInterfaces {
 			return errors.New("interface entries with monitor=false require sync_discovered_interfaces")
+		}
+		for _, sev := range []string{iface.MemberDownSeverity, iface.ChannelDownSeverity, iface.AdminDownSeverity} {
+			if sev != "" && sev != "info" && sev != "warning" && sev != "critical" {
+				return errors.New("member_down_severity, channel_down_severity, and admin_down_severity must be info, warning, or critical")
+			}
 		}
 	}
 	if req.Action == "add" && monitored == 0 {
