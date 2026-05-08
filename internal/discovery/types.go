@@ -1,5 +1,7 @@
 package discovery
 
+import "github.com/netspec/netspec/internal/rules"
+
 type ProbeResult struct {
 	Address           string `json:"address"`
 	SysName           string `json:"sys_name"`
@@ -35,6 +37,12 @@ type Interface struct {
 	AlreadyConfigured bool                 `json:"already_configured"`
 	FilteredDefault   bool                 `json:"filtered_default"`
 	ExistingConfig    *InterfaceConfigWish `json:"existing_config,omitempty"`
+	// Rule-derived fields, populated by the walk handler when rules.yaml is loaded.
+	RuleName         string           `json:"rule_name,omitempty"`          // e.g. "Wireless APs"
+	RuleMonitor      *bool            `json:"rule_monitor,omitempty"`       // nil = no opinion; false = skip
+	RuleDesiredState string           `json:"rule_desired_state,omitempty"` // "up" or "down"
+	RuleSeverity     string           `json:"rule_severity,omitempty"`      // state_mismatch severity from rule
+	TrunkLink        *rules.TrunkLink `json:"trunk_link,omitempty"`
 }
 
 type WalkResult struct {
@@ -44,14 +52,17 @@ type WalkResult struct {
 }
 
 type CommitInterface struct {
-	Name          string   `json:"name"`
-	Alias         string   `json:"alias"`
-	Monitor       bool     `json:"monitor"`
-	DesiredState  string   `json:"desired_state"`
-	AdminState    string   `json:"admin_state"`
-	AlertSeverity string   `json:"alert_severity"`
-	IsPortChannel bool     `json:"is_port_channel,omitempty"`
-	Members       []string `json:"members,omitempty"`
+	Name                string   `json:"name"`
+	Alias               string   `json:"alias"`
+	Monitor             bool     `json:"monitor"`
+	DesiredState        string   `json:"desired_state"`
+	AdminState          string   `json:"admin_state"`
+	AlertSeverity       string   `json:"alert_severity"`                 // state_mismatch
+	MemberDownSeverity  string   `json:"member_down_severity,omitempty"`
+	ChannelDownSeverity string   `json:"channel_down_severity,omitempty"`
+	AdminDownSeverity   string   `json:"admin_down_severity,omitempty"`
+	IsPortChannel       bool     `json:"is_port_channel,omitempty"`
+	Members             []string `json:"members,omitempty"`
 }
 
 type CommitRequest struct {
