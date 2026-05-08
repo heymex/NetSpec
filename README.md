@@ -1,5 +1,26 @@
 # NetSpec: Declarative Network State Monitor
 
+## Background
+
+In large, stable campus networks, network monitoring tools tend to fall down by trying to be everything to everyone.  The reality is you typically only care about a subset of ports on every switch in the environment, for different reasons, and with different alert channels and severities.
+
+Say you have a 4 member LACP channel from your core switch to a core firewall.  Most network monitoring tools are going to look at the individual channel members and the logical port-channel as equals.  Sure, having any interface down on your core is probably bad, but if it's 25% of the bandwidth on that channel, is it really *critical*, versus maybe a *warning*?  Maybe 50% or 75% of the channel members down is where you would really start to panic, and therefore *that* is when you want a critical alert out to [insert alert management tool here], versus sending an email, Teams or Slack message, syslog, or even adding a note to a [insert ITSM tool] ticket instead of escalating said ticket to the on-call engineer.
+
+And what about polling cycles?  5 minutes may be fine for graphing utilization, but it may be wildly insufficient for addressing a port-down situation on a critical server, closet, AP, etc.
+
+NetSpec aims to address this narrow use case by leveraging streaming telemetry from your switches - along with SNMP polling for verification - to very quickly identify deviations from desired state and provide a flexible alerting engine to notify network operators of the issues.
+
+There are a few other quality of life features added in to make life a tad easier.  For example, there is a "business rules" engine that allows flexible mapping of different device types, port types, etc.  Take a closet with 5 x 48 port switches in a stack.  Do you care if an end user port goes down?  Probably not.  Do you care if an AP, build controls system, or some other critical infrastructure on that access switch goes down?  Probably!  The target audience for NetSpec understands that standardization is absolutely critical for stable network operations.  Your standardized device naming convention and machine parseable interface descriptions is rewarded with these business rules.  Discovery of a new access switch stack isn't going to be cluttered with all your standard end user NAC-controlled ports, because you've defined that "NAC ACCESS PORT" isn't something you care about enough to be alerted on at 2 AM.  Want to monitor all your AP uplinks?  Standardized descriptions map to "automatically select AP ports for monitoring, at warning level for deviations from desired state".
+
+Today, NetSpec is built for a very specific environment based on the Cisco Catalyst 9k platform with IOS-XE.  Other Network Operating Systems with streaming telemetry should be trivial to integrate, especially if they're using MDT (model-defined telemetry).
+
+While I welcome suggestions to improve NetSpec, I hope that you keep these core concepts in mind.  The *absolute last thing* I want is to create another Solarwinds NPM.  If that's your goal, fork this project and do your own thing.
+
+**Current stable release: [v2.0.0](https://github.com/heymex/NetSpec/releases/tag/v2.0.0)** ([CHANGELOG](CHANGELOG.md), [release notes](docs/RELEASE_NOTES.md)) — pin **`NETSPEC_IMAGE_TAG=v2.0.0`** for stable deploys. Use **`latest`** only to track `main`.
+
+NetSpec is a declarative network monitor: you define how the network *should* behave, and NetSpec **evaluates reality against that desired state** and **raises alerts** when they diverge (SNMP, telemetry ingest, Apprise-backed delivery). It is built for environments where *state correctness matters more than metrics*.
+
+
 **Current stable release: [v2.0.0](https://github.com/heymex/NetSpec/releases/tag/v2.0.0)** ([CHANGELOG](CHANGELOG.md), [release notes](docs/RELEASE_NOTES.md)) — pin **`NETSPEC_IMAGE_TAG=v2.0.0`** for stable deploys. Use **`latest`** only to track `main`.
 
 NetSpec is a declarative network monitor: you define how the network *should* behave, and NetSpec **evaluates reality against that desired state** and **raises alerts** when they diverge (SNMP, telemetry ingest, Apprise-backed delivery). It is built for environments where *state correctness matters more than metrics*.
