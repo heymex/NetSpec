@@ -105,7 +105,11 @@ services:
     environment:
       - MDT_DECODED_FILE=/sidecar/decoded.json
       - MDT_FORWARDER_LOG=/sidecar/forwarder.log
-      # Reach netspec-netspec via Docker DNS on the bridge network.
+      # Optional multi-target fanout (comma-separated host:port), e.g.
+      # NETSPEC_INGEST_TARGETS=10.10.199.38:57501,10.10.199.36:57501
+      # If unset, translator falls back to NETSPEC_INGEST_HOST/PORT below.
+      - NETSPEC_INGEST_TARGETS=${NETSPEC_INGEST_TARGETS:-}
+      # Single-target fallback for backward compatibility.
       - NETSPEC_INGEST_HOST=${NETSPEC_INGEST_HOST:-netspec-netspec}
       - NETSPEC_INGEST_PORT=${NETSPEC_INGEST_PORT:-57500}
       - MDT_ALLOWED_DEVICES=${MDT_ALLOWED_DEVICES:-}

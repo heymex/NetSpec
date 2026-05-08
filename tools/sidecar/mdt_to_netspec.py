@@ -4,15 +4,59 @@ import os
 import socket
 import time
 from pathlib import Path
+from typing import Dict, List, Tuple
 
 SRC_FILE = Path(os.getenv("MDT_DECODED_FILE", "/sidecar/decoded.json"))
 DEST_HOST = os.getenv("NETSPEC_INGEST_HOST", "127.0.0.1")
 DEST_PORT = int(os.getenv("NETSPEC_INGEST_PORT", "57500"))
+DEST_TARGETS = os.getenv("NETSPEC_INGEST_TARGETS", "").strip()
 LOG_FILE = Path(os.getenv("MDT_FORWARDER_LOG", "/sidecar/forwarder.log"))
 RESEND_INTERVAL_SECONDS = int(os.getenv("MDT_RESEND_INTERVAL_SECONDS", "60"))
 
 allowed_env = os.getenv("MDT_ALLOWED_DEVICES", "").strip()
 ALLOWED_DEVICES = {d.strip() for d in allowed_env.split(",") if d.strip()} if allowed_env else set()
+
+
+def parse_targets() -> List[Tuple[str, int]]:
+    targets: List[Tuple[str, int]] = []
+    if DEST_TARGETS:
+        for raw_entry in DEST_TARGETS.split(","):
+            entry = raw_entry.strip()
+            if not entry:
+                continue
+            if ":" not in entry:
+                raise ValueError(
+                    f"invalid target '{entry}' in NETSPEC_INGEST_TARGETS; expected host:port"
+                )
+            host, port_s = entry.rsplit(":", 1)
+            host = host.strip()
+            port_s = port_s.strip()
+            if not host:
+                raise ValueError(
+                    f"invalid target '{entry}' in NETSPEC_INGEST_TARGETS; host cannot be empty"
+                )
+            try:
+                port = int(port_s)
+            except ValueError as exc:
+                raise ValueError(
+                    f"invalid target '{entry}' in NETSPEC_INGEST_TARGETS; port must be an integer"
+                ) from exc
+            if port <= 0 or port > 65535:
+                raise ValueError(
+                    f"invalid target '{entry}' in NETSPEC_INGEST_TARGETS; port out of range"
+                )
+            targets.append((host, port))
+    else:
+        targets.append((DEST_HOST, DEST_PORT))
+
+    deduped: List[Tuple[str, int]] = []
+    seen = set()
+    for target in targets:
+        if target in seen:
+            continue
+        seen.add(target)
+        deduped.append(target)
+    return deduped
 
 
 def norm_oper(value: str) -> str:
@@ -37,10 +81,10 @@ def norm_admin(value: str) -> str:
     return s
 
 
-def connect_sock():
+def connect_sock(host: str, port: int):
     while True:
         try:
-            sock = socket.create_connection((DEST_HOST, DEST_PORT), timeout=5)
+            sock = socket.create_connection((host, port), timeout=5)
             sock.settimeout(5)
             return sock
         except Exception:
@@ -58,7 +102,11 @@ def main():
     SRC_FILE.parent.mkdir(parents=True, exist_ok=True)
     SRC_FILE.touch(exist_ok=True)
 
-    sock = connect_sock()
+    targets = parse_targets()
+    log(f"targets={','.join([f'{host}:{port}' for host, port in targets])}")
+    socks: Dict[Tuple[str, int], socket.socket] = {
+        target: connect_sock(target[0], target[1]) for target in targets
+    }
     sent = 0
     last_state = {}
     last_sent_at = {}
@@ -107,15 +155,18 @@ def main():
                 last_sent_at[key] = now
 
                 payload = (json.dumps(event) + "\n").encode("utf-8")
-                try:
-                    sock.sendall(payload)
-                except Exception:
+                for target in targets:
+                    sock = socks[target]
                     try:
-                        sock.close()
+                        sock.sendall(payload)
                     except Exception:
-                        pass
-                    sock = connect_sock()
-                    sock.sendall(payload)
+                        try:
+                            sock.close()
+                        except Exception:
+                            pass
+                        sock = connect_sock(target[0], target[1])
+                        socks[target] = sock
+                        sock.sendall(payload)
 
                 sent += 1
                 if sent % 50 == 0:
