@@ -124,6 +124,13 @@ device_roles:
         alerts:
           state_mismatch: critical
 
+      - label: Outdoor Wireless APs
+        match: "oap*"
+        monitor: true
+        desired_state: up
+        alerts:
+          state_mismatch: warning
+
       - label: Wireless APs
         match: "ap*"
         monitor: false
