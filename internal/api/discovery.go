@@ -7,7 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/netspec/netspec/internal/config"
 	"github.com/netspec/netspec/internal/discovery"
+	"github.com/netspec/netspec/internal/rules"
 	"github.com/netspec/netspec/internal/webui"
 )
 
@@ -15,6 +17,7 @@ type discoveryRequest struct {
 	Address   string `json:"address"`
 	Community string `json:"community"`
 	Port      uint16 `json:"port"`
+	SysName   string `json:"sys_name"` // optional; passed from probe result for rule matching
 }
 
 func (s *Server) handleWizardPage(w http.ResponseWriter, r *http.Request) {
@@ -28,16 +31,29 @@ func (s *Server) handleWizardPage(w http.ResponseWriter, r *http.Request) {
 	wizCfg := s.config
 	s.reloadMu.RUnlock()
 
+	type roleInfo struct {
+		Name   string `json:"name"`
+		Prefix string `json:"prefix"`
+	}
+	var roleInfos []roleInfo
+	if wizCfg != nil {
+		for _, r := range wizCfg.Rules.DeviceRoles {
+			roleInfos = append(roleInfos, roleInfo{Name: r.Name, Prefix: r.Prefix})
+		}
+	}
+
 	data := struct {
 		Version      string
 		Commit       string
 		BuildDate    string
 		SNMPWarnings []SNMPUIWarning
+		HasRules     bool
 	}{
 		Version:      version,
 		Commit:       commit,
 		BuildDate:    buildDate,
 		SNMPWarnings: snmpUIWarnings(wizCfg),
+		HasRules:     wizCfg != nil && len(wizCfg.Rules.DeviceRoles) > 0,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -103,7 +119,9 @@ func (s *Server) handleDiscoveryWalk(w http.ResponseWriter, r *http.Request) {
 	s.reloadMu.RLock()
 	cfg := s.config
 	s.reloadMu.RUnlock()
+
 	if cfg != nil {
+		// Mark already-configured interfaces.
 		var existing map[string]bool
 		for _, dev := range cfg.DesiredState.Devices {
 			if strings.EqualFold(strings.TrimSpace(dev.Address), strings.TrimSpace(req.Address)) {
@@ -119,10 +137,34 @@ func (s *Server) handleDiscoveryWalk(w http.ResponseWriter, r *http.Request) {
 				result.Interfaces[i].AlreadyConfigured = existing[result.Interfaces[i].Name]
 			}
 		}
+
+		// Apply business rules when a hostname is provided.
+		if req.SysName != "" && len(cfg.Rules.DeviceRoles) > 0 {
+			applyRulesToWalk(req.SysName, result, cfg.Rules)
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(result)
+}
+
+// applyRulesToWalk annotates each interface in result with the matching rule defaults.
+func applyRulesToWalk(hostname string, result *discovery.WalkResult, rulesConfig config.RulesConfig) {
+	role := rules.MatchDevice(hostname, rulesConfig.DeviceRoles)
+	for i := range result.Interfaces {
+		iface := &result.Interfaces[i]
+		mr := rules.MatchPort(iface.Alias, role)
+		if mr != nil {
+			iface.RuleName = mr.RuleLabel
+			iface.RuleMonitor = mr.Monitor
+			iface.RuleDesiredState = mr.DesiredState
+			iface.RuleSeverity = mr.Alerts.StateMismatch
+		}
+		// Parse trunk description regardless of role match.
+		if tl := rules.ParseTrunkDescription(iface.Alias); tl != nil {
+			iface.TrunkLink = tl
+		}
+	}
 }
 
 func (s *Server) handleDiscoveryCommit(w http.ResponseWriter, r *http.Request) {
@@ -154,6 +196,25 @@ func (s *Server) handleDiscoveryCommit(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(result)
+}
+
+// handleRulesAPI returns the loaded rules configuration.
+func (s *Server) handleRulesAPI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	s.reloadMu.RLock()
+	cfg := s.config
+	s.reloadMu.RUnlock()
+
+	if cfg == nil || len(cfg.Rules.DeviceRoles) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"device_roles":[]}`))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(cfg.Rules)
 }
 
 func (s *Server) applyDiscoveryDefaults(req discoveryRequest) discoveryRequest {

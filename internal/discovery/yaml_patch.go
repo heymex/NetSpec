@@ -136,6 +136,9 @@ func applyInterfaces(dev *config.DeviceConfig, interfaces []CommitInterface) {
 			Monitor:      iface.Monitor,
 			Alerts: config.AlertSeverity{
 				StateMismatch: iface.AlertSeverity,
+				MemberDown:    iface.MemberDownSeverity,
+				ChannelDown:   iface.ChannelDownSeverity,
+				AdminDown:     iface.AdminDownSeverity,
 			},
 		}
 		if iface.IsPortChannel && len(iface.Members) > 0 {
@@ -361,6 +364,11 @@ func validateCommitRequest(req *CommitRequest) error {
 		}
 		if iface.AlertSeverity != "info" && iface.AlertSeverity != "warning" && iface.AlertSeverity != "critical" {
 			return errors.New("alert_severity must be info, warning, or critical")
+		}
+		for _, sev := range []string{iface.MemberDownSeverity, iface.ChannelDownSeverity, iface.AdminDownSeverity} {
+			if sev != "" && sev != "info" && sev != "warning" && sev != "critical" {
+				return errors.New("member_down_severity, channel_down_severity, and admin_down_severity must be info, warning, or critical")
+			}
 		}
 	}
 	return nil

@@ -183,6 +183,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/discovery/probe", s.handleDiscoveryProbe)
 	mux.HandleFunc("/api/discovery/walk", s.handleDiscoveryWalk)
 	mux.HandleFunc("/api/discovery/commit", s.handleDiscoveryCommit)
+	mux.HandleFunc("/api/rules", s.handleRulesAPI)
 	mux.HandleFunc("/openapi.json", s.handleOpenAPIJSON)
 	mux.HandleFunc("/api-browser", s.handleAPIBrowser)
 

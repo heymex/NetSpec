@@ -1,0 +1,150 @@
+# Business rules for discovery defaults.
+#
+# When a device is walked, its hostname is matched against device_roles by prefix
+# (longest prefix wins). Each role's port_rules are evaluated in order against the
+# interface alias (description); the first match sets the defaults for that port.
+#
+# Fields:
+#   label        - Human-readable group name shown in the wizard UI.
+#   match        - Glob pattern matched case-insensitively against the interface alias.
+#                  Use * as wildcard. Examples: "ap*", "*NAC ACCESS PORT*", "t|*"
+#   monitor      - true  → pre-select for monitoring in wizard
+#                  false → exclude from wizard (and from desired-state.yaml) by default
+#                  (omit to leave the decision to the operator)
+#   desired_state - "up" or "down" (default when omitted: inferred from oper_status)
+#   alerts        - alert severity overrides written to desired-state.yaml
+#     state_mismatch: info | warning | critical
+#     member_down:    info | warning | critical
+#     channel_down:   info | warning | critical
+#     admin_down:     info | warning | critical
+
+device_roles:
+
+  # ── Core switch ──────────────────────────────────────────────────────────────
+  - prefix: csw
+    name: Core Switch
+    port_rules:
+      - label: Trunk / Uplink Ports
+        match: "t|*"
+        monitor: true
+        desired_state: up
+        alerts:
+          state_mismatch: critical
+          channel_down: critical
+
+      - label: Port-Channel Uplinks
+        match: "po*"
+        monitor: true
+        desired_state: up
+        alerts:
+          state_mismatch: critical
+          member_down: critical
+          channel_down: critical
+
+  # ── Distribution switch ───────────────────────────────────────────────────────
+  - prefix: dsw
+    name: Distribution Switch
+    port_rules:
+      - label: Trunk / Uplink Ports
+        match: "t|*"
+        monitor: true
+        desired_state: up
+        alerts:
+          state_mismatch: critical
+          channel_down: critical
+
+      - label: Port-Channel Uplinks
+        match: "po*"
+        monitor: true
+        desired_state: up
+        alerts:
+          state_mismatch: critical
+          member_down: warning
+          channel_down: critical
+
+      - label: Wireless APs
+        match: "ap*"
+        monitor: false
+
+      - label: Building / Infrastructure
+        match: "bldg*"
+        monitor: true
+        desired_state: up
+        alerts:
+          state_mismatch: warning
+
+      - label: NAC Access Ports
+        match: "*nac access port*"
+        monitor: false
+
+  # ── Access switch ─────────────────────────────────────────────────────────────
+  - prefix: asw
+    name: Access Switch
+    port_rules:
+      - label: Trunk / Uplink Ports
+        match: "t|*"
+        monitor: true
+        desired_state: up
+        alerts:
+          state_mismatch: critical
+          channel_down: critical
+
+      - label: Port-Channel Uplinks
+        match: "po*"
+        monitor: true
+        desired_state: up
+        alerts:
+          state_mismatch: critical
+          member_down: warning
+          channel_down: critical
+
+      - label: Wireless APs
+        match: "ap*"
+        monitor: false
+
+      - label: Building / Infrastructure
+        match: "bldg*"
+        monitor: true
+        desired_state: up
+        alerts:
+          state_mismatch: warning
+
+      - label: NAC Access Ports
+        match: "*nac access port*"
+        monitor: false
+
+  # ── Outdoor / other switch ────────────────────────────────────────────────────
+  - prefix: osw
+    name: Outdoor Switch
+    port_rules:
+      - label: Trunk / Uplink Ports
+        match: "t|*"
+        monitor: true
+        desired_state: up
+        alerts:
+          state_mismatch: critical
+
+      - label: Wireless APs
+        match: "ap*"
+        monitor: false
+
+  # ── DMZ switch ────────────────────────────────────────────────────────────────
+  - prefix: dmz
+    name: DMZ Switch
+    port_rules:
+      - label: Trunk / Uplink Ports
+        match: "t|*"
+        monitor: true
+        desired_state: up
+        alerts:
+          state_mismatch: critical
+          channel_down: critical
+
+      - label: Port-Channel Uplinks
+        match: "po*"
+        monitor: true
+        desired_state: up
+        alerts:
+          state_mismatch: critical
+          member_down: critical
+          channel_down: critical

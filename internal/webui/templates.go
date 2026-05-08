@@ -1145,19 +1145,10 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
             <h3>Step 3: Interface Selection</h3>
             <div class="body">
                 <div class="row">
-                    <div class="field"><label>Search</label><input id="ifSearch" placeholder="Filter by interface"></div>
-                    <div class="field"><label>Show only monitored</label><select id="onlyMonitored"><option value="0">No</option><option value="1">Yes</option></select></div>
+                    <div class="field"><label>Search</label><input id="ifSearch" placeholder="Filter by interface name or alias"></div>
+                    <div class="field"><label>Show excluded ports</label><select id="showExcluded"><option value="0">Hide (rule says skip)</option><option value="1">Show all</option></select></div>
                 </div>
-                <div class="actions" style="justify-content:flex-start; margin-bottom:0.6rem;">
-                    <button class="btn" id="selectVisible">Select Visible</button>
-                    <button class="btn" id="deselectVisible">Deselect Visible</button>
-                </div>
-                <div style="max-height:420px; overflow:auto; border:1px solid var(--bd); border-radius:8px;">
-                    <table>
-                        <thead><tr><th>Monitor</th><th>Interface</th><th>Alias</th><th>Admin</th><th>Oper</th><th>Desired</th><th>Severity</th></tr></thead>
-                        <tbody id="ifRows"></tbody>
-                    </table>
-                </div>
+                <div id="ifGroupsContainer"></div>
                 <div class="actions">
                     <button class="btn" id="backTo2">Back</button>
                     <button class="btn primary" id="toReview">Review & Commit</button>
@@ -1243,68 +1234,135 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
         document.getElementById('walkBtn').addEventListener('click', async function(){
             msg('walkMsg','Walking interface table, this may take a few seconds...');
             try{
-                var req = { address: state.probe.address, community: document.getElementById('community').value, port: Number(document.getElementById('port').value||161) };
+                var req = {
+                    address: state.probe.address,
+                    community: document.getElementById('community').value,
+                    port: Number(document.getElementById('port').value||161),
+                    sys_name: (state.probe && state.probe.sys_name) ? state.probe.sys_name : ''
+                };
                 var res = await fetch('/api/discovery/walk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(req)});
                 var data = await res.json();
                 if(!res.ok){ msg('walkMsg', data.error || 'Walk failed', true); return; }
                 state.walk = data;
                 state.ifSelections = {};
                 (state.walk.interfaces || []).forEach(function(it){
+                    // Rule-derived defaults: honour rule_monitor when set.
+                    var ruleMonitor = (it.rule_monitor != null) ? !!it.rule_monitor : false;
                     state.ifSelections[it.name] = {
-                        monitor: false, // default to monitoring nothing until explicitly selected
+                        monitor: ruleMonitor,
                         alias: it.alias || '',
-                        desired_state: (it.oper_status === 'up' ? 'up' : 'down'),
-                        alert_severity: 'warning',
+                        desired_state: it.rule_desired_state || (it.oper_status === 'up' ? 'up' : 'down'),
+                        alert_severity: it.rule_severity || 'warning',
+                        member_down_severity: '',
+                        channel_down_severity: '',
+                        admin_down_severity: '',
                         is_port_channel: !!it.is_port_channel,
                         members: Array.isArray(it.channel_members) ? it.channel_members : []
                     };
                 });
-                renderIfRows();
+                renderGroups();
                 showStep('step3');
             }catch(e){ msg('walkMsg', e.message, true); }
         });
 
-        function renderIfRows(){
+        // Group interfaces by rule_name. Ungrouped go into a catch-all group.
+        function buildGroups() {
             var q = (document.getElementById('ifSearch').value||'').toLowerCase();
-            var only = document.getElementById('onlyMonitored').value === '1';
-            var rows = '';
+            var showExcluded = document.getElementById('showExcluded').value === '1';
+            var groups = {}; // label → {label, isExcluded, indices[]}
+            var groupOrder = [];
             (state.walk.interfaces||[]).forEach(function(it, idx){
-                var sel = state.ifSelections[it.name] || {
-                    monitor: false,
-                    alias: it.alias || '',
-                    desired_state: (it.oper_status === 'up' ? 'up' : 'down'),
-                    alert_severity: 'warning',
-                    is_port_channel: !!it.is_port_channel,
-                    members: Array.isArray(it.channel_members) ? it.channel_members : []
-                };
-                var isMonitored = !!sel.monitor;
+                // Apply search filter.
                 if(q && (it.name||'').toLowerCase().indexOf(q)===-1 && (it.alias||'').toLowerCase().indexOf(q)===-1) return;
-                if(only && !isMonitored) return;
-                rows += '<tr data-idx="'+idx+'">'+
-                    '<td><input type="checkbox" class="if-mon" '+(isMonitored?'checked':'')+'></td>'+
-                    '<td>'+esc(it.name)+' '+(it.already_configured?'<span class="badge">configured</span>':'')+'</td>'+
-                    '<td><input class="if-alias" value="'+esc(sel.alias||'')+'" style="width:100%;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:0.3rem;"></td>'+
-                    '<td>'+esc(it.admin_status)+'</td>'+
-                    '<td>'+esc(it.oper_status)+'</td>'+
-                    '<td><select class="if-desired"><option value="up" '+(sel.desired_state==='up'?'selected':'')+'>up</option><option value="down" '+(sel.desired_state==='down'?'selected':'')+'>down</option></select></td>'+
-                    '<td><select class="if-sev"><option value="info" '+(sel.alert_severity==='info'?'selected':'')+'>info</option><option value="warning" '+(sel.alert_severity==='warning'?'selected':'')+'>warning</option><option value="critical" '+(sel.alert_severity==='critical'?'selected':'')+'>critical</option></select></td>'+
-                    '</tr>';
+                // Determine if excluded by rule (rule_monitor===false).
+                var excluded = (it.rule_monitor === false);
+                if(excluded && !showExcluded) return;
+                var label = it.rule_name || '— Unclassified —';
+                if(!groups[label]){
+                    groups[label] = {label: label, excluded: excluded, indices: []};
+                    groupOrder.push(label);
+                }
+                groups[label].indices.push(idx);
             });
-            document.getElementById('ifRows').innerHTML = rows || '<tr><td colspan="7" class="small">No interfaces match the current filter.</td></tr>';
-            bindRowInputs();
+            return {groups: groups, groupOrder: groupOrder};
         }
-        document.getElementById('ifSearch').addEventListener('input', renderIfRows);
-        document.getElementById('onlyMonitored').addEventListener('change', renderIfRows);
 
-        function bindRowInputs() {
-            document.querySelectorAll('#ifRows tr[data-idx]').forEach(function(r){
-                var idx = Number(r.getAttribute('data-idx'));
-                var src = state.walk.interfaces[idx];
-                var key = src.name;
-                var mon = r.querySelector('.if-mon');
-                var alias = r.querySelector('.if-alias');
-                var desired = r.querySelector('.if-desired');
-                var sev = r.querySelector('.if-sev');
+        function sevOpts(current){
+            return ['info','warning','critical'].map(function(v){
+                return '<option value="'+v+'"'+(current===v?' selected':'')+'>'+v+'</option>';
+            }).join('');
+        }
+
+        function renderGroups(){
+            var _ref = buildGroups();
+            var groups = _ref.groups, groupOrder = _ref.groupOrder;
+            var container = document.getElementById('ifGroupsContainer');
+            if(groupOrder.length === 0){
+                container.innerHTML = '<p class="small" style="padding:0.75rem;">No interfaces match the current filter.</p>';
+                return;
+            }
+            var html = '';
+            groupOrder.forEach(function(label){
+                var g = groups[label];
+                var excludedAttr = g.excluded ? ' data-excluded="1"' : '';
+                var excludedStyle = g.excluded ? 'opacity:0.65;' : '';
+                var excludedBadge = g.excluded ? ' <span class="badge" style="background:rgba(248,81,73,.15);color:#f85149;">rule: skip</span>' : '';
+                html += '<div class="rule-group" style="margin-bottom:1rem;'+excludedStyle+'"'+excludedAttr+'>';
+                html += '<div style="display:flex;align-items:center;gap:0.5rem;padding:0.55rem 0.5rem;background:var(--bg3);border:1px solid var(--bd);border-radius:8px 8px 0 0;">';
+                html += '<span style="font-weight:600;font-size:0.88rem;">'+esc(label)+excludedBadge+'</span>';
+                html += '<span class="small">('+g.indices.length+')</span>';
+                if(!g.excluded){
+                    html += '<button class="btn" style="padding:0.25rem 0.6rem;font-size:0.78rem;margin-left:auto;" data-group="'+esc(label)+'" data-action="select-group">Monitor All</button>';
+                    html += '<button class="btn" style="padding:0.25rem 0.6rem;font-size:0.78rem;" data-group="'+esc(label)+'" data-action="deselect-group">None</button>';
+                }
+                html += '</div>';
+                html += '<div style="border:1px solid var(--bd);border-top:none;border-radius:0 0 8px 8px;overflow:auto;max-height:340px;">';
+                html += '<table><thead><tr><th>Monitor</th><th>Interface</th><th>Alias / Description</th><th>Admin</th><th>Oper</th><th>Desired</th><th>Severity</th></tr></thead><tbody>';
+                g.indices.forEach(function(idx){
+                    var it = state.walk.interfaces[idx];
+                    var sel = state.ifSelections[it.name];
+                    var trunkBadge = '';
+                    if(it.trunk_link && it.trunk_link.remote_device){
+                        trunkBadge = ' <span class="badge" title="Trunk: local '+esc(it.trunk_link.local_port_channel||'?')+' → '+esc(it.trunk_link.remote_device)+' '+esc(it.trunk_link.remote_port||'')+' ('+esc(it.trunk_link.remote_port_channel||'?')+')">trunk</span>';
+                    }
+                    var cfgBadge = it.already_configured ? ' <span class="badge">configured</span>' : '';
+                    html += '<tr data-idx="'+idx+'">';
+                    html += '<td><input type="checkbox" class="if-mon"'+(sel.monitor?' checked':'')+' data-key="'+esc(it.name)+'"></td>';
+                    html += '<td style="white-space:nowrap;">'+esc(it.name)+cfgBadge+'</td>';
+                    html += '<td><div style="display:flex;align-items:center;gap:0.4rem;"><input class="if-alias" value="'+esc(sel.alias||'')+'" style="flex:1;min-width:120px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:0.3rem;" data-key="'+esc(it.name)+'">'+trunkBadge+'</div></td>';
+                    html += '<td>'+esc(it.admin_status)+'</td>';
+                    html += '<td>'+esc(it.oper_status)+'</td>';
+                    html += '<td><select class="if-desired" data-key="'+esc(it.name)+'"><option value="up"'+(sel.desired_state==='up'?' selected':'')+'>up</option><option value="down"'+(sel.desired_state==='down'?' selected':'')+'>down</option></select></td>';
+                    html += '<td><select class="if-sev" data-key="'+esc(it.name)+'">'+sevOpts(sel.alert_severity)+'</select></td>';
+                    html += '</tr>';
+                });
+                html += '</tbody></table></div></div>';
+            });
+            container.innerHTML = html;
+            bindGroupInputs();
+        }
+
+        function bindGroupInputs(){
+            // Group-level quick-select buttons.
+            document.querySelectorAll('[data-action="select-group"],[data-action="deselect-group"]').forEach(function(btn){
+                btn.addEventListener('click', function(){
+                    var label = btn.getAttribute('data-group');
+                    var val = btn.getAttribute('data-action') === 'select-group';
+                    (state.walk.interfaces||[]).forEach(function(it){
+                        if(it.rule_name === label || (!it.rule_name && label === '— Unclassified —')){
+                            state.ifSelections[it.name].monitor = val;
+                        }
+                    });
+                    renderGroups();
+                });
+            });
+            // Per-row inputs.
+            document.querySelectorAll('[data-idx]').forEach(function(row){
+                var key = row.querySelector('.if-mon').getAttribute('data-key');
+                var mon = row.querySelector('.if-mon');
+                var alias = row.querySelector('.if-alias');
+                var desired = row.querySelector('.if-desired');
+                var sev = row.querySelector('.if-sev');
                 mon.addEventListener('change', function(){ state.ifSelections[key].monitor = mon.checked; });
                 alias.addEventListener('input', function(){ state.ifSelections[key].alias = alias.value || ''; });
                 desired.addEventListener('change', function(){ state.ifSelections[key].desired_state = desired.value; });
@@ -1312,16 +1370,8 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
             });
         }
 
-        function setVisibleMonitor(value){
-            document.querySelectorAll('#ifRows tr[data-idx]').forEach(function(r){
-                var idx = Number(r.getAttribute('data-idx'));
-                var src = state.walk.interfaces[idx];
-                state.ifSelections[src.name].monitor = value;
-            });
-            renderIfRows();
-        }
-        document.getElementById('selectVisible').addEventListener('click', function(){ setVisibleMonitor(true); });
-        document.getElementById('deselectVisible').addEventListener('click', function(){ setVisibleMonitor(false); });
+        document.getElementById('ifSearch').addEventListener('input', renderGroups);
+        document.getElementById('showExcluded').addEventListener('change', renderGroups);
 
         document.getElementById('toReview').addEventListener('click', function(){
             var payload = [];
@@ -1339,6 +1389,9 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                     desired_state: sel.desired_state || (src.oper_status === 'up' ? 'up' : 'down'),
                     admin_state: 'enabled',
                     alert_severity: sel.alert_severity || 'warning',
+                    member_down_severity: sel.member_down_severity || '',
+                    channel_down_severity: sel.channel_down_severity || '',
+                    admin_down_severity: sel.admin_down_severity || '',
                     is_port_channel: !!sel.is_port_channel,
                     members: Array.isArray(sel.members) ? sel.members : []
                 });
@@ -1393,7 +1446,7 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
             state = { probe: null, walk: null, ifSelections: {} };
             document.getElementById('address').value = '';
             document.getElementById('community').value = '';
-            document.getElementById('ifRows').innerHTML = '';
+            document.getElementById('ifGroupsContainer').innerHTML = '';
             showStep('step1');
         });
     </script>

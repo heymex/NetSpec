@@ -68,6 +68,14 @@ func LoadConfigDir(dir string) (*Config, error) {
 		}
 	}
 
+	// Load rules.yaml (optional) — business rules for discovery defaults.
+	rulesPath := filepath.Join(dir, "rules.yaml")
+	if _, err := os.Stat(rulesPath); err == nil {
+		if err := loadYAML(rulesPath, &cfg.Rules); err != nil {
+			return nil, fmt.Errorf("loading rules.yaml: %w", err)
+		}
+	}
+
 	// Set defaults
 	if cfg.DesiredState.Global.CollectionInterval == 0 {
 		cfg.DesiredState.Global.CollectionInterval = 10 * time.Second

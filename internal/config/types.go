@@ -8,6 +8,7 @@ type Config struct {
 	Alerts       AlertsConfig       `yaml:"alerts"`
 	Credentials  CredentialsConfig  `yaml:"credentials"`
 	Maintenance  MaintenanceConfig  `yaml:"maintenance"`
+	Rules        RulesConfig        `yaml:"-"` // loaded from rules.yaml, not inline
 	// Device source stats are runtime-only metadata for observability.
 	MonolithicDeviceCount int `yaml:"-"`
 	SplitDeviceCount      int `yaml:"-"`
