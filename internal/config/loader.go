@@ -344,13 +344,19 @@ func ValidateConfig(cfg *Config) error {
 
 	// Validate alert channels
 	for name, channel := range cfg.Alerts.Channels {
-		if channel.Type != "apprise" {
-			return fmt.Errorf("channel %s: only 'apprise' type is supported", name)
+		switch channel.Type {
+		case "apprise", "":
+			if channel.URLEnv == "" {
+				return fmt.Errorf("channel %s: url_env is required for apprise channels", name)
+			}
+		case "slack_chatops":
+			if channel.ChannelEnv == "" {
+				return fmt.Errorf("channel %s: channel_env is required for slack_chatops channels", name)
+			}
+		default:
+			return fmt.Errorf("channel %s: unsupported type %q (valid: apprise, slack_chatops)", name, channel.Type)
 		}
-		if channel.URLEnv == "" {
-			return fmt.Errorf("channel %s: url_env is required", name)
-		}
-		// Note: We don't validate env var exists here as it may be set at runtime
+		// Note: We don't validate env var values here as they may be set at runtime
 	}
 
 	// Validate alert rules reference valid channels
