@@ -400,6 +400,57 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
             color: var(--text-secondary);
         }
 
+        .alert-item.acked {
+            opacity: 0.65;
+        }
+
+        .alert-item.acked .alert-severity {
+            opacity: 0.6;
+        }
+
+        .ack-badge {
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            color: var(--accent-green);
+            background: rgba(63, 185, 80, 0.12);
+            border-radius: 4px;
+            padding: 0.15rem 0.45rem;
+        }
+
+        .alert-actions {
+            display: flex;
+            gap: 0.4rem;
+            align-items: flex-start;
+            flex-shrink: 0;
+        }
+
+        .btn-sm {
+            padding: 0.25rem 0.6rem;
+            font-size: 0.75rem;
+            border-radius: 4px;
+            border: none;
+            cursor: pointer;
+            font-weight: 500;
+        }
+
+        .btn-sm.btn-primary {
+            background: var(--accent-blue);
+            color: #fff;
+        }
+
+        .btn-sm.btn-danger {
+            background: transparent;
+            color: var(--text-secondary);
+            border: 1px solid var(--border-color);
+        }
+
+        .btn-sm.btn-danger:hover {
+            color: var(--accent-red);
+            border-color: var(--accent-red);
+        }
+
         .empty-state {
             padding: 3rem 2rem;
             text-align: center;
@@ -867,24 +918,8 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                 <div class="card-header">
                     <span class="card-title">🚨 Active Alerts</span>
                 </div>
-                <div class="card-body no-padding">
-                    {{if .Alerts}}
-                    <ul class="alert-list">
-                        {{range .Alerts}}
-                        <li class="alert-item">
-                            <span class="alert-severity {{.Severity}}">{{.Severity}}</span>
-                            <div class="alert-content">
-                                <h4>{{.Device}} - {{.Entity}}</h4>
-                                <p>{{.Message}}</p>
-                            </div>
-                        </li>
-                        {{end}}
-                    </ul>
-                    {{else}}
-                    <div class="empty-state">
-                        <p>✓ No active alerts</p>
-                    </div>
-                    {{end}}
+                <div class="card-body no-padding" id="alerts-card-body">
+                    <div class="empty-state"><p style="color:var(--text-muted)">Loading…</p></div>
                 </div>
             </div>
         </div>
@@ -1124,6 +1159,99 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
             }
             setInterval(refreshHexOverview, 10000);
             refreshHexOverview();
+        })();
+
+        // Alert management — renders the Active Alerts card and handles ack/close actions.
+        (function () {
+            var cardBody = document.getElementById('alerts-card-body');
+            if (!cardBody) return;
+
+            function esc(s) {
+                return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            }
+
+            function timeSince(isoStr) {
+                if (!isoStr) return '';
+                var sec = Math.floor((Date.now() - new Date(isoStr)) / 1000);
+                if (sec < 60) return sec + 's ago';
+                if (sec < 3600) return Math.floor(sec / 60) + 'm ago';
+                if (sec < 86400) return Math.floor(sec / 3600) + 'h ago';
+                return Math.floor(sec / 86400) + 'd ago';
+            }
+
+            function renderCard(alerts) {
+                if (!alerts || alerts.length === 0) {
+                    cardBody.innerHTML = '<div class="empty-state"><p>&#10003; No active alerts</p></div>';
+                    return;
+                }
+                var sev = { critical: 0, warning: 1, info: 2 };
+                alerts.sort(function (a, b) {
+                    var sa = sev[a.Severity] !== undefined ? sev[a.Severity] : 9;
+                    var sb = sev[b.Severity] !== undefined ? sev[b.Severity] : 9;
+                    if (sa !== sb) return sa - sb;
+                    if (a.Device !== b.Device) return a.Device < b.Device ? -1 : 1;
+                    return a.Entity < b.Entity ? -1 : 1;
+                });
+                var html = '<ul class="alert-list">';
+                for (var i = 0; i < alerts.length; i++) {
+                    var a = alerts[i];
+                    var acked = a.State === 'acked';
+                    var encodedID = encodeURIComponent(a.ID);
+                    html += '<li class="alert-item' + (acked ? ' acked' : '') + '">';
+                    html += '<span class="alert-severity ' + esc(a.Severity) + '">' + esc(a.Severity) + '</span>';
+                    html += '<div class="alert-content" style="flex:1;min-width:0">';
+                    html += '<div style="display:flex;align-items:baseline;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.2rem">';
+                    html += '<h4 style="margin:0;font-size:0.875rem">' + esc(a.Device) + ' &mdash; ' + esc(a.Entity) + '</h4>';
+                    html += '<span style="font-size:0.72rem;color:var(--text-muted)">' + esc(a.AlertType) + '</span>';
+                    if (acked) {
+                        html += '<span class="ack-badge">acked by ' + esc(a.AckedBy) + '</span>';
+                    }
+                    html += '</div>';
+                    html += '<p style="margin:0;font-size:0.8125rem;color:var(--text-secondary)">' + esc(a.Message) + '</p>';
+                    html += '<div style="font-size:0.7rem;color:var(--text-muted);margin-top:0.25rem">Fired ' + timeSince(a.FiredAt);
+                    if (acked && a.AckedAt) html += ' &middot; Acked ' + timeSince(a.AckedAt);
+                    html += '</div>';
+                    html += '</div>';
+                    html += '<div class="alert-actions">';
+                    if (!acked) {
+                        html += '<button class="btn btn-sm btn-primary" onclick="netspecAck(\'' + encodedID + '\')">Ack</button>';
+                    }
+                    html += '<button class="btn btn-sm btn-danger" onclick="netspecClose(\'' + encodedID + '\')">Close</button>';
+                    html += '</div>';
+                    html += '</li>';
+                }
+                html += '</ul>';
+                cardBody.innerHTML = html;
+            }
+
+            function refreshAlerts() {
+                fetch('/alerts')
+                    .then(function (r) { return r.json(); })
+                    .then(function (d) { renderCard(d.alerts || []); })
+                    .catch(function (e) { if (console && console.warn) console.warn('alerts refresh failed', e); });
+            }
+
+            window.netspecAck = function (encodedID) {
+                fetch('/api/alerts/' + encodedID + '/ack', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+                    .then(function (r) {
+                        if (r.ok) { refreshAlerts(); }
+                        else { r.text().then(function (t) { alert('Ack failed: ' + t); }); }
+                    })
+                    .catch(function (e) { alert('Ack failed: ' + e); });
+            };
+
+            window.netspecClose = function (encodedID) {
+                if (!confirm('Close this alert? It will re-fire if the problem persists.')) return;
+                fetch('/api/alerts/' + encodedID + '/close', { method: 'POST' })
+                    .then(function (r) {
+                        if (r.ok) { refreshAlerts(); }
+                        else { r.text().then(function (t) { alert('Close failed: ' + t); }); }
+                    })
+                    .catch(function (e) { alert('Close failed: ' + e); });
+            };
+
+            refreshAlerts();
+            setInterval(refreshAlerts, 15000);
         })();
         </script>
         {{end}}

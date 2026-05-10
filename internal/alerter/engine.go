@@ -405,14 +405,14 @@ func getChannelsForSeverity(cfg *config.Config, severity string) []string {
 	return []string{}
 }
 
-// GetActiveAlerts returns all active alerts
+// GetActiveAlerts returns all firing and acknowledged alerts.
 func (e *Engine) GetActiveAlerts() []*types.Alert {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
 	alerts := make([]*types.Alert, 0, len(e.activeAlerts))
 	for _, alert := range e.activeAlerts {
-		if alert.State == "firing" {
+		if alert.State == "firing" || alert.State == "acked" {
 			alerts = append(alerts, alert)
 		}
 	}
