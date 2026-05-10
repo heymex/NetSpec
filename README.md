@@ -20,11 +20,6 @@ While I welcome suggestions to improve NetSpec, I hope that you keep these core 
 
 NetSpec is a declarative network monitor: you define how the network *should* behave, and NetSpec **evaluates reality against that desired state** and **raises alerts** when they diverge (SNMP, telemetry ingest, Apprise-backed delivery). It is built for environments where *state correctness matters more than metrics*.
 
-
-**Current stable release: [v2.0.0](https://github.com/heymex/NetSpec/releases/tag/v2.0.0)** ([CHANGELOG](CHANGELOG.md), [release notes](docs/RELEASE_NOTES.md)) — pin **`NETSPEC_IMAGE_TAG=v2.0.0`** for stable deploys. Use **`latest`** only to track `main`.
-
-NetSpec is a declarative network monitor: you define how the network *should* behave, and NetSpec **evaluates reality against that desired state** and **raises alerts** when they diverge (SNMP, telemetry ingest, Apprise-backed delivery). It is built for environments where *state correctness matters more than metrics*.
-
 ## Quick Start
 
 ### Prerequisites

@@ -27,6 +27,7 @@ import (
 	"github.com/netspec/netspec/internal/ifname"
 	"github.com/netspec/netspec/internal/notifier"
 	"github.com/netspec/netspec/internal/version"
+	"github.com/netspec/netspec/internal/webhook"
 	"github.com/netspec/netspec/internal/webui"
 	"github.com/rs/zerolog"
 )
@@ -106,10 +107,24 @@ func main() {
 	reachTracker := collector.NewReachabilityTracker()
 
 	// Create notifier (channel URLs come from env vars named in config/alerts.yaml channels.*.url_env)
-	notifier := notifier.NewNotifier(logger, cfg.Alerts.Channels)
+	appriseNotifier := notifier.NewNotifier(logger, cfg.Alerts.Channels)
 
 	// Create alert engine
-	alertEngine := alerter.NewEngine(cfg, notifier, logger)
+	alertEngine := alerter.NewEngine(cfg, appriseNotifier, logger)
+
+	// Wire up Slack ChatOps if configured.
+	var slackNotifier *notifier.SlackNotifier
+	if cfg.Alerts.Slack.Enabled && cfg.Alerts.Slack.BotTokenEnv != "" {
+		slackNotifier = notifier.NewSlackNotifier(cfg.Alerts.Slack.BotTokenEnv, logger)
+		if slackNotifier != nil {
+			alertEngine.SetSlackNotifier(slackNotifier)
+			logger.Info().Msg("Slack ChatOps enabled")
+		} else {
+			logger.Warn().
+				Str("bot_token_env", cfg.Alerts.Slack.BotTokenEnv).
+				Msg("Slack ChatOps configured but bot token env var is empty — disabled")
+		}
+	}
 
 	// Start alert engine
 	go alertEngine.Run()
@@ -386,6 +401,23 @@ func main() {
 		apiPort = "8088"
 	}
 	apiServer := api.NewServer(alertEngine, logger, apiPort)
+
+	// Register Slack interaction webhook if ChatOps is enabled.
+	if slackNotifier != nil {
+		signingSecret := ""
+		if cfg.Alerts.Slack.SigningSecretEnv != "" {
+			signingSecret = os.Getenv(cfg.Alerts.Slack.SigningSecretEnv)
+		}
+		if signingSecret == "" {
+			logger.Warn().Msg("Slack ChatOps: SLACK_SIGNING_SECRET not set — webhook signature validation disabled")
+		}
+		slackWebhookHandler := webhook.NewSlackHandler(signingSecret, alertEngine, slackNotifier, logger)
+		apiServer.SetSlackWebhookHandler(slackWebhookHandler)
+		logger.Info().
+			Str("path", "/webhook/slack/interactions").
+			Str("port", apiPort).
+			Msg("Slack interaction webhook registered")
+	}
 
 	// Configure auth (disabled when NETSPEC_ADMIN_PASSWORD_HASH is unset).
 	authManager := auth.NewManager(

@@ -19,6 +19,7 @@ import (
 	"github.com/netspec/netspec/internal/discovery"
 	"github.com/netspec/netspec/internal/evaluator"
 	"github.com/netspec/netspec/internal/notifier"
+	"github.com/netspec/netspec/internal/webhook"
 	"github.com/netspec/netspec/internal/webui"
 	"github.com/rs/zerolog"
 )
@@ -75,6 +76,7 @@ type DiagnosticsCoverage struct {
 // Server provides HTTP API endpoints and web UI
 type Server struct {
 	alertEngine     *alerter.Engine
+	slackWebhook    *webhook.SlackHandler
 	logger          zerolog.Logger
 	port            string
 	logBuffer       *webui.LogBuffer
@@ -151,6 +153,11 @@ func (s *Server) SetAuthManager(m *auth.Manager) {
 	s.authManager = m
 }
 
+// SetSlackWebhookHandler registers the Slack interaction webhook handler.
+func (s *Server) SetSlackWebhookHandler(h *webhook.SlackHandler) {
+	s.slackWebhook = h
+}
+
 // SetSNMPReachabilityTracker supplies per-device SNMP contact state for the API and honeycomb.
 func (s *Server) SetSNMPReachabilityTracker(t *collector.ReachabilityTracker) {
 	s.reachMu.Lock()
@@ -189,6 +196,11 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/rules", s.handleRulesAPI)
 	mux.HandleFunc("/openapi.json", s.handleOpenAPIJSON)
 	mux.HandleFunc("/api-browser", s.handleAPIBrowser)
+
+	// ChatOps webhook routes (no auth — validated by provider signatures)
+	if s.slackWebhook != nil {
+		mux.HandleFunc("/webhook/slack/interactions", s.slackWebhook.HandleInteractions)
+	}
 
 	// Web UI routes
 	mux.HandleFunc("/device/", s.handleDevicePage)
