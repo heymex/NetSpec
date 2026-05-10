@@ -72,6 +72,11 @@ func (n *Notifier) SendAlert(alert *types.Alert, channelNames []string) error {
 			errs = append(errs, fmt.Errorf("channel %q: not defined in alerts.channels", name))
 			continue
 		}
+		// Non-Apprise channel types (e.g. slack_chatops) are handled by their own notifiers.
+		if ch.Type != "" && ch.Type != "apprise" {
+			n.logger.Debug().Str("channel", name).Str("type", ch.Type).Msg("skipping non-apprise channel")
+			continue
+		}
 		if !severityAllows(ch.SeverityFilter, alert.Severity) {
 			n.logger.Debug().
 				Str("channel", name).

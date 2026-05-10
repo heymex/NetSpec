@@ -2,6 +2,7 @@ package alerter
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -18,16 +19,22 @@ type NotifyFunc func(alert types.Alert)
 
 // Engine manages alert lifecycle and routing
 type Engine struct {
-	config       *config.Config
-	notifier     *notifier.Notifier
-	logger       zerolog.Logger
-	activeAlerts map[string]*types.Alert
-	lastFired    map[string]time.Time // dedup tracking
-	mu           sync.RWMutex
-	flap         *FlapDetector
-	escalation   *EscalationManager
-	events       chan AlertEvent
-	notify       NotifyFunc
+	config        *config.Config
+	notifier      *notifier.Notifier
+	slackNotifier *notifier.SlackNotifier
+	logger        zerolog.Logger
+	activeAlerts  map[string]*types.Alert
+	lastFired     map[string]time.Time // dedup tracking
+	mu            sync.RWMutex
+	flap          *FlapDetector
+	escalation    *EscalationManager
+	events        chan AlertEvent
+	notify        NotifyFunc
+}
+
+// SetSlackNotifier attaches the Slack ChatOps notifier to the engine.
+func (e *Engine) SetSlackNotifier(sn *notifier.SlackNotifier) {
+	e.slackNotifier = sn
 }
 
 // AlertEvent represents an alert event from the evaluator
@@ -226,6 +233,12 @@ func (e *Engine) process(ev AlertEvent) {
 			}
 		}
 
+		// If the alert is already acknowledged, suppress re-notification regardless of dedup window.
+		if existing, ok := e.activeAlerts[key]; ok && existing.State == "acked" {
+			e.logger.Debug().Str("key", key).Msg("alert already acked, suppressing re-fire")
+			return
+		}
+
 		// Check dedup
 		dedupWindow := e.config.Alerts.AlertBehavior.DeduplicationWindow
 		if dedupWindow == 0 {
@@ -264,6 +277,9 @@ func (e *Engine) process(ev AlertEvent) {
 			e.notify(*alert)
 		}
 
+		// Post interactive Slack Block Kit message.
+		e.postSlackAlert(alert)
+
 		// Start escalation timer if configured
 		if e.escalation != nil {
 			channels := getChannelsForSeverity(e.config, ev.Severity)
@@ -289,6 +305,9 @@ func (e *Engine) process(ev AlertEvent) {
 		if e.notify != nil {
 			e.notify(*existing)
 		}
+
+		// Update Slack message to resolved state before removing from map.
+		e.updateSlackAlert(existing)
 
 		// Cancel escalation
 		if e.escalation != nil {
@@ -318,6 +337,7 @@ func (e *Engine) checkFlapRecovery() {
 			if e.notify != nil {
 				e.notify(*alert)
 			}
+			e.updateSlackAlert(alert)
 			delete(e.activeAlerts, key)
 		}
 	}
@@ -357,6 +377,19 @@ func (e *Engine) ResolveAlert(device, entity, alertType string) {
 	}
 }
 
+func slackSeverityAllows(filter []string, severity string) bool {
+	if len(filter) == 0 {
+		return true
+	}
+	s := strings.ToLower(strings.TrimSpace(severity))
+	for _, f := range filter {
+		if strings.ToLower(strings.TrimSpace(f)) == s {
+			return true
+		}
+	}
+	return false
+}
+
 // getChannelsForSeverity returns notification channels for a given severity
 func getChannelsForSeverity(cfg *config.Config, severity string) []string {
 	// Check for severity-specific rule
@@ -384,6 +417,106 @@ func (e *Engine) GetActiveAlerts() []*types.Alert {
 		}
 	}
 	return alerts
+}
+
+// AckAlert acknowledges a firing alert, suppressing further re-notifications.
+// Returns a copy of the updated alert so callers can update external systems (e.g. Slack message).
+func (e *Engine) AckAlert(alertID, by, note string) (*types.Alert, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	for _, alert := range e.activeAlerts {
+		if alert.ID != alertID {
+			continue
+		}
+		if alert.State == "resolved" {
+			return nil, fmt.Errorf("alert %s is already resolved", alertID)
+		}
+		now := time.Now()
+		alert.AckedAt = &now
+		alert.AckedBy = by
+		alert.AckNote = note
+		alert.State = "acked"
+		e.logger.Info().Str("alert_id", alertID).Str("by", by).Msg("alert acknowledged")
+		cp := *alert
+		return &cp, nil
+	}
+	return nil, fmt.Errorf("alert %s not found", alertID)
+}
+
+// CloseAlert manually resolves an alert (user-initiated from Slack).
+// Sends a resolved notification through configured Apprise channels and removes the alert.
+func (e *Engine) CloseAlert(alertID, by string) (*types.Alert, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	for key, alert := range e.activeAlerts {
+		if alert.ID != alertID {
+			continue
+		}
+		now := time.Now()
+		alert.State = "resolved"
+		alert.ResolvedAt = &now
+		alert.Message = fmt.Sprintf("Manually closed by %s via Slack", by)
+		if alert.AckedBy == "" {
+			alert.AckedBy = by
+		}
+
+		if e.escalation != nil {
+			e.escalation.CancelEscalation(alert.Device, alert.Entity, alert.AlertType)
+		}
+		if e.notify != nil {
+			e.notify(*alert)
+		}
+
+		e.logger.Info().Str("alert_id", alertID).Str("by", by).Msg("alert closed via Slack")
+		cp := *alert
+		delete(e.activeAlerts, key)
+		return &cp, nil
+	}
+	return nil, fmt.Errorf("alert %s not found", alertID)
+}
+
+// postSlackAlert posts a new Block Kit message for the given alert via all slack_chatops channels.
+// Must be called with e.mu held.
+func (e *Engine) postSlackAlert(alert *types.Alert) {
+	if e.slackNotifier == nil {
+		return
+	}
+	channels := getChannelsForSeverity(e.config, alert.Severity)
+	for _, chName := range channels {
+		ch, ok := e.config.Alerts.Channels[chName]
+		if !ok || ch.Type != "slack_chatops" {
+			continue
+		}
+		if !slackSeverityAllows(ch.SeverityFilter, alert.Severity) {
+			continue
+		}
+		channelID := strings.TrimSpace(os.Getenv(ch.ChannelEnv))
+		if channelID == "" {
+			e.logger.Warn().Str("channel", chName).Str("channel_env", ch.ChannelEnv).Msg("slack_chatops channel_env is empty")
+			continue
+		}
+		ts, err := e.slackNotifier.PostAlert(alert, channelID)
+		if err != nil {
+			e.logger.Error().Err(err).Str("alert_id", alert.ID).Str("channel", chName).Msg("Failed to post Slack ChatOps alert")
+			continue
+		}
+		// Store TS on the live alert pointer so updates (ack, resolve) can edit the same message.
+		alert.SlackMsgTS = ts
+		alert.SlackChannelID = channelID
+	}
+}
+
+// updateSlackAlert edits the existing Slack message for the given alert.
+// Must be called with e.mu held.
+func (e *Engine) updateSlackAlert(alert *types.Alert) {
+	if e.slackNotifier == nil || alert.SlackMsgTS == "" {
+		return
+	}
+	if err := e.slackNotifier.UpdateAlert(alert, alert.SlackChannelID, alert.SlackMsgTS); err != nil {
+		e.logger.Error().Err(err).Str("alert_id", alert.ID).Str("state", alert.State).Msg("Failed to update Slack message")
+	}
 }
 
 // ClearAlertsForDevice removes all in-memory active/dedup alert state for a device.

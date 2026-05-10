@@ -30,6 +30,7 @@ type AlertsConfig struct {
 	Channels      map[string]ChannelConfig `yaml:"channels"`
 	AlertRules    map[string]AlertRule     `yaml:"alert_rules"`
 	AlertBehavior AlertBehavior            `yaml:"alert_behavior"`
+	Slack         SlackChatOpsConfig       `yaml:"slack_chatops,omitempty"`
 }
 
 // CredentialsConfig defines credential storage
@@ -169,12 +170,23 @@ type AlertSeverity struct {
 	AdminDown     string `yaml:"admin_down,omitempty"`
 }
 
-// ChannelConfig defines a notification channel
+// ChannelConfig defines a notification channel.
+// type "apprise" (default) routes through Apprise-API via url_env.
+// type "slack_chatops" uses the direct Slack API with interactive Block Kit messages;
+// set channel_env to the env var holding the Slack channel ID (e.g. "C0123456789").
 type ChannelConfig struct {
 	Type            string   `yaml:"type"`
-	URLEnv          string   `yaml:"url_env"`
+	URLEnv          string   `yaml:"url_env,omitempty"`
+	ChannelEnv      string   `yaml:"channel_env,omitempty"`
 	SeverityFilter  []string `yaml:"severity_filter,omitempty"`
 	EscalationDelay int      `yaml:"escalation_delay,omitempty"`
+}
+
+// SlackChatOpsConfig enables two-way Slack alerting via the Slack Web API.
+type SlackChatOpsConfig struct {
+	Enabled          bool   `yaml:"enabled"`
+	BotTokenEnv      string `yaml:"bot_token_env"`       // env var: xoxb-… bot token
+	SigningSecretEnv string  `yaml:"signing_secret_env"`  // env var: Slack signing secret for webhook validation
 }
 
 // AlertRule defines routing rules for alerts
