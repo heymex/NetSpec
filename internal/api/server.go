@@ -183,6 +183,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/status", s.handleStatus)
 	mux.HandleFunc("/alerts", s.handleAlerts)
+	mux.HandleFunc("/api/alerts/", s.handleAlertAction)
 	mux.HandleFunc("/api/logs", s.handleLogsAPI)
 	mux.HandleFunc("/api/reload", s.handleReload)
 	mux.HandleFunc("/api/notifications/test", s.handleNotificationTest)
@@ -375,6 +376,55 @@ func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 		"alerts": alerts,
 		"count":  len(alerts),
 	})
+}
+
+// handleAlertAction handles POST /api/alerts/{id}/ack and /api/alerts/{id}/close.
+// Path format: /api/alerts/<url-encoded-id>/<action>
+func (s *Server) handleAlertAction(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Parse /api/alerts/{id}/{action}
+	parts := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/api/alerts/"), "/", 2)
+	if len(parts) != 2 {
+		http.Error(w, "invalid path — expected /api/alerts/{id}/{ack|close}", http.StatusBadRequest)
+		return
+	}
+	alertID, err := url.PathUnescape(parts[0])
+	if err != nil || alertID == "" {
+		http.Error(w, "invalid alert id", http.StatusBadRequest)
+		return
+	}
+	action := parts[1]
+
+	by := "web-ui"
+
+	w.Header().Set("Content-Type", "application/json")
+
+	switch action {
+	case "ack":
+		var body struct {
+			Note string `json:"note"`
+		}
+		json.NewDecoder(r.Body).Decode(&body)
+		alert, err := s.alertEngine.AckAlert(alertID, by, body.Note)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		json.NewEncoder(w).Encode(alert)
+	case "close":
+		alert, err := s.alertEngine.CloseAlert(alertID, by)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		json.NewEncoder(w).Encode(alert)
+	default:
+		http.Error(w, "unknown action "+action+" — use ack or close", http.StatusBadRequest)
+	}
 }
 
 // handleLogsAPI returns recent log entries as JSON
