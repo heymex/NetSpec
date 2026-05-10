@@ -386,18 +386,24 @@ func (s *Server) handleAlertAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse /api/alerts/{id}/{action}
-	parts := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/api/alerts/"), "/", 2)
-	if len(parts) != 2 {
+	// Parse /api/alerts/{id}/{action}.
+	// Use RawPath so that %2F in the alert ID is not decoded to '/' before we split.
+	rawPath := r.URL.RawPath
+	if rawPath == "" {
+		rawPath = r.URL.Path
+	}
+	rest := strings.TrimPrefix(rawPath, "/api/alerts/")
+	idx := strings.LastIndex(rest, "/")
+	if idx < 0 {
 		http.Error(w, "invalid path — expected /api/alerts/{id}/{ack|close}", http.StatusBadRequest)
 		return
 	}
-	alertID, err := url.PathUnescape(parts[0])
+	alertID, err := url.PathUnescape(rest[:idx])
 	if err != nil || alertID == "" {
 		http.Error(w, "invalid alert id", http.StatusBadRequest)
 		return
 	}
-	action := parts[1]
+	action := rest[idx+1:]
 
 	by := "web-ui"
 
