@@ -617,21 +617,24 @@ func resolveDeviceForEvent(cfg *config.Config, event collector.PushTelemetryEven
 }
 
 func eventAddressHint(event collector.PushTelemetryEvent) string {
+	// Prefer the device field itself if it's a bare IP.
 	if ip := net.ParseIP(strings.TrimSpace(event.Device)); ip != nil {
 		return ip.String()
 	}
-	source := strings.TrimSpace(event.Source)
-	if source == "" {
-		return ""
-	}
-	host, _, err := net.SplitHostPort(source)
-	if err == nil {
-		if ip := net.ParseIP(host); ip != nil {
+	// Try Source (pipeline label or IP) then RemoteAddr (TCP peer — always an IP:port).
+	for _, candidate := range []string{event.Source, event.RemoteAddr} {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		if host, _, err := net.SplitHostPort(candidate); err == nil {
+			if ip := net.ParseIP(host); ip != nil {
+				return ip.String()
+			}
+		}
+		if ip := net.ParseIP(candidate); ip != nil {
 			return ip.String()
 		}
-	}
-	if ip := net.ParseIP(source); ip != nil {
-		return ip.String()
 	}
 	return ""
 }

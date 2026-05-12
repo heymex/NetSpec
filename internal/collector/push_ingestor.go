@@ -23,6 +23,9 @@ type PushTelemetryEvent struct {
 	AdminStatus string `json:"admin_status,omitempty"`
 	Token       string `json:"token,omitempty"`
 	Source      string `json:"source,omitempty"`
+	// RemoteAddr is the TCP peer address (host:port) of the connection that delivered this event.
+	// Not part of the wire format — populated by the ingestor, used for address hinting.
+	RemoteAddr string `json:"-"`
 }
 
 // PushIngestor receives line-delimited JSON telemetry over TCP.
@@ -197,6 +200,7 @@ func (i *PushIngestor) handleConn(ctx context.Context, conn net.Conn) {
 		if i.sourceTag != "" {
 			event.Source = i.sourceTag
 		}
+		event.RemoteAddr = remote
 		i.incAccepted(event.Device)
 		i.onEvent(event)
 	}
