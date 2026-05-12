@@ -110,7 +110,7 @@ func main() {
 	appriseNotifier := notifier.NewNotifier(logger, cfg.Alerts.Channels)
 
 	// Create alert engine
-	alertEngine := alerter.NewEngine(cfg, appriseNotifier, logger)
+	alertEngine := alerter.NewEngine(cfg, appriseNotifier, logger, config.DataDir(configDir))
 
 	// Wire up Slack ChatOps if configured.
 	var slackNotifier *notifier.SlackNotifier

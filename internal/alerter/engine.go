@@ -1,8 +1,10 @@
 package alerter
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -19,17 +21,26 @@ type NotifyFunc func(alert types.Alert)
 
 // Engine manages alert lifecycle and routing
 type Engine struct {
-	config        *config.Config
-	notifier      *notifier.Notifier
-	slackNotifier *notifier.SlackNotifier
-	logger        zerolog.Logger
-	activeAlerts  map[string]*types.Alert
-	lastFired     map[string]time.Time // dedup tracking
-	mu            sync.RWMutex
-	flap          *FlapDetector
-	escalation    *EscalationManager
-	events        chan AlertEvent
-	notify        NotifyFunc
+	config          *config.Config
+	notifier        *notifier.Notifier
+	slackNotifier   *notifier.SlackNotifier
+	logger          zerolog.Logger
+	activeAlerts    map[string]*types.Alert
+	lastFired       map[string]time.Time // dedup tracking
+	suppressedUntil map[string]time.Time // zero time = suppress until condition resolves
+	dataDir         string
+	mu              sync.RWMutex
+	flap            *FlapDetector
+	escalation      *EscalationManager
+	events          chan AlertEvent
+	notify          NotifyFunc
+}
+
+// persistedState is the on-disk format for alert-state.json.
+type persistedState struct {
+	ActiveAlerts    map[string]*types.Alert `json:"active_alerts"`
+	LastFired       map[string]time.Time    `json:"last_fired"`
+	SuppressedUntil map[string]time.Time    `json:"suppressed_until"`
 }
 
 // SetSlackNotifier attaches the Slack ChatOps notifier to the engine.
@@ -50,7 +61,7 @@ type AlertEvent struct {
 
 
 // NewEngine creates a new alert engine with full Phase 2 features
-func NewEngine(cfg *config.Config, notifier *notifier.Notifier, logger zerolog.Logger) *Engine {
+func NewEngine(cfg *config.Config, notifier *notifier.Notifier, logger zerolog.Logger, dataDir string) *Engine {
 	l := logger.With().Str("component", "alerter").Logger()
 
 	var flapDetector *FlapDetector
@@ -88,16 +99,20 @@ func NewEngine(cfg *config.Config, notifier *notifier.Notifier, logger zerolog.L
 	}
 
 	engine := &Engine{
-		config:       cfg,
-		notifier:     notifier,
-		logger:       l,
-		activeAlerts: make(map[string]*types.Alert),
-		lastFired:    make(map[string]time.Time),
-		flap:         flapDetector,
-		escalation:   escMgr,
-		events:       make(chan AlertEvent, 500),
-		notify:       notifyFn,
+		config:          cfg,
+		notifier:        notifier,
+		logger:          l,
+		activeAlerts:    make(map[string]*types.Alert),
+		lastFired:       make(map[string]time.Time),
+		suppressedUntil: make(map[string]time.Time),
+		dataDir:         dataDir,
+		flap:            flapDetector,
+		escalation:      escMgr,
+		events:          make(chan AlertEvent, 500),
+		notify:          notifyFn,
 	}
+
+	engine.loadState()
 
 	if escMgr != nil {
 		escFn := func(alert types.Alert, channels []string) {
@@ -117,6 +132,76 @@ func NewEngine(cfg *config.Config, notifier *notifier.Notifier, logger zerolog.L
 	}
 
 	return engine
+}
+
+// stateFile returns the path to the persisted alert state file.
+func (e *Engine) stateFile() string {
+	return filepath.Join(e.dataDir, "alert-state.json")
+}
+
+// saveState writes activeAlerts, lastFired, and suppressedUntil to disk atomically.
+// Must be called with e.mu held (reads shared maps).
+func (e *Engine) saveState() {
+	if e.dataDir == "" {
+		return
+	}
+	state := persistedState{
+		ActiveAlerts:    e.activeAlerts,
+		LastFired:       e.lastFired,
+		SuppressedUntil: e.suppressedUntil,
+	}
+	data, err := json.Marshal(state)
+	if err != nil {
+		e.logger.Error().Err(err).Msg("failed to marshal alert state")
+		return
+	}
+	tmp := e.stateFile() + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		e.logger.Error().Err(err).Msg("failed to write alert state")
+		return
+	}
+	if err := os.Rename(tmp, e.stateFile()); err != nil {
+		e.logger.Error().Err(err).Msg("failed to rename alert state file")
+	}
+}
+
+// loadState restores alert state from disk. Called once at startup before Run().
+func (e *Engine) loadState() {
+	if e.dataDir == "" {
+		return
+	}
+	data, err := os.ReadFile(e.stateFile())
+	if err != nil {
+		if !os.IsNotExist(err) {
+			e.logger.Error().Err(err).Msg("failed to read alert state")
+		}
+		return
+	}
+	var state persistedState
+	if err := json.Unmarshal(data, &state); err != nil {
+		e.logger.Error().Err(err).Msg("failed to parse alert state — starting fresh")
+		return
+	}
+	if state.ActiveAlerts != nil {
+		e.activeAlerts = state.ActiveAlerts
+	}
+	if state.LastFired != nil {
+		e.lastFired = state.LastFired
+	}
+	if state.SuppressedUntil != nil {
+		// Drop expired time-bounded suppressions; keep zero-time (until-resolved) entries.
+		now := time.Now()
+		for k, t := range state.SuppressedUntil {
+			if !t.IsZero() && t.Before(now) {
+				delete(state.SuppressedUntil, k)
+			}
+		}
+		e.suppressedUntil = state.SuppressedUntil
+	}
+	e.logger.Info().
+		Int("active_alerts", len(e.activeAlerts)).
+		Int("suppressed", len(e.suppressedUntil)).
+		Msg("alert state restored from disk")
 }
 
 // Events returns the channel to send alert events to
@@ -239,6 +324,15 @@ func (e *Engine) process(ev AlertEvent) {
 			return
 		}
 
+		// If the alert was manually closed but the condition persists, suppress until resolved.
+		if suppUntil, ok := e.suppressedUntil[key]; ok {
+			if suppUntil.IsZero() || time.Now().Before(suppUntil) {
+				e.logger.Debug().Str("key", key).Msg("alert suppressed after manual close")
+				return
+			}
+			delete(e.suppressedUntil, key)
+		}
+
 		// Check dedup
 		dedupWindow := e.config.Alerts.AlertBehavior.DeduplicationWindow
 		if dedupWindow == 0 {
@@ -285,10 +379,15 @@ func (e *Engine) process(ev AlertEvent) {
 			channels := getChannelsForSeverity(e.config, ev.Severity)
 			e.escalation.StartEscalation(*alert, channels)
 		}
+
+		e.saveState()
 	} else {
-		// Resolve
+		// Resolve — always lift suppression so a future re-occurrence fires normally.
+		delete(e.suppressedUntil, key)
+
 		existing, ok := e.activeAlerts[key]
 		if !ok {
+			e.saveState()
 			return
 		}
 		now := time.Now()
@@ -315,6 +414,7 @@ func (e *Engine) process(ev AlertEvent) {
 		}
 
 		delete(e.activeAlerts, key)
+		e.saveState()
 	}
 }
 
@@ -438,6 +538,7 @@ func (e *Engine) AckAlert(alertID, by, note string) (*types.Alert, error) {
 		alert.AckNote = note
 		alert.State = "acked"
 		e.logger.Info().Str("alert_id", alertID).Str("by", by).Msg("alert acknowledged")
+		e.saveState()
 		cp := *alert
 		return &cp, nil
 	}
@@ -457,7 +558,7 @@ func (e *Engine) CloseAlert(alertID, by string) (*types.Alert, error) {
 		now := time.Now()
 		alert.State = "resolved"
 		alert.ResolvedAt = &now
-		alert.Message = fmt.Sprintf("Manually closed by %s via Slack", by)
+		alert.Message = fmt.Sprintf("Manually closed by %s", by)
 		if alert.AckedBy == "" {
 			alert.AckedBy = by
 		}
@@ -469,7 +570,12 @@ func (e *Engine) CloseAlert(alertID, by string) (*types.Alert, error) {
 			e.notify(*alert)
 		}
 
-		e.logger.Info().Str("alert_id", alertID).Str("by", by).Msg("alert closed via Slack")
+		// Suppress re-fire until the condition actually clears on the network.
+		// Zero time = suppress indefinitely until a non-firing event is received.
+		e.suppressedUntil[key] = time.Time{}
+
+		e.logger.Info().Str("alert_id", alertID).Str("by", by).Msg("alert closed")
+		e.saveState()
 		cp := *alert
 		delete(e.activeAlerts, key)
 		return &cp, nil
