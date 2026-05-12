@@ -17,7 +17,7 @@ import (
 func TestHandleNotificationTestNeedsConfig(t *testing.T) {
 	t.Parallel()
 	log := zerolog.New(io.Discard)
-	eng := alerter.NewEngine(minConfigForTestNotify(), notifier.NewNotifier(log, nil), log)
+	eng := alerter.NewEngine(minConfigForTestNotify(), notifier.NewNotifier(log, nil), log, "")
 	srv := NewServer(eng, log, "8088")
 	// deliberately no SetConfig
 	req := httptest.NewRequest(http.MethodPost, "/api/notifications/test", strings.NewReader("{}"))
