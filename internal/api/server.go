@@ -19,6 +19,8 @@ import (
 	"github.com/netspec/netspec/internal/discovery"
 	"github.com/netspec/netspec/internal/evaluator"
 	"github.com/netspec/netspec/internal/notifier"
+	"github.com/netspec/netspec/internal/rules"
+	"github.com/netspec/netspec/internal/types"
 	"github.com/netspec/netspec/internal/webhook"
 	"github.com/netspec/netspec/internal/webui"
 	"github.com/rs/zerolog"
@@ -350,7 +352,11 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(status)
 }
 
-// handleAlerts returns active alerts
+// handleAlerts returns active alerts. Each alert is enriched with the
+// configured interface description (ifAlias) so the dashboard can show
+// what each port is for without a second lookup. The persisted
+// types.Alert struct is unchanged — InterfaceDescription is a
+// response-only field.
 func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
@@ -372,10 +378,44 @@ func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 		}
 		return alerts[i].Message < alerts[j].Message
 	})
+
+	enriched := s.enrichAlertsForResponse(alerts)
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"alerts": alerts,
+		"alerts": enriched,
 		"count":  len(alerts),
 	})
+}
+
+// alertResponse augments types.Alert with a render-time interface description
+// lookup. Embedded pointer preserves every existing JSON field name on the
+// /alerts response — only InterfaceDescription is new.
+type alertResponse struct {
+	*types.Alert
+	InterfaceDescription string `json:"InterfaceDescription,omitempty"`
+}
+
+// enrichAlertsForResponse looks up each alert's interface description from
+// the current desired-state config. Synthetic entities (e.g. "__snmp__"
+// host-level reachability) and flap-detection IDs simply leave the field
+// empty — the JS hides empty strings.
+func (s *Server) enrichAlertsForResponse(alerts []*types.Alert) []alertResponse {
+	out := make([]alertResponse, 0, len(alerts))
+	s.reloadMu.RLock()
+	cfg := s.config
+	s.reloadMu.RUnlock()
+
+	for _, a := range alerts {
+		row := alertResponse{Alert: a}
+		if cfg != nil && a.Entity != "" && a.Entity != "__snmp__" {
+			if dev, ok := cfg.DesiredState.Devices[a.Device]; ok {
+				if iface, ok := dev.Interfaces[a.Entity]; ok {
+					row.InterfaceDescription = iface.Description
+				}
+			}
+		}
+		out = append(out, row)
+	}
+	return out
 }
 
 // handleAlertAction handles POST /api/alerts/{id}/ack and /api/alerts/{id}/close.
@@ -471,6 +511,7 @@ func (s *Server) handleDevicesAPI(w http.ResponseWriter, r *http.Request) {
 	sort.Strings(deviceNames)
 
 	tr := s.snmpReachTracker()
+	roles := cfg.Rules.DeviceRoles
 	devices := make([]map[string]interface{}, 0, len(deviceNames))
 	for _, name := range deviceNames {
 		dev := cfg.DesiredState.Devices[name]
@@ -481,6 +522,14 @@ func (s *Server) handleDevicesAPI(w http.ResponseWriter, r *http.Request) {
 			"interface_count": len(dev.Interfaces),
 			// Default to unknown so never-polled devices do not render as healthy.
 			"snmp_reachability": collector.SNMPReachUnknown,
+		}
+		// Role classification from rules.yaml (longest-prefix match on hostname).
+		// Empty role_prefix lands the device in the wizard's "Other" filter bucket.
+		row["role_name"] = ""
+		row["role_prefix"] = ""
+		if role := rules.MatchDevice(name, roles); role != nil {
+			row["role_name"] = role.Name
+			row["role_prefix"] = role.Prefix
 		}
 		if tr != nil {
 			rs := tr.Status(name)
@@ -707,6 +756,17 @@ type DeviceInfo struct {
 	Address        string
 	Description    string
 	InterfaceCount int
+	// RoleName / RolePrefix come from rules.yaml device_roles via longest-prefix
+	// matching on Name. Both are empty when no rule matches (renders as "Other").
+	RoleName   string
+	RolePrefix string
+}
+
+// RoleInfo is a flattened view of a rules.yaml device_role entry for the
+// dashboard filter UI. Prefix is the stable filter key; Name is the label.
+type RoleInfo struct {
+	Name   string
+	Prefix string
 }
 
 // AlertInfo holds alert information for the web UI
@@ -731,6 +791,7 @@ type PageData struct {
 	AlertCount         int
 	Uptime             string
 	Devices            []DeviceInfo
+	Roles              []RoleInfo
 	Alerts             []AlertInfo
 	Logs               []webui.LogEntry
 	Config             ConfigInfo
@@ -809,14 +870,26 @@ func (s *Server) handleWebUI(w http.ResponseWriter, r *http.Request) {
 		}
 		sort.Strings(deviceNames)
 
+		// Surface device_roles from rules.yaml so the dashboard can render
+		// per-role filter checkboxes. Order matches rules.yaml; "Other" is
+		// added client-side when at least one device matched no rule.
+		for _, role := range cfg.Rules.DeviceRoles {
+			data.Roles = append(data.Roles, RoleInfo{Name: role.Name, Prefix: role.Prefix})
+		}
+
 		for _, name := range deviceNames {
 			dev := cfg.DesiredState.Devices[name]
-			data.Devices = append(data.Devices, DeviceInfo{
+			info := DeviceInfo{
 				Name:           name,
 				Address:        dev.Address,
 				Description:    dev.Description,
 				InterfaceCount: len(dev.Interfaces),
-			})
+			}
+			if role := rules.MatchDevice(name, cfg.Rules.DeviceRoles); role != nil {
+				info.RoleName = role.Name
+				info.RolePrefix = role.Prefix
+			}
+			data.Devices = append(data.Devices, info)
 			data.InterfaceCount += len(dev.Interfaces)
 		}
 	}

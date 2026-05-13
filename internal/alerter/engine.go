@@ -59,7 +59,6 @@ type AlertEvent struct {
 	Related   map[string]string
 }
 
-
 // NewEngine creates a new alert engine with full Phase 2 features
 func NewEngine(cfg *config.Config, notifier *notifier.Notifier, logger zerolog.Logger, dataDir string) *Engine {
 	l := logger.With().Str("component", "alerter").Logger()
@@ -517,6 +516,20 @@ func (e *Engine) GetActiveAlerts() []*types.Alert {
 		}
 	}
 	return alerts
+}
+
+// UpsertActiveAlertForTest inserts (or replaces) an active alert directly,
+// bypassing the evaluator → ProcessStateChange path. Intended only for API
+// handler tests that need a deterministic alert payload without exercising
+// the full state machinery.
+func (e *Engine) UpsertActiveAlertForTest(a *types.Alert) {
+	if a == nil {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	key := fmt.Sprintf("%s|%s|%s", a.Device, a.Entity, a.AlertType)
+	e.activeAlerts[key] = a
 }
 
 // AckAlert acknowledges a firing alert, suppressing further re-notifications.
