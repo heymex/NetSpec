@@ -286,6 +286,60 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
             background: var(--bg-tertiary);
         }
 
+        .device-item.role-hidden {
+            display: none;
+        }
+
+        .device-role-tag {
+            display: inline-block;
+            padding: 0 0.4rem;
+            border-radius: 3px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            color: var(--text-muted);
+            font-size: 0.7rem;
+            line-height: 1.4;
+        }
+
+        .role-filter {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.4rem 0.65rem;
+            align-items: center;
+        }
+
+        .role-filter-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3rem;
+            padding: 0.15rem 0.5rem;
+            font-size: 0.78rem;
+            color: var(--text-secondary);
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .role-filter-item input {
+            margin: 0;
+            cursor: pointer;
+        }
+
+        .role-filter-item:has(input:not(:checked)) {
+            opacity: 0.55;
+            text-decoration: line-through;
+        }
+
+        .alert-port-desc {
+            margin: 0.1rem 0 0;
+            font-family: 'JetBrains Mono', 'Courier New', monospace;
+            font-size: 0.72rem;
+            color: var(--text-muted);
+            word-break: break-all;
+        }
+
         .device-info h3 {
             font-size: 0.9375rem;
             font-weight: 500;
@@ -878,6 +932,14 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
             <div class="card hex-overview-card">
                 <div class="card-header">
                     <span class="card-title">⬡ Host Overview</span>
+                    {{if .Roles}}
+                    <div class="role-filter" id="role-filter" role="group" aria-label="Filter devices by type">
+                        {{range .Roles}}
+                        <label class="role-filter-item"><input type="checkbox" class="role-filter-check" data-role-prefix="{{.Prefix}}" checked> <span class="role-filter-label">{{.Name}}</span></label>
+                        {{end}}
+                        <label class="role-filter-item"><input type="checkbox" class="role-filter-check" data-role-prefix="" checked> <span class="role-filter-label">Other</span></label>
+                    </div>
+                    {{end}}
                 </div>
                 <div class="card-body">
                     <div id="hex-overview-root">{{.HexMapSVG}}</div>
@@ -892,13 +954,14 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                 </div>
                 <div class="card-body no-padding">
                     {{if .Devices}}
-                    <ul class="device-list">
+                    <ul class="device-list" id="device-list">
                         {{range .Devices}}
-                        <li class="device-item" onclick="window.location.href='/device/{{.Name}}?from=dashboard'" style="cursor: pointer;">
+                        <li class="device-item" data-role-prefix="{{.RolePrefix}}" data-role-name="{{.RoleName}}" onclick="window.location.href='/device/{{.Name}}?from=dashboard'" style="cursor: pointer;">
                             <div class="device-info">
                                 <h3>{{.Name}}</h3>
                                 <div class="device-meta">
                                     <span>{{.Address}}</span>
+                                    {{if .RoleName}}<span class="device-role-tag">{{.RoleName}}</span>{{end}}
                                     {{if .Description}}<span>{{.Description}}</span>{{end}}
                                 </div>
                             </div>
@@ -1144,9 +1207,16 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                     var ar = await fetch('/alerts');
                     var dj = await dr.json();
                     var aj = await ar.json();
-                    var names = (dj.devices || []).map(function (x) { return x.name; }).filter(Boolean);
+                    var allowed = (window.netspecRoleFilter && window.netspecRoleFilter.allowedPrefixes) || null;
+                    var devices = (dj.devices || []).filter(function (x) {
+                        if (!x || !x.name) return false;
+                        if (!allowed) return true;
+                        var key = String(x.role_prefix || '').toLowerCase();
+                        return allowed.has(key);
+                    });
+                    var names = devices.map(function (x) { return x.name; }).filter(Boolean);
                     var wa = worstPerDevice(aj.alerts || []);
-                    var sr = snmpReachRaw(dj.devices || []);
+                    var sr = snmpReachRaw(devices);
                     var worst = {};
                     for (var i = 0; i < names.length; i++) {
                         var n = names[i];
@@ -1157,8 +1227,67 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                     if (console && console.warn) console.warn('hex overview refresh failed', e);
                 }
             }
+            window.netspecRefreshHexOverview = refreshHexOverview;
             setInterval(refreshHexOverview, 10000);
             refreshHexOverview();
+        })();
+
+        // Role filter — wires up the Host Overview checkboxes to filter the
+        // device list and the hex map by rules.yaml prefix. State is persisted
+        // to localStorage so the operator's filter survives reloads.
+        (function () {
+            var filterRoot = document.getElementById('role-filter');
+            if (!filterRoot) return;
+            var STORAGE_KEY = 'netspec.deviceRoleFilter';
+            var checks = filterRoot.querySelectorAll('input.role-filter-check');
+            if (!checks.length) return;
+
+            function loadSaved() {
+                try {
+                    var raw = localStorage.getItem(STORAGE_KEY);
+                    if (!raw) return null;
+                    var arr = JSON.parse(raw);
+                    if (!Array.isArray(arr)) return null;
+                    return new Set(arr.map(function (x) { return String(x || '').toLowerCase(); }));
+                } catch (e) { return null; }
+            }
+            function save(set) {
+                try { localStorage.setItem(STORAGE_KEY, JSON.stringify(Array.from(set))); } catch (e) {}
+            }
+            function currentAllowed() {
+                var s = new Set();
+                checks.forEach(function (cb) {
+                    if (cb.checked) s.add(String(cb.getAttribute('data-role-prefix') || '').toLowerCase());
+                });
+                return s;
+            }
+            function applyToDeviceList(allowed) {
+                var items = document.querySelectorAll('#device-list .device-item');
+                items.forEach(function (li) {
+                    var key = String(li.getAttribute('data-role-prefix') || '').toLowerCase();
+                    if (allowed.has(key)) li.classList.remove('role-hidden');
+                    else li.classList.add('role-hidden');
+                });
+            }
+            function publishAndRefresh() {
+                var allowed = currentAllowed();
+                window.netspecRoleFilter = { allowedPrefixes: allowed };
+                applyToDeviceList(allowed);
+                save(allowed);
+                if (typeof window.netspecRefreshHexOverview === 'function') {
+                    window.netspecRefreshHexOverview();
+                }
+            }
+
+            var saved = loadSaved();
+            if (saved) {
+                checks.forEach(function (cb) {
+                    var key = String(cb.getAttribute('data-role-prefix') || '').toLowerCase();
+                    cb.checked = saved.has(key);
+                });
+            }
+            checks.forEach(function (cb) { cb.addEventListener('change', publishAndRefresh); });
+            publishAndRefresh();
         })();
 
         // Alert management — renders the Active Alerts card and handles ack/close actions.
@@ -1207,6 +1336,9 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                         html += '<span class="ack-badge">acked by ' + esc(a.AckedBy) + '</span>';
                     }
                     html += '</div>';
+                    if (a.InterfaceDescription) {
+                        html += '<p class="alert-port-desc">' + esc(a.InterfaceDescription) + '</p>';
+                    }
                     html += '<p style="margin:0;font-size:0.8125rem;color:var(--text-secondary)">' + esc(a.Message) + '</p>';
                     html += '<div style="font-size:0.7rem;color:var(--text-muted);margin-top:0.25rem">Fired ' + timeSince(a.FiredAt);
                     if (acked && a.AckedAt) html += ' &middot; Acked ' + timeSince(a.AckedAt);

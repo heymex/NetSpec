@@ -385,7 +385,8 @@
           "FiredAt": { "type": "string", "format": "date-time" },
           "ResolvedAt": { "type": "string", "format": "date-time", "nullable": true },
           "Message": { "type": "string" },
-          "RelatedState": { "type": "object", "additionalProperties": { "type": "string" } }
+          "RelatedState": { "type": "object", "additionalProperties": { "type": "string" } },
+          "InterfaceDescription": { "type": "string", "description": "Configured interface description (ifAlias) looked up at response time from desired-state; empty for synthetic entities like __snmp__." }
         }
       },
       "AlertsResponse": {
@@ -417,7 +418,13 @@
           "name": { "type": "string" },
           "address": { "type": "string" },
           "description": { "type": "string" },
-          "interface_count": { "type": "integer" }
+          "interface_count": { "type": "integer" },
+          "role_name": { "type": "string", "description": "Display name of the matching rules.yaml device_role, or empty when no role matches." },
+          "role_prefix": { "type": "string", "description": "Hostname prefix of the matching rules.yaml device_role, used as the stable filter key. Empty when no role matches." },
+          "snmp_reachability": { "type": "string", "enum": ["ok", "fail", "unknown"] },
+          "snmp_last_attempt_at": { "type": "string", "format": "date-time" },
+          "snmp_last_ok_at": { "type": "string", "format": "date-time" },
+          "snmp_last_error": { "type": "string" }
         }
       },
       "DeviceListResponse": {
