@@ -2037,6 +2037,59 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
             list-style: none;
         }
 
+        .port-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.35rem;
+            padding: 1rem 1.25rem;
+        }
+
+        .port-cell {
+            width: 74px;
+            height: 50px;
+            border-radius: 6px;
+            border: 1.5px solid transparent;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.65rem;
+            font-weight: 500;
+            text-align: center;
+            word-break: break-all;
+            overflow-wrap: break-word;
+            padding: 0.2rem 0.3rem;
+            line-height: 1.25;
+            cursor: default;
+            transition: opacity 0.2s;
+        }
+
+        .port-cell:hover { opacity: 0.8; }
+
+        .port-cell.match {
+            background: rgba(63, 185, 80, 0.13);
+            border-color: rgba(63, 185, 80, 0.38);
+            color: var(--accent-green);
+        }
+
+        .port-cell.mismatch-down {
+            background: rgba(248, 81, 73, 0.13);
+            border-color: rgba(248, 81, 73, 0.38);
+            color: var(--accent-red);
+        }
+
+        .port-cell.mismatch-up {
+            background: rgba(210, 153, 34, 0.13);
+            border-color: rgba(210, 153, 34, 0.38);
+            color: var(--accent-yellow);
+        }
+
+        .port-cell.port-unknown {
+            background: rgba(110, 118, 129, 0.1);
+            border-color: rgba(110, 118, 129, 0.25);
+            color: var(--text-muted);
+        }
+
         .interface-header {
             display: grid;
             grid-template-columns: 2.1fr 0.8fr 1fr 1fr 2.2fr;
@@ -2286,6 +2339,33 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
 
         <div class="card">
             <div class="card-header">
+                <span class="card-title">🔌 Port Overview</span>
+                <span style="font-size:0.8125rem;color:var(--text-secondary);">desired-state match</span>
+            </div>
+            {{$hasMonitored := false}}
+            {{range .Device.Interfaces}}{{if .Monitor}}{{$hasMonitored = true}}{{end}}{{end}}
+            {{if $hasMonitored}}
+            <div class="port-grid" id="port-grid">
+                {{range .Device.Interfaces}}{{if .Monitor}}
+                <div class="port-cell {{if eq .OperStatus ""}}port-unknown{{else if eq .DesiredState .OperStatus}}match{{else if eq .DesiredState "up"}}mismatch-down{{else}}mismatch-up{{end}}"
+                     data-iface-name="{{.Name}}"
+                     data-desired="{{.DesiredState}}"
+                     title="{{.Name}}&#10;Desired: {{.DesiredState}}&#10;State: {{if .OperStatus}}{{.OperStatus}}{{else}}unknown{{end}}{{if .Description}}&#10;{{.Description}}{{end}}">{{.Name}}</div>
+                {{end}}{{end}}
+            </div>
+            <div style="padding:0.4rem 1.25rem 0.75rem;font-size:0.72rem;color:var(--text-muted);display:flex;gap:1.2rem;flex-wrap:wrap;">
+                <span style="display:flex;align-items:center;gap:0.35rem;"><span style="width:10px;height:10px;border-radius:3px;background:rgba(63,185,80,0.35);border:1.5px solid rgba(63,185,80,0.6);display:inline-block"></span>Match</span>
+                <span style="display:flex;align-items:center;gap:0.35rem;"><span style="width:10px;height:10px;border-radius:3px;background:rgba(248,81,73,0.35);border:1.5px solid rgba(248,81,73,0.6);display:inline-block"></span>Should be up, is down</span>
+                <span style="display:flex;align-items:center;gap:0.35rem;"><span style="width:10px;height:10px;border-radius:3px;background:rgba(210,153,34,0.35);border:1.5px solid rgba(210,153,34,0.6);display:inline-block"></span>Should be down, is up</span>
+                <span style="display:flex;align-items:center;gap:0.35rem;"><span style="width:10px;height:10px;border-radius:3px;background:rgba(110,118,129,0.2);border:1.5px solid rgba(110,118,129,0.4);display:inline-block"></span>Unknown</span>
+            </div>
+            {{else}}
+            <div style="padding:2rem;text-align:center;color:var(--text-muted);">No monitored interfaces</div>
+            {{end}}
+        </div>
+
+        <div class="card">
+            <div class="card-header">
                 <span class="card-title">📋 Device Logs</span>
                 <button class="btn btn-secondary" onclick="document.querySelector('.log-container').scrollTop = document.querySelector('.log-container').scrollHeight">↓ Latest</button>
             </div>
@@ -2406,6 +2486,26 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                             '</div>'
                         ).join('');
                         if (wasAtBottom) container.scrollTop = container.scrollHeight;
+                    }
+
+                    // Update port grid cells from live interface state
+                    if (data.interfaces) {
+                        data.interfaces.forEach(function(iface) {
+                            var cell = document.querySelector('.port-cell[data-iface-name="' + iface.name.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"]');
+                            if (!cell) return;
+                            var oper = (iface.runtime && iface.runtime.oper_status) || '';
+                            var desired = cell.getAttribute('data-desired') || '';
+                            var cls = 'port-cell ';
+                            if (!oper)               cls += 'port-unknown';
+                            else if (desired === oper) cls += 'match';
+                            else if (desired === 'up') cls += 'mismatch-down';
+                            else                       cls += 'mismatch-up';
+                            cell.className = cls;
+                            var stateStr = oper || 'unknown';
+                            var tip = iface.name + '\nDesired: ' + desired + '\nState: ' + stateStr;
+                            if (iface.description) tip += '\n' + iface.description;
+                            cell.title = tip;
+                        });
                     }
 
                     // Update health stats from API response
