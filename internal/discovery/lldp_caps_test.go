@@ -37,6 +37,49 @@ func TestPduCapabilityBits(t *testing.T) {
 	}
 }
 
+func TestLldpCapabilityU16FromOctets_prefersBitmaskInLowByte(t *testing.T) {
+	t.Parallel()
+	// Some agents send IEEE bitmap in second octet [0x00, 0x0C] (B+W) — LE would read 0x0C00.
+	if got := lldpCapabilityU16FromOctets([]byte{0x00, 0x0C}); got != 0x0C {
+		t.Fatalf("got 0x%x want 0x0c", got)
+	}
+	// Primary encoding: low octet first [0x0C, 0x00].
+	if got := lldpCapabilityU16FromOctets([]byte{0x0C, 0x00}); got != 0x0C {
+		t.Fatalf("got 0x%x want 0x0c", got)
+	}
+}
+
+func TestNormalizeLLDPCapEnabledForSNMP_ap030ToBridgeWlan(t *testing.T) {
+	t.Parallel()
+	// Raw 0x30 is Router+Telephone in IEEE LSB decoding; IOS-XE CLI shows B,W for these APs.
+	raw := uint16(0x30)
+	got := normalizeLLDPCapEnabledForSNMP(raw, "ap-ha1-14")
+	if got != lldpCapBridge|lldpCapWLANAP {
+		t.Fatalf("got 0x%x want B+W (0x%x)", got, lldpCapBridge|lldpCapWLANAP)
+	}
+	if c := formatLLDPCapCodes(got); c != "B,W" {
+		t.Fatalf("codes=%q want B,W", c)
+	}
+}
+
+func TestNormalizeLLDPCapEnabledForSNMP_nonApKeepsRouterTel(t *testing.T) {
+	t.Parallel()
+	raw := uint16(0x30)
+	got := normalizeLLDPCapEnabledForSNMP(raw, "some-router")
+	if got != raw {
+		t.Fatalf("got 0x%x want 0x30", got)
+	}
+}
+
+func TestNormalizeLLDPCapEnabledForSNMP_polyPhoneUnchanged(t *testing.T) {
+	t.Parallel()
+	raw := uint16(0x24) // B,T
+	got := normalizeLLDPCapEnabledForSNMP(raw, "dvf9918")
+	if got != raw {
+		t.Fatalf("got 0x%x", got)
+	}
+}
+
 func TestNeighborRuleMatches_telephoneCapability(t *testing.T) {
 	t.Parallel()
 	r := &config.NeighborRule{Label: "IP Phone", MatchLLDPCapability: "telephone"}

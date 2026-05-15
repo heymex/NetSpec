@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"fmt"
+	"math/bits"
 	"strings"
 
 	"github.com/gosnmp/gosnmp"
@@ -37,21 +38,9 @@ var lldpCapNames = []struct {
 func pduCapabilityBits(pdu gosnmp.SnmpPDU) uint16 {
 	switch v := pdu.Value.(type) {
 	case []byte:
-		if len(v) == 0 {
-			return 0
-		}
-		if len(v) == 1 {
-			return uint16(v[0])
-		}
-		return uint16(v[0]) | uint16(v[1])<<8
+		return lldpCapabilityU16FromOctets(v)
 	case string:
-		if len(v) == 0 {
-			return 0
-		}
-		if len(v) == 1 {
-			return uint16(v[0])
-		}
-		return uint16(v[0]) | uint16(v[1])<<8
+		return lldpCapabilityU16FromOctets([]byte(v))
 	case int:
 		return uint16(v)
 	case uint:
@@ -65,6 +54,51 @@ func pduCapabilityBits(pdu gosnmp.SnmpPDU) uint16 {
 	default:
 		return 0
 	}
+}
+
+// lldpCapabilityU16FromOctets decodes lldpRemSysCapSupported/Enabled (SIZE(2)).
+// Agents differ on octet order: IEEE uses only the primary 8 capability bits; the second
+// octet should be zero. Prefer the ordering that leaves the bitmap in the low 8 bits.
+func lldpCapabilityU16FromOctets(b []byte) uint16 {
+	if len(b) == 0 {
+		return 0
+	}
+	if len(b) == 1 {
+		return uint16(b[0])
+	}
+	le := uint16(b[0]) | uint16(b[1])<<8
+	be := uint16(b[0])<<8 | uint16(b[1])
+	if be <= 0xFF && le > 0xFF {
+		return be
+	}
+	if le <= 0xFF && be > 0xFF {
+		return le
+	}
+	return le
+}
+
+// normalizeLLDPCapEnabledForSNMP aligns IOS-XE LLDP-MIB values with `show lldp neighbors` caps.
+//
+// Some IOS-XE builds report the enabled-capability octet with a reversed bit order relative
+// to IEEE 802.1AB LSB-first naming: raw byte 0x30 then reads as Router+Telephone, while the
+// CLI shows Bridge+WLAN (0x0C); those differ by bits.Reverse8. When the remote sysName looks
+// like an access point (ap-, iap-), remap that ambiguous pattern to match the CLI/AP interpretation.
+func normalizeLLDPCapEnabledForSNMP(raw uint16, remoteSysName string) uint16 {
+	n := strings.ToLower(strings.TrimSpace(remoteSysName))
+	apLike := strings.HasPrefix(n, "ap-") || strings.HasPrefix(n, "iap-")
+	if !apLike {
+		return raw
+	}
+	lo := byte(raw & 0xff)
+	hi := byte(raw >> 8)
+	// Single non-zero octet 0x30: R+T in LSB decoding == B+W when bits are reversed within octet.
+	if lo == 0x30 && hi == 0 {
+		return uint16(bits.Reverse8(lo))
+	}
+	if hi == 0x30 && lo == 0 {
+		return uint16(bits.Reverse8(hi))
+	}
+	return raw
 }
 
 // formatLLDPCaps returns enabled capability names (e.g. bridge, telephone).

@@ -33,16 +33,22 @@ Neighbors attach to interfaces by **local ifIndex** (`lldpRemLocalPortNum` / `cd
 
 ```yaml
 neighbor_rules:
-  # Order matters: put vendor-specific rules (e.g. Crestron AV) before generic LLDP capability rules.
+  # Order matters: AV, then Wireless AP (wlan_ap / ap* / iap*) before telephone — many APs set T without W (e.g. R,T).
   - label: AV equipment (Crestron & peers)
     match_sys_name: "*AM3100*"
     expect_alias_glob: "av*"
-  - label: IP Phone (LLDP)
-    match_lldp_capability: telephone
-    expect_alias_glob: "phone*"
   - label: Wireless AP (LLDP capability)
     match_lldp_capability: wlan_ap
     expect_alias_glob: "ap*"
+  - label: Wireless AP (hostname)
+    match_sys_name: "ap*"
+    expect_alias_glob: "ap*"
+  - label: Wireless AP (hostname iap-)
+    match_sys_name: "iap*"
+    expect_alias_glob: "iap*"
+  - label: IP Phone (LLDP)
+    match_lldp_capability: telephone
+    expect_alias_glob: "phone*"
 ```
 
 Fields:
@@ -56,7 +62,7 @@ Fields:
 | `match_platform` | Glob on CDP platform string |
 | `expect_alias_glob` | If neighbor matches but interface alias does not, set `neighbor_hint` |
 
-**Note:** On a single rule, `match_*` / `match_lldp_capability` conditions are **AND**ed. Use multiple list entries (often sharing the same `label`) for **OR** behavior (e.g. several Crestron / AirMedia patterns before a generic `telephone` rule).
+**Note:** On a single rule, `match_*` / `match_lldp_capability` conditions are **AND**ed. Use multiple list entries (often sharing the same `label`) for **OR** behavior (e.g. several Crestron / AirMedia patterns before AP rules, and **AP hostname / `wlan_ap` rules before `telephone`** so bogus **T** on APs does not classify them as phones).
 
 Evaluation: first matching rule per neighbor entry; port-level label is the first neighbor on that interface that matches.
 

@@ -113,8 +113,10 @@ device_roles:
         match: "*nac access port*"
         monitor: false
 
-    # Neighbor rules: first match wins per LLDP/CDP peer. Put specific vendors (e.g. AV) before
-    # generic LLDP capability rules — Crestron AirMedia often reports B,T like a phone.
+    # Neighbor rules: first match wins per LLDP/CDP peer. Order matters:
+    # - AV before generic capability (Crestron AirMedia often reports B,T like a phone).
+    # - Wireless AP (hostname wlan_ap) BEFORE "telephone" — many APs falsely set the LLDP
+    #   Telephone bit (e.g. R,T with no W) but still use ap- / iap- sysName prefixes.
     neighbor_rules:
       - label: AV equipment (Crestron & peers)
         match_sys_name: "*crestron*"
@@ -128,21 +130,24 @@ device_roles:
       - label: AV equipment (Crestron & peers)
         match_sys_desc: "*crestron*"
         expect_alias_glob: "av*"
-      - label: IP Phone (LLDP)
-        match_lldp_capability: telephone
-        expect_alias_glob: "phone*"
       - label: Wireless AP (LLDP capability)
         match_lldp_capability: wlan_ap
         expect_alias_glob: "ap*"
       - label: Wireless AP (hostname / CDP)
         match_sys_name: "ap*"
         expect_alias_glob: "ap*"
+      - label: Wireless AP (hostname iap-)
+        match_sys_name: "iap*"
+        expect_alias_glob: "iap*"
       - label: Wireless AP (sysDesc / CDP platform)
         match_sys_desc: "*access point*"
         expect_alias_glob: "ap*"
       - label: Wireless AP (CDP platform)
         match_platform: "*AP*"
         expect_alias_glob: "ap*"
+      - label: IP Phone (LLDP)
+        match_lldp_capability: telephone
+        expect_alias_glob: "phone*"
 
   # ── Outdoor / other switch ────────────────────────────────────────────────────
   - prefix: osw

@@ -341,6 +341,8 @@ The discovery wizard loads **`config/rules.yaml`** (when present) to pre-select 
 
 Attached per device role. For each LLDP/CDP neighbor on an interface, rules are tested **in order**; the **first matching rule** applies. Matching fields on a single rule are **AND**ed (all specified fields must match). To get **OR** behavior, use **multiple YAML entries** (often with the same `label`).
 
+**Important:** Put **Wireless AP** rules (especially **`match_sys_name: "ap*"` / `"iap*"`** and **`match_lldp_capability: wlan_ap`**) **before** **`match_lldp_capability: telephone`**. Many APs still set the LLDP **Telephone** bit in the enabled capability mask (e.g. **`[R,T]`** with no **W**), so a telephone-only rule that appears first will misclassify them as phones even when the remote **sysName** is clearly `ap-…` or `iap-…`.
+
 | Field | Purpose |
 |-------|---------|
 | `label` | Shown in the wizard (grouping / classification). |
@@ -350,7 +352,7 @@ Attached per device role. For each LLDP/CDP neighbor on an interface, rules are 
 | `match_platform` | Glob on CDP platform string (CDP only). |
 | `expect_alias_glob` | Optional; if the neighbor matches but the port **alias** does not match this glob, the wizard sets **`neighbor_hint`**. |
 
-**LLDP capability codes** (Cisco-style letters) align with IEEE bits: **B** bridge, **T** telephone, **W** WLAN AP, **R** router, **C** DOCSIS, **P** repeater, **S** station, **O** other. NetSpec reads the bitmask from SNMP, not from CLI text.
+**LLDP capability codes** (Cisco-style letters) align with IEEE bits: **B** bridge, **T** telephone, **W** WLAN AP, **R** router, **C** DOCSIS, **P** repeater, **S** station, **O** other. NetSpec reads `lldpRemSysCapEnabled` via SNMP; some IOS-XE versions place the 8-bit bitmap in either octet of the OCTET STRING, and in a few cases the octet matches **Router+Telephone (0x30)** under a strict LSB decode while **`show lldp neighbors` shows Bridge+WLAN (B,W)** — those values differ by **bit-reversal within the octet**. NetSpec picks the plausible octet order for the 16-bit field, and for remotes whose sysName looks like **`ap-…` or `iap-…`**, normalizes the ambiguous **0x30** pattern so capabilities and neighbor rules agree with the CLI.
 
 ##### Example: four real neighbors on an access switch
 
@@ -358,6 +360,7 @@ These illustrate why **order** and **vendor-specific** rules matter.
 
 | Neighbor (sys name) | Typical caps | What it really is | Practical classification |
 |---------------------|--------------|-------------------|----------------------------|
+| `ap-hb1-14` (typical campus AP) | **B,W** on CLI | Same AP | **`wlan_ap`** after SNMP decode (IOS-XE may expose the cap octet in either order or as **0x30** until `ap-`/`iap-` normalization) |
 | `ap-ha1-23` | **B,W** | Extreme Networks AP | **`wlan_ap`** or hostname **`ap*`** |
 | `AM3100_…` (AirMedia) | **B,T** | Crestron AirMedia (not a phone) | **AV** via **`crestron` / `airmedia` / `AM3100`** on sysName/sysDesc **before** `telephone` |
 | `WLH14112521` | *(often blank)* | Windows desktop | Often **no** neighbor rule match; rely on **port_rules** / manual review |
@@ -389,24 +392,27 @@ device_roles:
         match_sys_desc: "*crestron*"
         expect_alias_glob: "av*"
 
-      # 2) IP phones via LLDP telephone capability (Poly, Cisco phones, etc.)
-      - label: IP Phone (LLDP)
-        match_lldp_capability: telephone
-        expect_alias_glob: "phone*"
-
-      # 3) Wireless APs — separate rules avoid AND-ing name+desc+platform in one row
+      # 2) Wireless APs BEFORE telephone — APs often set bogus Telephone (T) without W (e.g. R,T).
       - label: Wireless AP (LLDP capability)
         match_lldp_capability: wlan_ap
         expect_alias_glob: "ap*"
       - label: Wireless AP (hostname / CDP)
         match_sys_name: "ap*"
         expect_alias_glob: "ap*"
+      - label: Wireless AP (hostname iap-)
+        match_sys_name: "iap*"
+        expect_alias_glob: "iap*"
       - label: Wireless AP (sysDesc / CDP platform)
         match_sys_desc: "*access point*"
         expect_alias_glob: "ap*"
       - label: Wireless AP (CDP platform)
         match_platform: "*AP*"
         expect_alias_glob: "ap*"
+
+      # 3) IP phones — after AP hostname/cap rules so ap- / iap- peers are not swallowed
+      - label: IP Phone (LLDP)
+        match_lldp_capability: telephone
+        expect_alias_glob: "phone*"
 
       # 4) Optional: desktop hint if the station sends a useful sysDesc (many do not)
       - label: Workstation (LLDP sysDesc heuristic)

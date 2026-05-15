@@ -152,12 +152,13 @@ func walkLLDP(client *gosnmp.GoSNMP, ifaces []Interface, portNumToIfIndex map[in
 			rows[key] = row
 		}
 		row.RemoteSysCapEnabled = pduCapabilityBits(pdu)
-		row.RemoteLLDPCaps = formatLLDPCaps(row.RemoteSysCapEnabled)
-		row.RemoteLLDPCapCodes = formatLLDPCapCodes(row.RemoteSysCapEnabled)
 		return nil
 	})
 
 	for key, row := range rows {
+		row.RemoteSysCapEnabled = normalizeLLDPCapEnabledForSNMP(row.RemoteSysCapEnabled, row.RemoteSysName)
+		row.RemoteLLDPCaps = formatLLDPCaps(row.RemoteSysCapEnabled)
+		row.RemoteLLDPCapCodes = formatLLDPCapCodes(row.RemoteSysCapEnabled)
 		local := resolveLLDPLocalIfIndex(portNumToIfIndex, lldpLocTablePresent, key.localPortNum, ifaces)
 		if local <= 0 {
 			continue
