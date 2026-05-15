@@ -33,12 +33,15 @@ Neighbors attach to interfaces by **local ifIndex** (`lldpRemLocalPortNum` / `cd
 
 ```yaml
 neighbor_rules:
+  # Order matters: put vendor-specific rules (e.g. Crestron AV) before generic LLDP capability rules.
+  - label: AV equipment (Crestron & peers)
+    match_sys_name: "*AM3100*"
+    expect_alias_glob: "av*"
   - label: IP Phone (LLDP)
-    match_sys_desc: "*phone*"
+    match_lldp_capability: telephone
     expect_alias_glob: "phone*"
-  - label: Wireless AP (LLDP)
-    match_sys_name: "ap*"
-    match_sys_desc: "*access point*"
+  - label: Wireless AP (LLDP capability)
+    match_lldp_capability: wlan_ap
     expect_alias_glob: "ap*"
 ```
 
@@ -47,10 +50,13 @@ Fields:
 | Field | Purpose |
 |-------|---------|
 | `label` | Wizard grouping / display |
+| `match_lldp_capability` | LLDP only: enabled capability bitmask (e.g. `telephone`, `wlan_ap`, `bridge`); see IEEE 802.1AB / `lldpRemSysCapEnabled` |
 | `match_sys_name` | Glob on LLDP/CDP remote system name |
 | `match_sys_desc` | Glob on remote system description |
 | `match_platform` | Glob on CDP platform string |
 | `expect_alias_glob` | If neighbor matches but interface alias does not, set `neighbor_hint` |
+
+**Note:** On a single rule, `match_*` / `match_lldp_capability` conditions are **AND**ed. Use multiple list entries (often sharing the same `label`) for **OR** behavior (e.g. several Crestron / AirMedia patterns before a generic `telephone` rule).
 
 Evaluation: first matching rule per neighbor entry; port-level label is the first neighbor on that interface that matches.
 

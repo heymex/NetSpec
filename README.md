@@ -328,6 +328,94 @@ On startup, NetSpec logs `monolithic_device_count` and `split_device_count` to s
 
 See `config/desired-state.yaml`, `config/alerts.yaml`, and `config/devices/example-device.yaml` for configuration examples.
 
+### `config/rules.yaml` — discovery defaults and neighbor classification
+
+The discovery wizard loads **`config/rules.yaml`** (when present) to pre-select monitoring options from **interface descriptions** (`port_rules`) and to classify **LLDP/CDP neighbors** (`neighbor_rules`) for grouping and optional **alias sanity checks**.
+
+#### Device roles and port rules
+
+- Each **`device_roles`** entry has a **`prefix`** matched against the device **hostname** (longest prefix wins), e.g. `asw` → access switch.
+- **`port_rules`** are evaluated **in order**; the first rule whose **`match`** glob hits the interface **alias** (description) wins. Use `monitor`, `desired_state`, and `alerts` as documented in the comments at the top of `config/rules.yaml`.
+
+#### Neighbor rules (`neighbor_rules`)
+
+Attached per device role. For each LLDP/CDP neighbor on an interface, rules are tested **in order**; the **first matching rule** applies. Matching fields on a single rule are **AND**ed (all specified fields must match). To get **OR** behavior, use **multiple YAML entries** (often with the same `label`).
+
+| Field | Purpose |
+|-------|---------|
+| `label` | Shown in the wizard (grouping / classification). |
+| `match_lldp_capability` | LLDP only: logical capability from `lldpRemSysCapEnabled` — e.g. `telephone`, `phone`, `wlan_ap`, `bridge`, `router` (see implementation). |
+| `match_sys_name` | Glob on remote system name (LLDP/CDP). |
+| `match_sys_desc` | Glob on remote system description (LLDP/CDP). |
+| `match_platform` | Glob on CDP platform string (CDP only). |
+| `expect_alias_glob` | Optional; if the neighbor matches but the port **alias** does not match this glob, the wizard sets **`neighbor_hint`**. |
+
+**LLDP capability codes** (Cisco-style letters) align with IEEE bits: **B** bridge, **T** telephone, **W** WLAN AP, **R** router, **C** DOCSIS, **P** repeater, **S** station, **O** other. NetSpec reads the bitmask from SNMP, not from CLI text.
+
+##### Example: four real neighbors on an access switch
+
+These illustrate why **order** and **vendor-specific** rules matter.
+
+| Neighbor (sys name) | Typical caps | What it really is | Practical classification |
+|---------------------|--------------|-------------------|----------------------------|
+| `ap-ha1-23` | **B,W** | Extreme Networks AP | **`wlan_ap`** or hostname **`ap*`** |
+| `AM3100_…` (AirMedia) | **B,T** | Crestron AirMedia (not a phone) | **AV** via **`crestron` / `airmedia` / `AM3100`** on sysName/sysDesc **before** `telephone` |
+| `WLH14112521` | *(often blank)* | Windows desktop | Often **no** neighbor rule match; rely on **port_rules** / manual review |
+| `dvf9918` | **B,T** | Poly IP phone | **`match_lldp_capability: telephone`** |
+
+Example **`neighbor_rules`** block (same structure as under **`prefix: asw`** in `config/rules.yaml`; **`port_rules`** are omitted here for brevity):
+
+```yaml
+device_roles:
+  - prefix: asw
+    name: Access Switch
+    port_rules:
+      - label: Wireless APs
+        match: "ap*"
+        monitor: false
+      # ... additional port_rules from the repo sample ...
+    neighbor_rules:
+      # 1) AV / Crestron family first — many units advertise B,T like a telephone.
+      - label: AV equipment (Crestron & peers)
+        match_sys_name: "*crestron*"
+        expect_alias_glob: "av*"
+      - label: AV equipment (Crestron & peers)
+        match_sys_name: "*AM3100*"
+        expect_alias_glob: "av*"
+      - label: AV equipment (Crestron & peers)
+        match_sys_desc: "*airmedia*"
+        expect_alias_glob: "av*"
+      - label: AV equipment (Crestron & peers)
+        match_sys_desc: "*crestron*"
+        expect_alias_glob: "av*"
+
+      # 2) IP phones via LLDP telephone capability (Poly, Cisco phones, etc.)
+      - label: IP Phone (LLDP)
+        match_lldp_capability: telephone
+        expect_alias_glob: "phone*"
+
+      # 3) Wireless APs — separate rules avoid AND-ing name+desc+platform in one row
+      - label: Wireless AP (LLDP capability)
+        match_lldp_capability: wlan_ap
+        expect_alias_glob: "ap*"
+      - label: Wireless AP (hostname / CDP)
+        match_sys_name: "ap*"
+        expect_alias_glob: "ap*"
+      - label: Wireless AP (sysDesc / CDP platform)
+        match_sys_desc: "*access point*"
+        expect_alias_glob: "ap*"
+      - label: Wireless AP (CDP platform)
+        match_platform: "*AP*"
+        expect_alias_glob: "ap*"
+
+      # 4) Optional: desktop hint if the station sends a useful sysDesc (many do not)
+      - label: Workstation (LLDP sysDesc heuristic)
+        match_sys_desc: "*windows*"
+        expect_alias_glob: "user*"
+```
+
+Use the complete **`config/rules.yaml`** in the repository as the source of truth for **`port_rules`** and the full device-role list.
+
 ### Port-channel interfaces
 
 For `Port-channel` (or equivalent) interfaces you can declare `members.required` and a `member_policy` with `mode`: `all_active`, `min_active`, or `per_stack_minimum`, plus optional `critical_threshold_pct` / `warning_threshold_pct` for member-down severity escalation. Invalid combinations (for example warning threshold ≥ critical) are rejected at config load time.
