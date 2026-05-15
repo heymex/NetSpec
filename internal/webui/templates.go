@@ -1506,10 +1506,14 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                     <div class="field"><label>Show excluded ports</label><select id="showExcluded"><option value="0">Hide (rule says skip)</option><option value="1">Show all</option></select></div>
                 </div>
                 <details id="topologySection" style="margin-bottom:1rem;display:none;">
-                    <summary style="cursor:pointer;font-size:0.85rem;color:var(--text-secondary);">Neighbor topology (Graphviz DOT)</summary>
-                    <pre id="topologyPreview" style="margin-top:0.5rem;padding:0.75rem;background:#0d1117;border:1px solid var(--bd);border-radius:6px;font-size:0.72rem;max-height:180px;overflow:auto;white-space:pre-wrap;"></pre>
+                    <summary style="cursor:pointer;font-size:0.85rem;color:var(--text-secondary);">Neighbor topology</summary>
+                    <div id="topologySVGWrap" style="margin-top:0.5rem;max-width:100%;overflow:auto;background:#0d1117;border:1px solid var(--bd);border-radius:6px;padding:0.5rem;display:none;"></div>
+                    <details style="margin-top:0.5rem;">
+                        <summary style="cursor:pointer;font-size:0.8rem;color:var(--text-secondary);">Graphviz DOT (export)</summary>
+                        <pre id="topologyPreview" style="margin-top:0.5rem;padding:0.75rem;background:#0d1117;border:1px solid var(--bd);border-radius:6px;font-size:0.72rem;max-height:180px;overflow:auto;white-space:pre-wrap;"></pre>
+                    </details>
                 </details>
-                <div id="ifGroupsContainer"></motion>
+                <div id="ifGroupsContainer"></div>
                 <div class="actions">
                     <button class="btn" id="backTo2">Back</button>
                     <button class="btn primary" id="toReview">Review & Commit</button>
@@ -1639,13 +1643,23 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                 });
                 renderGroups();
                 var topoSec = document.getElementById('topologySection');
+                var topoWrap = document.getElementById('topologySVGWrap');
                 var topoPre = document.getElementById('topologyPreview');
-                if (topoSec && topoPre) {
-                    if (state.walk.topology_dot) {
+                if (topoSec && topoWrap && topoPre) {
+                    if (state.walk.topology_svg || state.walk.topology_dot) {
                         topoSec.style.display = 'block';
-                        topoPre.textContent = state.walk.topology_dot;
+                        if (state.walk.topology_svg) {
+                            topoWrap.style.display = 'block';
+                            topoWrap.innerHTML = state.walk.topology_svg;
+                        } else {
+                            topoWrap.style.display = 'none';
+                            topoWrap.innerHTML = '';
+                        }
+                        topoPre.textContent = state.walk.topology_dot || '';
                     } else {
                         topoSec.style.display = 'none';
+                        topoWrap.innerHTML = '';
+                        topoWrap.style.display = 'none';
                         topoPre.textContent = '';
                     }
                 }
@@ -1659,8 +1673,9 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
             return nbs.map(function(nb) {
                 var who = (nb.remote_sys_name || nb.remote_port_id || '?').trim();
                 var proto = (nb.protocol || 'lldp').toUpperCase();
+                var caps = nb.remote_lldp_cap_codes ? ' [' + nb.remote_lldp_cap_codes + ']' : '';
                 var plat = nb.remote_platform ? ' [' + nb.remote_platform + ']' : '';
-                return proto + ': ' + who + plat;
+                return proto + ': ' + who + caps + plat;
             }).join('; ');
         }
 

@@ -60,6 +60,10 @@ type PortNeighbor struct {
 	RemotePortID   string `json:"remote_port_id,omitempty"`
 	RemotePortDesc string `json:"remote_port_desc,omitempty"`
 	RemotePlatform string `json:"remote_platform,omitempty"`
+	// RemoteSysCapEnabled is the lldpRemSysCapEnabled bit mask (LLDP only).
+	RemoteSysCapEnabled uint16   `json:"-"`
+	RemoteLLDPCaps      []string `json:"remote_lldp_caps,omitempty"`
+	RemoteLLDPCapCodes  string   `json:"remote_lldp_cap_codes,omitempty"` // Cisco-style, e.g. "B,T"
 }
 
 // TopologyEdge is a directed link from the walked device to a discovered neighbor.
@@ -77,6 +81,7 @@ type WalkResult struct {
 	FilteredCount int            `json:"filtered_count"`
 	TopologyEdges []TopologyEdge `json:"topology_edges,omitempty"`
 	TopologyDOT   string         `json:"topology_dot,omitempty"`
+	TopologySVG   string         `json:"topology_svg,omitempty"`
 }
 
 type CommitInterface struct {

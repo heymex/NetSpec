@@ -115,7 +115,7 @@ device_roles:
 
     neighbor_rules:
       - label: IP Phone (LLDP)
-        match_sys_desc: "*phone*"
+        match_lldp_capability: telephone
         expect_alias_glob: "phone*"
       - label: Wireless AP (LLDP/CDP)
         match_sys_name: "ap*"

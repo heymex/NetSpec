@@ -20,7 +20,7 @@ func TestParseCDPCacheOID(t *testing.T) {
 
 func TestAttachNeighbors_buildsEdges(t *testing.T) {
 	t.Parallel()
-	ifaces := []Interface{{Index: 9, Name: "Gi1/9"}}
+	ifaces := []Interface{{Index: 9, Name: "Gi1/9", OperStatus: "up"}}
 	byIndex := map[int][]PortNeighbor{
 		9: {{Protocol: "lldp", RemoteSysName: "ap-floor1", RemotePortID: "eth0"}},
 	}
