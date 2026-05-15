@@ -11,15 +11,18 @@ func TestApplyNeighborRules_aliasMismatchHint(t *testing.T) {
 	roles := []config.DeviceRole{{
 		Prefix: "asw",
 		NeighborRules: []config.NeighborRule{
-			{Label: "IP Phone", MatchSysDesc: "*phone*", ExpectAliasGlob: "phone*"},
+			{Label: "IP Phone", MatchLLDPCapability: "telephone", ExpectAliasGlob: "phone*"},
 		},
 	}}
 	result := &WalkResult{
 		Interfaces: []Interface{{
-			Name:  "Gi1/0/1",
+			Name:  "Gi1/0/41",
 			Alias: "user-port",
 			Neighbors: []PortNeighbor{{
-				RemoteSysDesc: "Cisco IP Phone",
+				Protocol:            "lldp",
+				RemoteSysName:       "dvf9918",
+				RemoteSysCapEnabled: lldpCapBridge | lldpCapPhone,
+				RemoteLLDPCaps:      []string{"bridge", "telephone"},
 			}},
 		}},
 	}

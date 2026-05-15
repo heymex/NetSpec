@@ -160,7 +160,7 @@ func WalkInterfaces(address string, port uint16, community string, timeout time.
 		return out[i].Name < out[j].Name
 	})
 
-	byIndex, _ := WalkNeighbors(address, port, community, timeout)
+	byIndex := walkNeighbors(client, out)
 	var edges []TopologyEdge
 	if len(byIndex) > 0 {
 		out, edges = AttachNeighbors("", out, byIndex)

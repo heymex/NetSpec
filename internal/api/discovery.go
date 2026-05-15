@@ -170,13 +170,14 @@ func (s *Server) handleDiscoveryWalk(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Rebuild topology with hostname label and Graphviz DOT for reporting.
+	// Rebuild topology with hostname label, inline SVG preview, and Graphviz DOT export.
 	if req.SysName != "" && len(result.TopologyEdges) > 0 {
 		host := req.SysName
 		for i := range result.TopologyEdges {
 			result.TopologyEdges[i].LocalDevice = host
 		}
 		result.TopologyDOT = topology.RenderDOT(host, result.TopologyEdges)
+		result.TopologySVG = topology.RenderNeighborSVG(host, result.TopologyEdges)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

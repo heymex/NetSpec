@@ -48,6 +48,14 @@ func matchNeighborRule(nb PortNeighbor, role *config.DeviceRole) *config.Neighbo
 }
 
 func neighborRuleMatches(nb PortNeighbor, r *config.NeighborRule) bool {
+	if r.MatchLLDPCapability != "" {
+		if !strings.EqualFold(nb.Protocol, "lldp") {
+			return false
+		}
+		if !lldpCapabilityEnabled(nb.RemoteSysCapEnabled, r.MatchLLDPCapability) {
+			return false
+		}
+	}
 	if r.MatchSysName != "" && !rules.GlobMatch(r.MatchSysName, nb.RemoteSysName) {
 		return false
 	}
@@ -57,5 +65,5 @@ func neighborRuleMatches(nb PortNeighbor, r *config.NeighborRule) bool {
 	if r.MatchPlatform != "" && !rules.GlobMatch(r.MatchPlatform, nb.RemotePlatform) {
 		return false
 	}
-	return r.MatchSysName != "" || r.MatchSysDesc != "" || r.MatchPlatform != ""
+	return r.MatchLLDPCapability != "" || r.MatchSysName != "" || r.MatchSysDesc != "" || r.MatchPlatform != ""
 }

@@ -15,11 +15,12 @@ type DeviceRole struct {
 
 // NeighborRule classifies LLDP/CDP peers and optionally checks port alias patterns.
 type NeighborRule struct {
-	Label           string `yaml:"label"`
-	MatchSysName    string `yaml:"match_sys_name,omitempty"`
-	MatchSysDesc    string `yaml:"match_sys_desc,omitempty"`
-	MatchPlatform   string `yaml:"match_platform,omitempty"`
-	ExpectAliasGlob string `yaml:"expect_alias_glob,omitempty"`
+	Label               string `yaml:"label"`
+	MatchLLDPCapability string `yaml:"match_lldp_capability,omitempty"` // e.g. telephone, bridge, wlan_ap
+	MatchSysName        string `yaml:"match_sys_name,omitempty"`
+	MatchSysDesc        string `yaml:"match_sys_desc,omitempty"`
+	MatchPlatform       string `yaml:"match_platform,omitempty"`
+	ExpectAliasGlob     string `yaml:"expect_alias_glob,omitempty"`
 }
 
 // PortRule matches ports by alias glob pattern and defines monitoring defaults.
