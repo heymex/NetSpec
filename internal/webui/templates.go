@@ -1505,7 +1505,11 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                     <div class="field"><label>Search</label><input id="ifSearch" placeholder="Filter by interface name or alias"></div>
                     <div class="field"><label>Show excluded ports</label><select id="showExcluded"><option value="0">Hide (rule says skip)</option><option value="1">Show all</option></select></div>
                 </div>
-                <div id="ifGroupsContainer"></div>
+                <details id="topologySection" style="margin-bottom:1rem;display:none;">
+                    <summary style="cursor:pointer;font-size:0.85rem;color:var(--text-secondary);">Neighbor topology (Graphviz DOT)</summary>
+                    <pre id="topologyPreview" style="margin-top:0.5rem;padding:0.75rem;background:#0d1117;border:1px solid var(--bd);border-radius:6px;font-size:0.72rem;max-height:180px;overflow:auto;white-space:pre-wrap;"></pre>
+                </details>
+                <div id="ifGroupsContainer"></motion>
                 <div class="actions">
                     <button class="btn" id="backTo2">Back</button>
                     <button class="btn primary" id="toReview">Review & Commit</button>
@@ -1634,11 +1638,33 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                     };
                 });
                 renderGroups();
+                var topoSec = document.getElementById('topologySection');
+                var topoPre = document.getElementById('topologyPreview');
+                if (topoSec && topoPre) {
+                    if (state.walk.topology_dot) {
+                        topoSec.style.display = 'block';
+                        topoPre.textContent = state.walk.topology_dot;
+                    } else {
+                        topoSec.style.display = 'none';
+                        topoPre.textContent = '';
+                    }
+                }
                 showStep('step3');
             }catch(e){ msg('walkMsg', e.message, true); }
         });
 
-        // Group interfaces by rule_name. Ungrouped go into a catch-all group.
+        function formatNeighbors(it) {
+            var nbs = it.neighbors || [];
+            if (!nbs.length) return '—';
+            return nbs.map(function(nb) {
+                var who = (nb.remote_sys_name || nb.remote_port_id || '?').trim();
+                var proto = (nb.protocol || 'lldp').toUpperCase();
+                var plat = nb.remote_platform ? ' [' + nb.remote_platform + ']' : '';
+                return proto + ': ' + who + plat;
+            }).join('; ');
+        }
+
+        // Group by port rule_name, else neighbor_rule_label, else Unclassified.
         function buildGroups() {
             var q = (document.getElementById('ifSearch').value||'').toLowerCase();
             var showExcluded = document.getElementById('showExcluded').value === '1';
@@ -1646,11 +1672,14 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
             var groupOrder = [];
             (state.walk.interfaces||[]).forEach(function(it, idx){
                 // Apply search filter.
-                if(q && (it.name||'').toLowerCase().indexOf(q)===-1 && (it.alias||'').toLowerCase().indexOf(q)===-1) return;
+                if(q && (it.name||'').toLowerCase().indexOf(q)===-1 && (it.alias||'').toLowerCase().indexOf(q)===-1) {
+                    var nstr = formatNeighbors(it).toLowerCase();
+                    if(nstr.indexOf(q)===-1) return;
+                }
                 // Determine if excluded by rule (rule_monitor===false).
                 var excluded = (it.rule_monitor === false);
                 if(excluded && !showExcluded) return;
-                var label = it.rule_name || '— Unclassified —';
+                var label = it.rule_name || it.neighbor_rule_label || '— Unclassified —';
                 if(!groups[label]){
                     groups[label] = {label: label, excluded: excluded, indices: []};
                     groupOrder.push(label);
@@ -1690,7 +1719,7 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                 }
                 html += '</div>';
                 html += '<div style="border:1px solid var(--bd);border-top:none;border-radius:0 0 8px 8px;overflow:auto;max-height:340px;">';
-                html += '<table><thead><tr><th>Monitor</th><th>Interface</th><th>Alias / Description</th><th>Admin</th><th>Oper</th><th>Desired</th><th>Severity</th></tr></thead><tbody>';
+                html += '<table><thead><tr><th>Monitor</th><th>Interface</th><th>Alias / Description</th><th>LLDP / CDP</th><th>Admin</th><th>Oper</th><th>Desired</th><th>Severity</th></tr></thead><tbody>';
                 g.indices.forEach(function(idx){
                     var it = state.walk.interfaces[idx];
                     var sel = state.ifSelections[it.name];
@@ -1701,8 +1730,9 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                     var cfgBadge = it.already_configured ? ' <span class="badge">configured</span>' : '';
                     html += '<tr data-idx="'+idx+'">';
                     html += '<td><input type="checkbox" class="if-mon"'+(sel.monitor?' checked':'')+' data-key="'+esc(it.name)+'"></td>';
-                    html += '<td style="white-space:nowrap;">'+esc(it.name)+cfgBadge+'</td>';
-                    html += '<td><div style="display:flex;align-items:center;gap:0.4rem;"><input class="if-alias" value="'+esc(sel.alias||'')+'" style="flex:1;min-width:120px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:0.3rem;" data-key="'+esc(it.name)+'">'+trunkBadge+'</div></td>';
+                    html += '<td style="white-space:nowrap;">'+esc(it.name)+cfgBadge+(it.neighbor_rule_label ? ' <span class="badge" title="neighbor rule">'+esc(it.neighbor_rule_label)+'</span>' : '')+'</td>';
+                    html += '<td><div style="display:flex;align-items:center;gap:0.4rem;"><input class="if-alias" value="'+esc(sel.alias||'')+'" style="flex:1;min-width:120px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:0.3rem;" data-key="'+esc(it.name)+'">'+trunkBadge+'</div>'+(it.neighbor_hint ? '<div class="small" style="color:var(--accent-yellow);margin-top:0.2rem;">'+esc(it.neighbor_hint)+'</div>' : '')+'</td>';
+                    html += '<td class="small" style="max-width:200px;word-break:break-word;">'+esc(formatNeighbors(it))+'</td>';
                     html += '<td>'+esc(it.admin_status)+'</td>';
                     html += '<td>'+esc(it.oper_status)+'</td>';
                     html += '<td><select class="if-desired" data-key="'+esc(it.name)+'"><option value="up"'+(sel.desired_state==='up'?' selected':'')+'>up</option><option value="down"'+(sel.desired_state==='down'?' selected':'')+'>down</option></select></td>';
@@ -1722,7 +1752,8 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                     var label = btn.getAttribute('data-group');
                     var val = btn.getAttribute('data-action') === 'select-group';
                     (state.walk.interfaces||[]).forEach(function(it){
-                        if(it.rule_name === label || (!it.rule_name && label === '— Unclassified —')){
+                        var gl = it.rule_name || it.neighbor_rule_label || '— Unclassified —';
+                        if(gl === label){
                             state.ifSelections[it.name].monitor = val;
                         }
                     });
