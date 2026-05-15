@@ -7,9 +7,19 @@ type RulesConfig struct {
 
 // DeviceRole matches devices by hostname prefix and defines port rules for that role.
 type DeviceRole struct {
-	Name      string     `yaml:"name"`
-	Prefix    string     `yaml:"prefix"` // hostname prefix, e.g. "dsw", "asw"
-	PortRules []PortRule `yaml:"port_rules"`
+	Name          string         `yaml:"name"`
+	Prefix        string         `yaml:"prefix"` // hostname prefix, e.g. "dsw", "asw"
+	PortRules     []PortRule     `yaml:"port_rules"`
+	NeighborRules []NeighborRule `yaml:"neighbor_rules,omitempty"`
+}
+
+// NeighborRule classifies LLDP/CDP peers and optionally checks port alias patterns.
+type NeighborRule struct {
+	Label           string `yaml:"label"`
+	MatchSysName    string `yaml:"match_sys_name,omitempty"`
+	MatchSysDesc    string `yaml:"match_sys_desc,omitempty"`
+	MatchPlatform   string `yaml:"match_platform,omitempty"`
+	ExpectAliasGlob string `yaml:"expect_alias_glob,omitempty"`
 }
 
 // PortRule matches ports by alias glob pattern and defines monitoring defaults.

@@ -10,6 +10,7 @@ import (
 	"github.com/netspec/netspec/internal/config"
 	"github.com/netspec/netspec/internal/discovery"
 	"github.com/netspec/netspec/internal/rules"
+	"github.com/netspec/netspec/internal/topology"
 	"github.com/netspec/netspec/internal/webui"
 )
 
@@ -169,6 +170,15 @@ func (s *Server) handleDiscoveryWalk(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Rebuild topology with hostname label and Graphviz DOT for reporting.
+	if req.SysName != "" && len(result.TopologyEdges) > 0 {
+		host := req.SysName
+		for i := range result.TopologyEdges {
+			result.TopologyEdges[i].LocalDevice = host
+		}
+		result.TopologyDOT = topology.RenderDOT(host, result.TopologyEdges)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(result)
 }
@@ -190,6 +200,7 @@ func applyRulesToWalk(hostname string, result *discovery.WalkResult, rulesConfig
 			iface.TrunkLink = tl
 		}
 	}
+	discovery.ApplyNeighborRules(hostname, result, rulesConfig.DeviceRoles)
 }
 
 func (s *Server) handleDiscoveryCommit(w http.ResponseWriter, r *http.Request) {
