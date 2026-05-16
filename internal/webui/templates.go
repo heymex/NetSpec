@@ -1314,7 +1314,11 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                     return;
                 }
                 var sev = { critical: 0, warning: 1, info: 2 };
+                var stateOrd = { firing: 0, acked: 1 };
                 alerts.sort(function (a, b) {
+                    var stA = stateOrd[a.State] !== undefined ? stateOrd[a.State] : 9;
+                    var stB = stateOrd[b.State] !== undefined ? stateOrd[b.State] : 9;
+                    if (stA !== stB) return stA - stB;
                     var sa = sev[a.Severity] !== undefined ? sev[a.Severity] : 9;
                     var sb = sev[b.Severity] !== undefined ? sev[b.Severity] : 9;
                     if (sa !== sb) return sa - sb;
