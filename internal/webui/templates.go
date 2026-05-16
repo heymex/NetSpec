@@ -1137,7 +1137,7 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
             function tileStyle(bucket) {
                 if (bucket === 'critical') return { fill: '#f85149', stroke: '#30363d', sw: 1.5, cls: 'hex-critical' };
                 if (bucket === 'warning') return { fill: '#d29922', stroke: '#30363d', sw: 1.5, cls: 'hex-warning' };
-                return { fill: 'none', stroke: '#3fb950', sw: 1.5, cls: 'hex-ok' };
+                return { fill: 'rgba(63,185,80,0.2)', stroke: '#3fb950', sw: 1.5, cls: 'hex-ok' };
             }
             function hexPathD(cx, cy, R) {
                 var parts = [];
