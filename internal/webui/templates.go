@@ -2213,19 +2213,24 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
             font-weight: 500;
         }
 
-        .interface-state.up {
+        .interface-state.match {
             background: rgba(63, 185, 80, 0.15);
             color: var(--accent-green);
         }
 
-        .interface-state.down {
+        .interface-state.mismatch-down {
             background: rgba(248, 81, 73, 0.15);
             color: var(--accent-red);
         }
 
-        .interface-state.unknown {
+        .interface-state.mismatch-up {
             background: rgba(210, 153, 34, 0.15);
             color: var(--accent-yellow);
+        }
+
+        .interface-state.unknown {
+            background: rgba(100, 110, 125, 0.15);
+            color: var(--text-muted);
         }
 
         .iface-ts {
@@ -2461,7 +2466,8 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                                 <span>Admin: {{.AdminState}}</span>
                             </div>
                         </div>
-                        <span class="interface-state {{if .OperStatus}}{{.OperStatus}}{{else}}unknown{{end}}">
+                        <span class="interface-state {{if eq .OperStatus ""}}unknown{{else if eq .DesiredState .OperStatus}}match{{else if eq .DesiredState "up"}}mismatch-down{{else}}mismatch-up{{end}}"
+                              data-desired="{{.DesiredState}}">
                             {{if .OperStatus}}{{.OperStatus}}{{else}}unknown{{end}}
                         </span>
                         <span class="iface-ts">
@@ -2538,23 +2544,41 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                         if (wasAtBottom) container.scrollTop = container.scrollHeight;
                     }
 
-                    // Update port grid cells from live interface state
+                    // Update port grid cells and interface-state badges from live interface state
                     if (data.interfaces) {
                         data.interfaces.forEach(function(iface) {
-                            var cell = document.querySelector('.port-cell[data-iface-name="' + iface.name.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"]');
-                            if (!cell) return;
                             var oper = (iface.runtime && iface.runtime.oper_status) || '';
-                            var desired = cell.getAttribute('data-desired') || '';
-                            var cls = 'port-cell ';
-                            if (!oper)               cls += 'port-unknown';
-                            else if (desired === oper) cls += 'match';
-                            else if (desired === 'up') cls += 'mismatch-down';
-                            else                       cls += 'mismatch-up';
-                            cell.className = cls;
-                            var stateStr = oper || 'unknown';
-                            var tip = iface.name + '\nDesired: ' + desired + '\nState: ' + stateStr;
-                            if (iface.description) tip += '\n' + iface.description;
-                            cell.title = tip;
+                            var escapedName = iface.name.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+
+                            var cell = document.querySelector('.port-cell[data-iface-name="' + escapedName + '"]');
+                            if (cell) {
+                                var desired = cell.getAttribute('data-desired') || '';
+                                var cls = 'port-cell ';
+                                if (!oper)               cls += 'port-unknown';
+                                else if (desired === oper) cls += 'match';
+                                else if (desired === 'up') cls += 'mismatch-down';
+                                else                       cls += 'mismatch-up';
+                                cell.className = cls;
+                                var stateStr = oper || 'unknown';
+                                var tip = iface.name + '\nDesired: ' + desired + '\nState: ' + stateStr;
+                                if (iface.description) tip += '\n' + iface.description;
+                                cell.title = tip;
+                            }
+
+                            var row = document.querySelector('.interface-item[data-iface-name="' + escapedName + '"]');
+                            if (row) {
+                                var badge = row.querySelector('.interface-state');
+                                if (badge) {
+                                    var desired = badge.getAttribute('data-desired') || '';
+                                    var cls = 'interface-state ';
+                                    if (!oper)               cls += 'unknown';
+                                    else if (desired === oper) cls += 'match';
+                                    else if (desired === 'up') cls += 'mismatch-down';
+                                    else                       cls += 'mismatch-up';
+                                    badge.className = cls;
+                                    badge.textContent = oper || 'unknown';
+                                }
+                            }
                         });
                     }
 
