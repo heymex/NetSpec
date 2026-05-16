@@ -820,7 +820,6 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                 </div>
                 <a class="btn btn-secondary" href="/">Dashboard</a>
                 <a class="btn btn-secondary" href="/api-browser">API</a>
-                <a class="btn btn-secondary" href="/noc">NOC View</a>
                 <a class="btn btn-secondary" href="/diagnostics">Diagnostics</a>
                 <button class="btn btn-primary" onclick="reloadConfig()">↻ Reload Config</button>
             </div>
@@ -899,6 +898,7 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                     <span class="status-dot"></span>
                     Running
                 </div>
+                <a class="btn btn-secondary" href="/noc">NOC View</a>
                 <a class="btn btn-secondary" href="/api-browser">API</a>
                 <a class="btn btn-secondary" href="/diagnostics">Diagnostics</a>
                 <a class="btn btn-secondary" href="/wizard">+ Add Device</a>
