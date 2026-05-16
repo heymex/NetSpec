@@ -144,7 +144,7 @@ func WalkInterfaces(address string, port uint16, community string, timeout time.
 			}
 		}
 		sort.Strings(it.ChannelMembers)
-		if it.Type == 24 || it.Type == 53 {
+		if (it.Type == 24 || it.Type == 53) && !it.IsPortChannel {
 			filtered++
 			continue
 		}
