@@ -173,6 +173,32 @@ devices:
 	}
 }
 
+func TestLoadConfigDirAllowsZeroDevices(t *testing.T) {
+	t.Parallel()
+	tmp := t.TempDir()
+	cfgDir := filepath.Join(tmp, "cfg")
+	if err := os.MkdirAll(filepath.Join(cfgDir, "devices"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	desired := []byte(`global:
+  telemetry_mode: telemetry_ingest_push
+  snmp:
+    version: "2c"
+devices: {}
+`)
+	if err := os.WriteFile(filepath.Join(cfgDir, "desired-state.yaml"), desired, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadConfigDir(cfgDir)
+	if err != nil {
+		t.Fatalf("LoadConfigDir with zero devices: %v", err)
+	}
+	if cfg.TotalDeviceCount() != 0 {
+		t.Fatalf("device count: want 0, got %d", cfg.TotalDeviceCount())
+	}
+}
+
 func TestValidateIngestDuplicateListenerPorts(t *testing.T) {
 	t.Parallel()
 	cfg := &Config{

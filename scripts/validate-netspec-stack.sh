@@ -104,9 +104,10 @@ ok "ingest ports match: $INGEST_PORT_YAML"
 
 if [[ -d "$DATA_DIR/config/devices" ]]; then
 	if ! ls -1 "$DATA_DIR/config/devices"/*.yaml >/dev/null 2>&1; then
-		die "no split-device YAML files in $DATA_DIR/config/devices"
+		warn "no split-device YAML files in $DATA_DIR/config/devices (valid after deleting all devices; use /wizard to add devices)"
+	else
+		ok "split-device files present in config/devices"
 	fi
-	ok "split-device files present in config/devices"
 else
 	warn "split-device directory missing: $DATA_DIR/config/devices (monolithic devices may still be valid)"
 fi

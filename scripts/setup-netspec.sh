@@ -194,7 +194,7 @@ if [[ "$SEED_EXAMPLE_DEVICES" -eq 1 ]]; then
 	if [[ "$prior_n" -eq 0 && "$after_n" -gt 0 ]]; then
 		log "Split device YAMLs were missing under config/devices — sample stack needs these because desired-state.yaml uses devices: {}."
 	fi
-	[[ "$after_n" -gt 0 ]] || die "Failed to seed $DATA_DIR/config/devices — NetSpec would exit with \"no devices configured\"."
+	[[ "$after_n" -gt 0 ]] || die "Failed to seed $DATA_DIR/config/devices — sample devices are required for first-time setup."
 else
 	log "Skipping example split-device seed (--no-seed-example-devices)."
 	log "WARNING: sample desired-state uses devices: {} — without split files NetSpec will not start unless you define devices elsewhere."
