@@ -1,20 +1,34 @@
 #!/usr/bin/env python3
 import json
+import logging
+import logging.handlers
 import os
+import re
 import socket
 import time
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 SRC_FILE = Path(os.getenv("MDT_DECODED_FILE", "/sidecar/decoded.json"))
 DEST_HOST = os.getenv("NETSPEC_INGEST_HOST", "127.0.0.1")
 DEST_PORT = int(os.getenv("NETSPEC_INGEST_PORT", "57500"))
 DEST_TARGETS = os.getenv("NETSPEC_INGEST_TARGETS", "").strip()
 LOG_FILE = Path(os.getenv("MDT_FORWARDER_LOG", "/sidecar/forwarder.log"))
+LOG_MAX_BYTES = int(os.getenv("MDT_FORWARDER_LOG_MAX_BYTES", str(10 * 1024 * 1024)))
+LOG_BACKUP_COUNT = int(os.getenv("MDT_FORWARDER_LOG_BACKUP_COUNT", "3"))
 RESEND_INTERVAL_SECONDS = int(os.getenv("MDT_RESEND_INTERVAL_SECONDS", "60"))
+DECODED_WARN_BYTES = int(os.getenv("MDT_DECODED_WARN_BYTES", str(100 * 1024 * 1024)))
+PRUNE_DECODED_ARCHIVES_ON_START = os.getenv("MDT_PRUNE_DECODED_ARCHIVES_ON_START", "true").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 
 allowed_env = os.getenv("MDT_ALLOWED_DEVICES", "").strip()
 ALLOWED_DEVICES = {d.strip() for d in allowed_env.split(",") if d.strip()} if allowed_env else set()
+
+ARCHIVE_SUFFIX_RE = re.compile(r"^decoded\.json\.\d+$")
 
 
 def parse_targets() -> List[Tuple[str, int]]:
@@ -91,19 +105,129 @@ def connect_sock(host: str, port: int):
             time.sleep(1)
 
 
-def log(msg: str):
+def setup_logging() -> logging.Logger:
     LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with LOG_FILE.open("a", encoding="utf-8") as f:
-        f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}\n")
+    logger = logging.getLogger("mdt-forwarder")
+    logger.setLevel(logging.INFO)
+    logger.handlers.clear()
+    handler = logging.handlers.RotatingFileHandler(
+        LOG_FILE,
+        maxBytes=LOG_MAX_BYTES,
+        backupCount=LOG_BACKUP_COUNT,
+        encoding="utf-8",
+    )
+    handler.setFormatter(logging.Formatter("%(asctime)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+    logger.addHandler(handler)
+    return logger
+
+
+def format_bytes(num_bytes: int) -> str:
+    if num_bytes < 1024:
+        return f"{num_bytes}B"
+    if num_bytes < 1024 * 1024:
+        return f"{num_bytes / 1024:.1f}KB"
+    if num_bytes < 1024 * 1024 * 1024:
+        return f"{num_bytes / (1024 * 1024):.1f}MB"
+    return f"{num_bytes / (1024 * 1024 * 1024):.2f}GB"
+
+
+def prune_decoded_archives(sidecar_dir: Path, logger: logging.Logger) -> int:
+    """Remove Telegraf rotation archives; the forwarder only tails the active file."""
+    removed = 0
+    for path in sorted(sidecar_dir.glob("decoded.json.*")):
+        if not ARCHIVE_SUFFIX_RE.match(path.name):
+            continue
+        try:
+            size = path.stat().st_size
+            path.unlink()
+            removed += 1
+            logger.info("pruned_archive path=%s size=%s", path.name, format_bytes(size))
+        except OSError as exc:
+            logger.warning("prune_archive_failed path=%s error=%s", path, exc)
+    return removed
+
+
+class DecodedTail:
+    """Tail -F style reader for Telegraf's decoded.json (handles rotation/truncation)."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        self._file: Optional[object] = None
+        self._inode: Optional[int] = None
+        self._open_tail()
+
+    def _open_tail(self, *, from_start: bool = False):
+        if self._file is not None:
+            self._file.close()
+            self._file = None
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.touch(exist_ok=True)
+        self._file = self.path.open("r", encoding="utf-8")
+        st = os.fstat(self._file.fileno())
+        self._inode = st.st_ino
+        if from_start:
+            self._file.seek(0)
+        else:
+            self._file.seek(0, 2)
+
+    def _maybe_reopen(self):
+        try:
+            st_path = self.path.stat()
+        except FileNotFoundError:
+            self._open_tail(from_start=True)
+            return
+        if self._file is None:
+            self._open_tail()
+            return
+        if st_path.st_ino != self._inode:
+            self._open_tail(from_start=True)
+            return
+        pos = self._file.tell()
+        if st_path.st_size < pos:
+            self._open_tail(from_start=True)
+
+    def readline(self) -> str:
+        if self._file is None:
+            self._open_tail()
+        line = self._file.readline()
+        if line:
+            return line
+        self._maybe_reopen()
+        if self._file is None:
+            return ""
+        return self._file.readline()
+
+    def close(self):
+        if self._file is not None:
+            self._file.close()
+            self._file = None
 
 
 def main():
-    log("forwarder starting")
+    logger = setup_logging()
+    logger.info("forwarder starting")
     SRC_FILE.parent.mkdir(parents=True, exist_ok=True)
     SRC_FILE.touch(exist_ok=True)
 
+    if PRUNE_DECODED_ARCHIVES_ON_START:
+        pruned = prune_decoded_archives(SRC_FILE.parent, logger)
+        if pruned:
+            logger.info("pruned_decoded_archives count=%d", pruned)
+
+    try:
+        active_size = SRC_FILE.stat().st_size
+    except OSError:
+        active_size = 0
+    if active_size >= DECODED_WARN_BYTES:
+        logger.warning(
+            "decoded_json_large size=%s note=tail-only; configure Telegraf rotation_max_size "
+            "or stop telegraf and truncate %s if disk is critical",
+            format_bytes(active_size),
+            SRC_FILE,
+        )
+
     targets = parse_targets()
-    log(f"targets={','.join([f'{host}:{port}' for host, port in targets])}")
+    logger.info("targets=%s", ",".join([f"{host}:{port}" for host, port in targets]))
     socks: Dict[Tuple[str, int], socket.socket] = {
         target: connect_sock(target[0], target[1]) for target in targets
     }
@@ -111,10 +235,10 @@ def main():
     last_state = {}
     last_sent_at = {}
 
-    with SRC_FILE.open("r", encoding="utf-8") as f:
-        f.seek(0, 2)
+    tail = DecodedTail(SRC_FILE)
+    try:
         while True:
-            line = f.readline()
+            line = tail.readline()
             if not line:
                 time.sleep(0.2)
                 continue
@@ -170,9 +294,11 @@ def main():
 
                 sent += 1
                 if sent % 50 == 0:
-                    log(f"sent={sent}")
+                    logger.info("sent=%d", sent)
             except Exception as exc:
-                log(f"parse_error={exc}")
+                logger.warning("parse_error=%s", exc)
+    finally:
+        tail.close()
 
 
 if __name__ == "__main__":

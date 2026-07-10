@@ -106,7 +106,7 @@ docker compose up -d
 
 This starts **NetSpec** (web/API on host **`API_PORT`**, default **8088**), **Apprise-API** (**`8086:8000`** on the host), **Telegraf MDT** (host **`57500/tcp`** published into the container for MDT dial-out), and **mdt-translator**. All services attach to the Compose **`netspec` bridge** (`docker-compose.yml` uses a **`netspec-` name prefix**).
 
-Runtime artifacts: `${NETSPEC_DATA_DIR}/mdt-sidecar` (`decoded.json`, `forwarder.log`).
+Runtime artifacts: `${NETSPEC_DATA_DIR}/mdt-sidecar` (`decoded.json`, `forwarder.log`). **`decoded.json` is a tail-only buffer** between Telegraf and `mdt-translator` — it is **not** long-term storage. Telegraf rotates it at **100MB** (`tools/sidecar/telegraf-mdt.conf`); the translator prunes `decoded.json.N` archives on start and rotates `forwarder.log` (see **`MDT_FORWARDER_LOG_*`** in `.env.example`). If disk is already full from an older deploy without rotation, stop **`netspec-telegraf-mdt`** and **`netspec-mdt-translator`**, remove or truncate `${NETSPEC_DATA_DIR}/mdt-sidecar/decoded.json` (and any `decoded.json.*`), then redeploy/restart.
 
 All services use Docker log rotation via the `json-file` driver with per-service overrides. Tune `NETSPEC_*`, `APPRISE_*`, `TELEGRAF_*`, and `TRANSLATOR_*` limits in `.env` to avoid multi-GB container logs on low-activity stacks.
 

@@ -132,6 +132,11 @@ tsh ssh derek@derek-ghrunner "cd /home/derek/mdt-sidecar && nohup env MDT_DECODE
   - Cause: `mdt-translator` / forwarder stopped, wrong `NETSPEC_INGEST_PORT`, or Telegraf not writing `decoded.json`.
   - Fix: align `global.ingest.port` in YAML with `NETSPEC_INGEST_PORT`; restart `make docker-up` or the translator container.
 
+- `${NETSPEC_DATA_DIR}/mdt-sidecar/decoded.json` grows without bound (100GB+)
+  - Cause: Telegraf `outputs.file` appends every MDT event; older stacks had no rotation on `decoded.json`.
+  - Fix (immediate): `docker stop netspec-telegraf-mdt netspec-mdt-translator`, then `rm -f /opt/netspec/mdt-sidecar/decoded.json /opt/netspec/mdt-sidecar/decoded.json.*` (adjust path), redeploy/pull images with rotation enabled, `docker start …`.
+  - Fix (prevent): current `tools/sidecar/telegraf-mdt.conf` sets `rotation_max_size = "100MB"`; translator prunes `decoded.json.N` on start and rotates `forwarder.log`.
+
 - Container vs host binary
   - Prefer **one** runtime: containerized NetSpec (this runbook § “Recommended: containerized dev”) **or** host `./netspec` for quick Go iteration—not both on the same ports. This host has often run the **host** `./netspec` process operationally; if you switch to Compose, ensure port/config paths are correct.
   - If testing with Docker Compose, ensure `NETSPEC_DATA_DIR` contains `config/`, `data/`, and `apprise-config/` as in production, and avoid dual-running with a legacy host NetSpec on **8088** / the ingest port.
