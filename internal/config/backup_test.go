@@ -124,6 +124,65 @@ func TestImportConfigArchiveRejectsUnsupportedPath(t *testing.T) {
 	}
 }
 
+func TestImportConfigArchiveRejectsZipSlip(t *testing.T) {
+	t.Parallel()
+	tmp := t.TempDir()
+	cfgDir := filepath.Join(tmp, "cfg")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(tmp, "outside.yaml")
+
+	cases := []string{
+		"../outside.yaml",
+		"../../outside.yaml",
+		"config/devices/../../outside.yaml",
+		"/etc/passwd.yaml",
+		"config/devices/../escape.yaml",
+	}
+	for _, name := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var buf bytes.Buffer
+			zw := zip.NewWriter(&buf)
+			w, err := zw.Create(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := w.Write([]byte("evil: true\n")); err != nil {
+				t.Fatal(err)
+			}
+			if err := zw.Close(); err != nil {
+				t.Fatal(err)
+			}
+			archive := buf.Bytes()
+			_, err = ImportConfigArchive(cfgDir, bytes.NewReader(archive), int64(len(archive)), ImportModeMerge)
+			if err == nil {
+				t.Fatal("expected zip-slip import to fail")
+			}
+			if _, err := os.Stat(outside); !os.IsNotExist(err) {
+				t.Fatalf("outside file should not exist, stat err=%v", err)
+			}
+		})
+	}
+}
+
+func TestNormalizeBackupZipPathRejectsTraversal(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"../x.yaml", "a/../b.yaml", "..", "/abs.yaml"} {
+		if _, err := normalizeBackupZipPath(name); err == nil {
+			t.Fatalf("expected reject for %q", name)
+		}
+	}
+	got, err := normalizeBackupZipPath("./desired-state.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "desired-state.yaml" {
+		t.Fatalf("got %q", got)
+	}
+}
+
 func writeTestFile(t *testing.T, path string, data []byte) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

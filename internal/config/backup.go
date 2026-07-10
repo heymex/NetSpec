@@ -118,7 +118,14 @@ func ImportConfigArchive(configDir string, r io.ReaderAt, size int64, mode Impor
 		return nil, fmt.Errorf("read zip archive: %w", err)
 	}
 
-	configDir = filepath.Clean(configDir)
+	configDir, err = filepath.Abs(filepath.Clean(configDir))
+	if err != nil {
+		return nil, fmt.Errorf("resolve config dir: %w", err)
+	}
+	dataDir, err := filepath.Abs(DataDir(configDir))
+	if err != nil {
+		return nil, fmt.Errorf("resolve data dir: %w", err)
+	}
 	result := &ImportResult{Mode: mode}
 	importedDevicePaths := map[string]bool{}
 
@@ -150,8 +157,11 @@ func ImportConfigArchive(configDir string, r io.ReaderAt, size int64, mode Impor
 			return nil, fmt.Errorf("zip entry %s exceeds maximum size", zipPath)
 		}
 
-		dest, err := backupZipPathToAbs(configDir, zipPath)
+		dest, err := resolveImportDestination(configDir, zipPath)
 		if err != nil {
+			return nil, err
+		}
+		if err := ensureWithinBackupRoots(configDir, dataDir, dest); err != nil {
 			return nil, err
 		}
 		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
@@ -269,10 +279,22 @@ func normalizeBackupZipPath(name string) (string, error) {
 	if name == "" {
 		return "", fmt.Errorf("empty zip entry path")
 	}
-	name = filepath.ToSlash(filepath.Clean(name))
+	// Normalize separators first so Clean collapses ".." on all platforms.
+	name = filepath.ToSlash(name)
+	name = filepath.Clean(name)
+	name = filepath.ToSlash(name)
 	name = strings.TrimPrefix(name, "./")
 	if name == "." || name == "" {
 		return "", fmt.Errorf("invalid zip entry path")
+	}
+	if filepath.IsAbs(name) || strings.HasPrefix(name, "/") {
+		return "", fmt.Errorf("absolute zip entry path rejected: %s", name)
+	}
+	if name == ".." || strings.HasPrefix(name, "../") || strings.Contains(name, "/../") || strings.HasSuffix(name, "/..") {
+		return "", fmt.Errorf("zip entry path traversal rejected: %s", name)
+	}
+	if strings.Contains(name, "..") {
+		return "", fmt.Errorf("zip entry path contains '..': %s", name)
 	}
 	return name, nil
 }
@@ -287,43 +309,92 @@ func validateBackupZipPath(zipPath string) error {
 		zipPath == "data/desired-state-devices.yaml":
 		return nil
 	case strings.HasPrefix(zipPath, "config/devices/"):
-		return validateDeviceYAMLZipPath(zipPath, "config/devices/")
+		_, err := sanitizeYAMLBasename(strings.TrimPrefix(zipPath, "config/devices/"))
+		return err
 	case strings.HasPrefix(zipPath, "data/devices/"):
-		return validateDeviceYAMLZipPath(zipPath, "data/devices/")
+		_, err := sanitizeYAMLBasename(strings.TrimPrefix(zipPath, "data/devices/"))
+		return err
 	default:
 		return fmt.Errorf("unsupported zip entry path: %s", zipPath)
 	}
 }
 
-func validateDeviceYAMLZipPath(zipPath, prefix string) error {
-	name := strings.TrimPrefix(zipPath, prefix)
-	if name == "" || strings.Contains(name, "/") {
-		return fmt.Errorf("invalid device yaml path: %s", zipPath)
+// sanitizeYAMLBasename accepts only a single path component ending in .yaml.
+func sanitizeYAMLBasename(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" || name == "." || name == ".." {
+		return "", fmt.Errorf("invalid device yaml basename")
+	}
+	if strings.ContainsAny(name, `/\`) || strings.Contains(name, "..") {
+		return "", fmt.Errorf("invalid device yaml basename: %s", name)
+	}
+	if filepath.Base(name) != name {
+		return "", fmt.Errorf("invalid device yaml basename: %s", name)
 	}
 	if !strings.HasSuffix(strings.ToLower(name), ".yaml") {
-		return fmt.Errorf("device file must end with .yaml: %s", zipPath)
+		return "", fmt.Errorf("device file must end with .yaml: %s", name)
 	}
-	return nil
+	return name, nil
 }
 
 func isDeviceYAMLZipPath(zipPath string) bool {
 	return strings.HasPrefix(zipPath, "config/devices/") || strings.HasPrefix(zipPath, "data/devices/")
 }
 
-func backupZipPathToAbs(configDir, zipPath string) (string, error) {
+// resolveImportDestination maps an allowlisted zip path to an absolute destination
+// using only trusted roots and string literals (or a sanitized single-component basename).
+func resolveImportDestination(configDir, zipPath string) (string, error) {
+	configDir = filepath.Clean(configDir)
 	switch zipPath {
-	case "desired-state.yaml", "alerts.yaml", "credentials.yaml", "maintenance.yaml", "rules.yaml":
-		return filepath.Join(configDir, zipPath), nil
+	case "desired-state.yaml":
+		return filepath.Join(configDir, "desired-state.yaml"), nil
+	case "alerts.yaml":
+		return filepath.Join(configDir, "alerts.yaml"), nil
+	case "credentials.yaml":
+		return filepath.Join(configDir, "credentials.yaml"), nil
+	case "maintenance.yaml":
+		return filepath.Join(configDir, "maintenance.yaml"), nil
+	case "rules.yaml":
+		return filepath.Join(configDir, "rules.yaml"), nil
 	case "data/desired-state-devices.yaml":
-		return MonolithicDeviceOverlayPath(configDir), nil
+		return filepath.Join(DataDir(configDir), "desired-state-devices.yaml"), nil
 	}
-	if strings.HasPrefix(zipPath, "config/devices/") && strings.HasSuffix(zipPath, ".yaml") {
-		return filepath.Join(configDir, "devices", filepath.Base(zipPath)), nil
+	if strings.HasPrefix(zipPath, "config/devices/") {
+		base, err := sanitizeYAMLBasename(strings.TrimPrefix(zipPath, "config/devices/"))
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(configDir, "devices", base), nil
 	}
-	if strings.HasPrefix(zipPath, "data/devices/") && strings.HasSuffix(zipPath, ".yaml") {
-		return filepath.Join(SplitDeviceWriteDir(configDir), filepath.Base(zipPath)), nil
+	if strings.HasPrefix(zipPath, "data/devices/") {
+		base, err := sanitizeYAMLBasename(strings.TrimPrefix(zipPath, "data/devices/"))
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(SplitDeviceWriteDir(configDir), base), nil
 	}
 	return "", fmt.Errorf("unsupported zip entry path: %s", zipPath)
+}
+
+func ensureWithinBackupRoots(configDir, dataDir, dest string) error {
+	absDest, err := filepath.Abs(filepath.Clean(dest))
+	if err != nil {
+		return fmt.Errorf("resolve destination: %w", err)
+	}
+	if pathWithinRoot(configDir, absDest) || pathWithinRoot(dataDir, absDest) {
+		return nil
+	}
+	return fmt.Errorf("refusing to write outside config/data roots: %s", absDest)
+}
+
+func pathWithinRoot(root, candidate string) bool {
+	root = filepath.Clean(root)
+	candidate = filepath.Clean(candidate)
+	if candidate == root {
+		return true
+	}
+	sep := string(os.PathSeparator)
+	return strings.HasPrefix(candidate, root+sep)
 }
 
 func removeStaleBackupFiles(configDir string, keep map[string]bool) ([]string, error) {
