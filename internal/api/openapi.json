@@ -221,6 +221,67 @@
         }
       }
     },
+    "/api/config/export": {
+      "get": {
+        "tags": ["Configuration"],
+        "summary": "Export configuration backup",
+        "description": "Downloads a zip archive of NetSpec YAML configuration (`desired-state.yaml`, `alerts.yaml`, split devices, and optional data overlay files).",
+        "responses": {
+          "200": {
+            "description": "Zip archive",
+            "content": {
+              "application/zip": {
+                "schema": { "type": "string", "format": "binary" }
+              }
+            }
+          },
+          "500": { "description": "Export failed" },
+          "503": { "description": "Configuration path not set" }
+        }
+      }
+    },
+    "/api/config/import": {
+      "post": {
+        "tags": ["Configuration"],
+        "summary": "Import configuration backup",
+        "description": "Uploads a zip produced by `/api/config/export`. Query `mode=replace` (default) overwrites files in the archive and removes device YAML not present in the archive; `mode=merge` only adds/overwrites files from the archive.",
+        "parameters": [
+          {
+            "name": "mode",
+            "in": "query",
+            "schema": { "type": "string", "enum": ["replace", "merge"], "default": "replace" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": ["file"],
+                "properties": {
+                  "file": { "type": "string", "format": "binary" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Import completed and configuration reloaded",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ConfigImportResponse" }
+              }
+            }
+          },
+          "400": { "description": "Invalid archive" },
+          "405": { "description": "Method not allowed (use POST)" },
+          "413": { "description": "Upload too large" },
+          "500": { "description": "Import or reload failed" }
+        }
+      }
+    },
     "/api/notifications/test": {
       "post": {
         "tags": ["Configuration"],
@@ -528,6 +589,17 @@
           "success": { "type": "boolean" },
           "error": { "type": "string" },
           "device_count": { "type": "integer" }
+        }
+      },
+      "ConfigImportResponse": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "mode": { "type": "string", "enum": ["replace", "merge"] },
+          "files_written": { "type": "array", "items": { "type": "string" } },
+          "files_removed": { "type": "array", "items": { "type": "string" } },
+          "device_count": { "type": "integer" },
+          "error": { "type": "string" }
         }
       },
       "DeviceTelemetryStat": {

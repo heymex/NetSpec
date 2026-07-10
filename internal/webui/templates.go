@@ -725,6 +725,82 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
             btn.textContent = '↻ Reload Config';
         }
 
+        async function exportConfigBackup(ev) {
+            const btn = ev && ev.target;
+            if (btn) {
+                btn.disabled = true;
+            }
+            try {
+                const res = await fetch('/api/config/export');
+                if (!res.ok) {
+                    const text = await res.text();
+                    showToast(text || 'Export failed', true);
+                    return;
+                }
+                const blob = await res.blob();
+                let name = 'netspec-config.zip';
+                const cd = res.headers.get('Content-Disposition') || '';
+                const match = /filename="?([^";]+)"?/.exec(cd);
+                if (match) {
+                    name = match[1];
+                }
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = name;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+                showToast('Configuration exported');
+            } catch (e) {
+                showToast('Export failed: ' + e.message, true);
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                }
+            }
+        }
+
+        function triggerConfigImport() {
+            const input = document.getElementById('config-import-input');
+            if (input) {
+                input.click();
+            }
+        }
+
+        async function onConfigImportSelected(ev) {
+            const input = ev.target;
+            const file = input.files && input.files[0];
+            input.value = '';
+            if (!file) {
+                return;
+            }
+            const ok = confirm(
+                'Import configuration from "' + file.name + '"?\n\n' +
+                'Replace mode overwrites matching YAML files and removes device files not in the archive.'
+            );
+            if (!ok) {
+                return;
+            }
+            const fd = new FormData();
+            fd.append('file', file);
+            try {
+                const res = await fetch('/api/config/import?mode=replace', { method: 'POST', body: fd });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    showToast(data.error || 'Import failed', true, 6000);
+                    return;
+                }
+                const written = (data.files_written || []).length;
+                const removed = (data.files_removed || []).length;
+                showToast('Imported ' + written + ' file(s)' + (removed ? ', removed ' + removed : '') + '. Reloading...', false, 4000);
+                setTimeout(() => location.reload(), 1200);
+            } catch (e) {
+                showToast('Import failed: ' + e.message, true, 6000);
+            }
+        }
+
         async function testNotifications(ev) {
             const btn = ev && ev.target;
             const prev = btn && btn.textContent;
@@ -902,6 +978,9 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                 <a class="btn btn-secondary" href="/api-browser">API</a>
                 <a class="btn btn-secondary" href="/diagnostics">Diagnostics</a>
                 <a class="btn btn-secondary" href="/wizard">+ Add Device</a>
+                <button type="button" class="btn btn-secondary" onclick="exportConfigBackup(event)">⬇ Export config</button>
+                <button type="button" class="btn btn-secondary" onclick="triggerConfigImport()">⬆ Import config</button>
+                <input type="file" id="config-import-input" accept=".zip,application/zip" style="display:none" onchange="onConfigImportSelected(event)">
                 <button type="button" class="btn btn-secondary" onclick="testNotifications(event)">🔔 Test alerts</button>
                 <button class="btn btn-primary" onclick="reloadConfig()">↻ Reload Config</button>
             </div>
