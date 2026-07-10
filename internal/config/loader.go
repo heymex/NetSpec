@@ -245,10 +245,6 @@ func (c *Config) ResolveCredentials(deviceName string) CredentialEntry {
 
 // ValidateConfig validates the configuration
 func ValidateConfig(cfg *Config) error {
-	if len(cfg.DesiredState.Devices) == 0 {
-		return fmt.Errorf("no devices configured")
-	}
-
 	for name, device := range cfg.DesiredState.Devices {
 		if device.Address == "" {
 			return fmt.Errorf("device %s: address is required", name)
