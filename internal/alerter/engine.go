@@ -235,14 +235,15 @@ func (e *Engine) Stop() {
 	close(e.events)
 }
 
-// ProcessStateChange processes a state change and generates alerts (legacy method)
+// ProcessStateChange processes a state change and generates alerts.
+// change.Resolved=true clears a matching active alert; otherwise the alert fires.
 func (e *Engine) ProcessStateChange(change evaluator.StateChange) {
 	ev := AlertEvent{
 		Device:    change.Device,
 		Entity:    change.Interface,
 		AlertType: change.AlertType,
 		Severity:  change.Severity,
-		Firing:    true,
+		Firing:    !change.Resolved,
 		Message:   change.Message,
 		Related:   change.RelatedState,
 	}
