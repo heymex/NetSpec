@@ -345,12 +345,16 @@ func ValidateConfig(cfg *Config) error {
 			if channel.URLEnv == "" {
 				return fmt.Errorf("channel %s: url_env is required for apprise channels", name)
 			}
+		case "openclaw":
+			if channel.URLEnv == "" {
+				return fmt.Errorf("channel %s: url_env is required for openclaw channels", name)
+			}
 		case "slack_chatops":
 			if channel.ChannelEnv == "" {
 				return fmt.Errorf("channel %s: channel_env is required for slack_chatops channels", name)
 			}
 		default:
-			return fmt.Errorf("channel %s: unsupported type %q (valid: apprise, slack_chatops)", name, channel.Type)
+			return fmt.Errorf("channel %s: unsupported type %q (valid: apprise, openclaw, slack_chatops)", name, channel.Type)
 		}
 		// Note: We don't validate env var values here as they may be set at runtime
 	}

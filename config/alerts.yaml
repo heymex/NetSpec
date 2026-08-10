@@ -12,6 +12,14 @@ channels:
     url_env: APPRISE_TEAMS_WEBHOOK
     severity_filter: [critical]
 
+  # OpenClaw Gateway webhook (structured JSON). Point url_env at a mapped hook
+  # (e.g. http://openclaw:18789/hooks/netspec) or /hooks/agent with a transform.
+  # ops-openclaw:
+  #   type: openclaw
+  #   url_env: OPENCLAW_WEBHOOK_URL
+  #   token_env: OPENCLAW_HOOK_TOKEN
+  #   severity_filter: [warning, critical]
+
 alert_rules:
   default:
     channels: [ops-slack]

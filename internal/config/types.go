@@ -174,9 +174,13 @@ type AlertSeverity struct {
 // type "apprise" (default) routes through Apprise-API via url_env.
 // type "slack_chatops" uses the direct Slack API with interactive Block Kit messages;
 // set channel_env to the env var holding the Slack channel ID (e.g. "C0123456789").
+// type "openclaw" POSTs structured JSON to an OpenClaw Gateway webhook
+// (e.g. POST /hooks/agent or a mapped /hooks/<name>); url_env holds the full webhook URL,
+// token_env (optional) holds the shared hook token for Authorization: Bearer.
 type ChannelConfig struct {
 	Type            string   `yaml:"type"`
 	URLEnv          string   `yaml:"url_env,omitempty"`
+	TokenEnv        string   `yaml:"token_env,omitempty"`
 	ChannelEnv      string   `yaml:"channel_env,omitempty"`
 	SeverityFilter  []string `yaml:"severity_filter,omitempty"`
 	EscalationDelay int      `yaml:"escalation_delay,omitempty"`

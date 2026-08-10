@@ -60,6 +60,7 @@ The `.env` file should contain:
 - `APPRISE_API_URL` - Apprise-API **base URL** NetSpec uses to deliver alerts (`{APPRISE_API_URL}/notify/`). Default compose (**bridge** NetSpec ↔ Apprise): **`http://netspec-apprise:8000`** (Docker DNS). The host publishes Apprise UI on **`http://127.0.0.1:8086`** for convenience.
 - Channel targets come from env vars named in `config/alerts.yaml` under `channels.*.url_env` (for example `APPRISE_SLACK_WEBHOOK`). See `.env.example` for placeholders.
 - Optional: `APPRISE_NOTIFY_TIMEOUT` (HTTP timeout per notify, e.g. `15s`). Troubleshooting: [Apprise alerting](docs/APPRISE_ALERTING.md).
+- Optional OpenClaw webhooks: channel `type: openclaw` with `url_env` / `token_env`, plus `NETSPEC_PUBLIC_URL` for embedded UI links. See [OpenClaw alerting](docs/OPENCLAW_ALERTING.md).
 - `NETSPEC_INGEST_HOST` / `NETSPEC_INGEST_PORT` - where **`mdt-translator`** sends NetSpec JSON lines (must match `global.ingest` when `telemetry_mode` is `telemetry_ingest_push`; default compose **`NETSPEC_INGEST_HOST=netspec-netspec`**)
 - `NETSPEC_ADMIN_PASSWORD_HASH` / `NETSPEC_SESSION_SECRET` - optional **browser session** login for the web UI and API HTML routes (see **`.env.example`**; use `netspec hash-password` or CI image entrypoint). Omit both (or leave hash empty) for open access.
 - `NETSPEC_API_TOKEN` - optional **bearer token** for scripted API access alongside session cookies
@@ -201,7 +202,7 @@ As of **v2.0.0-beta.2**, highlights include:
 - ✅ SNMP validator with targeted polling
 - ✅ Interface state evaluation (including **port-channel** members, `member_policy` thresholds, and high-speed interface alias normalization for SNMP vs. telemetry name drift)
 - ✅ Push telemetry ingest via **Telegraf MDT + `mdt-translator`** (newline-delimited JSON into NetSpec)
-- ✅ **Alerts on desired-state mismatch**, delivered via **Apprise-API** (`/notify/`) and channels in `config/alerts.yaml`
+- ✅ **Alerts on desired-state mismatch**, delivered via **Apprise-API** (`/notify/`), optional **OpenClaw** webhooks, and channels in `config/alerts.yaml`
 - ✅ YAML configuration (split devices, optional credentials and maintenance files)
 - ✅ Docker deployment and **local parity** Makefile workflow
 - ✅ Web status interface, discovery wizard (including **re-walk / sync** monitored interfaces for existing devices), API browser (OpenAPI/Swagger)
@@ -258,7 +259,7 @@ NetSpec includes a built-in web UI accessible at `http://localhost:8088` (or you
 
 ## Architecture
 
-`SNMP Validation / Push Ingest → State Evaluator → Alert Engine → Apprise`
+`SNMP Validation / Push Ingest → State Evaluator → Alert Engine → Apprise / OpenClaw`
 
 ### Current Telemetry Modes
 
