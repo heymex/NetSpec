@@ -85,11 +85,17 @@ If the logical channel operational state is `down`, evaluator emits:
 
 Important: current evaluator forces this to `critical` even if `alerts.channel_down` is set differently.
 
+When the logical channel operational state is `up`, evaluator emits a **resolve** for `port_channel_down` (no-op if none is active).
+
 ### 3.2 Member degradation (`port_channel_member_down`)
 
 When one or more members are down while channel oper state is not down:
 
-- evaluator calculates:
+- each required member is classified as **up**, **down**, or **unknown**
+  - missing cache entries and non-`up`/`down` oper values (including SNMP `unknown`) are **unknown**
+  - unknown members are **never** counted as down
+  - member-policy evaluation is **deferred** until every required member has known oper state (avoids cold-start / partial-hydration false positives)
+- when all members are known, evaluator calculates:
   - `total_members`
   - `active_members`
   - `down_members`
@@ -101,6 +107,7 @@ When one or more members are down while channel oper state is not down:
 - severity is:
   - `critical` when `down_pct >= critical_threshold_pct`
   - otherwise `warning`
+- when the member policy is healthy again (all known members up, or `down_pct` at/below the warning threshold), evaluator emits an explicit **resolve** event so sticky `port_channel_member_down` alerts clear (including alerts restored from `alert-state.json` after restart).
 
 ### 3.3 Interface mismatch (`interface_state_mismatch`)
 
