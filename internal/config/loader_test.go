@@ -238,6 +238,46 @@ func TestValidateIngestDuplicateListenerPorts(t *testing.T) {
 	}
 }
 
+func TestValidateConfigOpenClawChannelRequiresURLEnv(t *testing.T) {
+	t.Parallel()
+	cfg := &Config{
+		DesiredState: DesiredStateConfig{
+			Global: GlobalConfig{
+				TelemetryMode: "snmp_validate_only",
+				SNMP:          SNMPConfig{Version: "2c"},
+			},
+			Devices: map[string]DeviceConfig{
+				"sw1": {
+					Address: "10.0.0.1",
+					Interfaces: map[string]InterfaceConfig{
+						"Gi1/0/1": {DesiredState: "up", Monitor: true},
+					},
+				},
+			},
+		},
+		Alerts: AlertsConfig{
+			Channels: map[string]ChannelConfig{
+				"ops-openclaw": {Type: "openclaw"},
+			},
+			AlertRules: map[string]AlertRule{},
+			AlertBehavior: AlertBehavior{
+				DeduplicationWindow: time.Minute,
+			},
+		},
+	}
+	if err := ValidateConfig(cfg); err == nil {
+		t.Fatal("expected url_env required for openclaw")
+	}
+
+	cfg.Alerts.Channels["ops-openclaw"] = ChannelConfig{
+		Type:   "openclaw",
+		URLEnv: "OPENCLAW_WEBHOOK_URL",
+	}
+	if err := ValidateConfig(cfg); err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+}
+
 func TestLoadConfigDirMonolithicDeviceOverlay(t *testing.T) {
 	t.Parallel()
 	tmp := t.TempDir()

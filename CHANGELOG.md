@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here. Release tags follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Features
+
+- Added **OpenClaw webhook** alert channel (`type: openclaw`) that POSTs structured JSON (`event`, `alert`, optional `links`) to an OpenClaw Gateway hook URL. See `docs/OPENCLAW_ALERTING.md`.
+
 ## [2.0.0] — 2026-05-07
 
 Stable release of the 2.x line, promoting the beta series with bridge-first deployment, hardened ingest, improved operations UX, and expanded operator documentation. Images publish as **`ghcr.io/heymex/netspec:v2.0.0`** and **`ghcr.io/heymex/netspec-mdt-translator:v2.0.0`**.
