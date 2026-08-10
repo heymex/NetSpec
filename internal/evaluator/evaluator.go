@@ -60,7 +60,8 @@ var supportedAdminStates = map[string]struct{}{
 	"disabled": {},
 }
 
-// StateChange represents a detected state change
+// StateChange represents a detected state change that should raise or clear an alert.
+// Resolved=false (default) raises/updates a firing alert; Resolved=true clears it.
 type StateChange struct {
 	Device       string
 	Interface    string
@@ -68,6 +69,7 @@ type StateChange struct {
 	Severity     string
 	Message      string
 	RelatedState map[string]string
+	Resolved     bool
 }
 
 // NewEvaluator creates a new state evaluator
@@ -410,7 +412,27 @@ func sortedIfaceKeys(ifaces map[string]config.InterfaceConfig) []string {
 	return keys
 }
 
-// evaluateChannelMembers evaluates port-channel member policies
+// classifyMemberOper returns "up", "down", or "unknown".
+// Missing cache entries and non-up/down oper values (including "" and "unknown") are unknown.
+func classifyMemberOper(present bool, operStatus string) string {
+	if !present {
+		return "unknown"
+	}
+	switch normalizeState(operStatus) {
+	case "up":
+		return "up"
+	case "down":
+		return "down"
+	default:
+		return "unknown"
+	}
+}
+
+// evaluateChannelMembers evaluates port-channel member policies.
+// Members are classified as up, down, or unknown. Unknown members are never counted
+// as down; evaluation is deferred until every required member has a known oper state.
+// When a previously failing member policy (or channel-down condition) is healthy,
+// a Resolved StateChange is emitted so the alert engine can clear sticky alerts.
 func (e *Evaluator) evaluateChannelMembers(deviceName, channelName string, ifaceCfg config.InterfaceConfig, deviceCfg config.DeviceConfig) []StateChange {
 	if ifaceCfg.Members == nil || len(ifaceCfg.Members.Required) == 0 {
 		return nil
@@ -420,26 +442,36 @@ func (e *Evaluator) evaluateChannelMembers(deviceName, channelName string, iface
 	channelKey := ifname.ResolveConfigKey(ifaceKeys, channelName)
 
 	e.mu.RLock()
-	chState := e.stateCache[fmt.Sprintf("%s:%s", deviceName, channelKey)]
+	chState, chOK := e.stateCache[fmt.Sprintf("%s:%s", deviceName, channelKey)]
 	active := 0
 	var downMembers []string
+	var unknownMembers []string
 	for _, member := range ifaceCfg.Members.Required {
 		cacheKeyName := ifname.ResolveConfigKey(ifaceKeys, member)
 		cacheKey := fmt.Sprintf("%s:%s", deviceName, cacheKeyName)
-		memberState := e.stateCache[cacheKey]
-		if normalizeState(memberState.OperStatus) == "up" {
+		memberState, ok := e.stateCache[cacheKey]
+		switch classifyMemberOper(ok, memberState.OperStatus) {
+		case "up":
 			active++
-		} else {
+		case "down":
 			downMembers = append(downMembers, member)
+		default:
+			unknownMembers = append(unknownMembers, member)
 		}
 	}
 	e.mu.RUnlock()
 
 	totalMembers := len(ifaceCfg.Members.Required)
-	downCount := len(downMembers)
+	chOper := ""
+	if chOK {
+		chOper = normalizeState(chState.OperStatus)
+	}
+
+	var changes []StateChange
 
 	// Logical port-channel down should always be critical (use Po interface cache, not a member).
-	if normalizeState(chState.OperStatus) == "down" {
+	switch chOper {
+	case "down":
 		return []StateChange{{
 			Device:    deviceName,
 			Interface: channelName,
@@ -447,16 +479,38 @@ func (e *Evaluator) evaluateChannelMembers(deviceName, channelName string, iface
 			Severity:  "critical",
 			Message:   fmt.Sprintf("port-channel %s is down", channelName),
 			RelatedState: map[string]string{
-				"actual_state": normalizeState(chState.OperStatus),
+				"actual_state": chOper,
 			},
 		}}
+	case "up":
+		changes = append(changes, StateChange{
+			Device:    deviceName,
+			Interface: channelName,
+			AlertType: alertTypeChannelDown,
+			Severity:  "critical",
+			Message:   fmt.Sprintf("port-channel %s is up", channelName),
+			RelatedState: map[string]string{
+				"actual_state": chOper,
+			},
+			Resolved: true,
+		})
 	}
 
-	if downCount == 0 {
-		return nil
+	// Delay member-policy evaluation until every required member has known oper state.
+	if len(unknownMembers) > 0 {
+		e.logger.Debug().
+			Str("device", deviceName).
+			Str("channel", channelName).
+			Strs("unknown_members", unknownMembers).
+			Msg("deferring port-channel member evaluation; member state not yet hydrated")
+		return changes
 	}
 
-	downPct := (float64(downCount) / float64(totalMembers)) * 100.0
+	downCount := len(downMembers)
+	downPct := 0.0
+	if totalMembers > 0 {
+		downPct = (float64(downCount) / float64(totalMembers)) * 100.0
+	}
 	criticalThreshold := 50.0
 	if ifaceCfg.MemberPolicy != nil && ifaceCfg.MemberPolicy.CriticalThresholdPct != nil {
 		criticalThreshold = *ifaceCfg.MemberPolicy.CriticalThresholdPct
@@ -466,28 +520,42 @@ func (e *Evaluator) evaluateChannelMembers(deviceName, channelName string, iface
 		warningThreshold = *ifaceCfg.MemberPolicy.WarningThresholdPct
 	}
 
+	related := map[string]string{
+		"active_members": fmt.Sprintf("%d", active),
+		"total_members":  fmt.Sprintf("%d", totalMembers),
+		"down_members":   strings.Join(downMembers, ","),
+		"down_count":     fmt.Sprintf("%d", downCount),
+		"down_pct":       fmt.Sprintf("%.1f", math.Round(downPct*10)/10),
+	}
+
+	// Healthy (or below warning threshold): clear any sticky member-down alert.
+	if downCount == 0 || downPct <= warningThreshold {
+		changes = append(changes, StateChange{
+			Device:       deviceName,
+			Interface:    channelName,
+			AlertType:    alertTypeMemberDown,
+			Severity:     "info",
+			Message:      fmt.Sprintf("port-channel %s member policy healthy (%d/%d members up)", channelName, active, totalMembers),
+			RelatedState: related,
+			Resolved:     true,
+		})
+		return changes
+	}
+
 	severity := "warning"
 	if downPct >= criticalThreshold {
 		severity = "critical"
 	}
-	if downPct <= warningThreshold {
-		return nil
-	}
 
-	return []StateChange{{
-		Device:    deviceName,
-		Interface: channelName,
-		AlertType: alertTypeMemberDown,
-		Severity:  severity,
-		Message:   fmt.Sprintf("port-channel %s has %d/%d members down: %s", channelName, downCount, totalMembers, strings.Join(downMembers, ", ")),
-		RelatedState: map[string]string{
-			"active_members": fmt.Sprintf("%d", active),
-			"total_members":  fmt.Sprintf("%d", totalMembers),
-			"down_members":   strings.Join(downMembers, ","),
-			"down_count":     fmt.Sprintf("%d", downCount),
-			"down_pct":       fmt.Sprintf("%.1f", math.Round(downPct*10)/10),
-		},
-	}}
+	changes = append(changes, StateChange{
+		Device:       deviceName,
+		Interface:    channelName,
+		AlertType:    alertTypeMemberDown,
+		Severity:     severity,
+		Message:      fmt.Sprintf("port-channel %s has %d/%d members down: %s", channelName, downCount, totalMembers, strings.Join(downMembers, ", ")),
+		RelatedState: related,
+	})
+	return changes
 }
 
 func (e *Evaluator) channelNamesForMember(deviceCfg config.DeviceConfig, member string) []string {

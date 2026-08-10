@@ -8,6 +8,10 @@ All notable changes to this project are documented here. Release tags follow [Se
 
 - Added **OpenClaw webhook** alert channel (`type: openclaw`) that POSTs structured JSON (`event`, `alert`, optional `links`) to an OpenClaw Gateway hook URL. See `docs/OPENCLAW_ALERTING.md`.
 
+### Bug Fixes
+
+- Port-channel member evaluation no longer treats missing/unknown member cache entries as down; evaluation waits until every required member has known oper state, and healthy evaluations emit resolve events so sticky `port_channel_member_down` / `port_channel_down` alerts clear (including after restart).
+
 ## [2.0.0] — 2026-05-07
 
 Stable release of the 2.x line, promoting the beta series with bridge-first deployment, hardened ingest, improved operations UX, and expanded operator documentation. Images publish as **`ghcr.io/heymex/netspec:v2.0.0`** and **`ghcr.io/heymex/netspec-mdt-translator:v2.0.0`**.
