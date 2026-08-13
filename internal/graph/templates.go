@@ -140,7 +140,7 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
   </main>
   <script src="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
   <script>
-    const SERIES_URL = {{printf "%q" .SeriesURL}};
+    const SERIES_URL = {{.SeriesURLJS}};
     const statusEl = document.getElementById('status');
     const speedLine = document.getElementById('speedLine');
     const modeEl = document.getElementById('mode');

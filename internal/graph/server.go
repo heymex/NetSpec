@@ -3,6 +3,7 @@ package graph
 
 import (
 	"encoding/json"
+	"html/template"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -197,11 +198,11 @@ func (s *Server) handleInterfacePage(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	data := map[string]any{
-		"Device":     device,
-		"Interface":  iface,
-		"SeriesURL":  interfaceSeriesAPIPath(device, iface),
-		"Timezone":   s.timezone,
-		"Version":    version.GetVersion(),
+		"Device":       device,
+		"Interface":    iface,
+		"SeriesURLJS":  template.JS(strconv.Quote(interfaceSeriesAPIPath(device, iface))),
+		"Timezone":     s.timezone,
+		"Version":      version.GetVersion(),
 		"DefaultRange": "6h",
 	}
 	if err := ifaceTemplate.Execute(w, data); err != nil {
