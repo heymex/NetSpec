@@ -255,53 +255,66 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
     function negateSeries(points) {
       return (points || []).map(p => ({ t: p.t, v: p.v == null ? null : -Math.abs(p.v) }));
     }
+    // Custom tooltip on the chart container (not u.over).
     function tooltipPlugin(fmtY, absOut) {
-      let tip;
+      let tip, root;
       return {
         hooks: {
           init: [u => {
-            tip = document.createElement('div');
-            tip.className = 'uplot-tip';
-            u.over.appendChild(tip);
+            root = u.root && u.root.parentElement;
+            if (!root) return;
+            tip = root.querySelector('.uplot-tip');
+            if (!tip) {
+              tip = document.createElement('div');
+              tip.className = 'uplot-tip';
+              root.appendChild(tip);
+            }
           }],
           setCursor: [u => {
+            if (!tip || !u || !u.cursor || !u.data || !u.data[0]) return;
             const { left, top, idx } = u.cursor;
-            if (idx == null || left < 0 || top < 0) {
+            if (idx == null || idx < 0 || left == null || left < 0 || top == null || top < 0) {
               tip.style.display = 'none';
               return;
             }
             const ts = u.data[0][idx];
+            if (ts == null) { tip.style.display = 'none'; return; }
             let html = '<div class="t">' + new Date(ts * 1000).toLocaleString() + '</div>';
             for (let i = 1; i < u.series.length; i++) {
-              if (u.series[i].show === false) continue;
-              let v = u.data[i][idx];
+              if (!u.series[i] || u.series[i].show === false) continue;
+              let v = u.data[i] ? u.data[i][idx] : null;
               if (absOut && i === 2 && v != null) v = Math.abs(v);
               const color = u.series[i].stroke || '#e6edf3';
               html += '<div><span style="color:' + color + '">' + (u.series[i].label || ('s'+i)) + '</span>: ' + fmtY(v) + '</div>';
             }
             tip.innerHTML = html;
             tip.style.display = 'block';
-            const box = u.over.getBoundingClientRect();
             const tw = tip.offsetWidth || 160;
             const th = tip.offsetHeight || 60;
+            const maxW = root.clientWidth || 320;
+            const maxH = root.clientHeight || 200;
             let x = left + 14;
             let y = top + 14;
-            if (x + tw > box.width - 4) x = left - tw - 10;
-            if (y + th > box.height - 4) y = top - th - 10;
+            if (x + tw > maxW - 4) x = left - tw - 10;
+            if (y + th > maxH - 4) y = top - th - 10;
             tip.style.transform = 'translate(' + Math.max(0, x) + 'px,' + Math.max(0, y) + 'px)';
+          }],
+          destroy: [() => {
+            if (tip) tip.style.display = 'none';
           }]
         }
       };
     }
-    function baseOpts(height, yAxis, fmtY, scales, tipOpts) {
+    // Do not set cursor.points.show to a boolean — uPlot expects a function that
+    // returns a DOM node. show:true becomes () => true and crashes with:
+    // can't access property "contains", t is undefined.
+    function baseOpts(targetId, height, yAxis, fmtY, scales, tipOpts) {
+      const el = document.getElementById(targetId);
+      const width = Math.max(320, (el && el.clientWidth) || 320);
       return {
-        width: Math.max(320, document.getElementById('traffic').clientWidth),
-        height,
+        width: width,
+        height: height,
         scales: scales || { y: { auto: true } },
-        cursor: {
-          show: true,
-          points: { show: true, size: 8, width: 2, stroke: '#e6edf3' },
-        },
         axes: [
           {
             stroke: '#8b949e',
@@ -311,7 +324,6 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
           {
             label: yAxis,
             labelSize: 13,
-            labelFont: "600 12px 'Outfit', sans-serif",
             size: 72,
             gap: 6,
             stroke: '#8b949e',
@@ -326,9 +338,12 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
       };
     }
     function destroy(name) {
-      if (plots[name]) { plots[name].destroy(); plots[name] = null; }
+      if (plots[name]) {
+        try { plots[name].destroy(); } catch (e) {}
+        plots[name] = null;
+      }
       const el = document.getElementById(name);
-      el.innerHTML = '';
+      if (el) el.innerHTML = '';
     }
     function renderEmpty(id, msg) {
       destroy(id);
@@ -354,9 +369,14 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
       destroy('traffic');
       // LibreNMS-style: In above zero, Out below zero.
       const data = mergeTime([inS, negateSeries(outS)]);
+      if (!data[0] || data[0].length === 0) {
+        renderEmpty('traffic', 'No traffic samples in this range');
+        return;
+      }
       const opts = baseOpts(
+        'traffic',
         280,
-        mode === 'pct' ? '% utilization (out↓)' : 'bits/s (out↓)',
+        mode === 'pct' ? '% utilization (out down)' : 'bits/s (out down)',
         fmtY,
         { y: { auto: true } },
         { absOut: true }
@@ -367,6 +387,7 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
           label: 'In',
           stroke: '#3fb950',
           fill: 'rgba(63,185,80,0.35)',
+          fillTo: 0,
           width: 1.5,
           spanGaps: false,
         },
@@ -374,6 +395,7 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
           label: 'Out',
           stroke: '#a371f7',
           fill: 'rgba(163,113,247,0.35)',
+          fillTo: 0,
           width: 1.5,
           spanGaps: false,
         },
@@ -383,7 +405,12 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
       } else {
         opts.axes[1].values = (u, vals) => vals.map(v => Number.isFinite(v) ? fmtAxisBPS(v) : '');
       }
-      plots.traffic = new uPlot(opts, data, document.getElementById('traffic'));
+      try {
+        plots.traffic = new uPlot(opts, data, document.getElementById('traffic'));
+      } catch (e) {
+        console.error('traffic plot failed', e);
+        renderEmpty('traffic', 'Chart error: ' + (e && e.message ? e.message : e));
+      }
     }
     function drawErrors(payload) {
       const keys = ['in_errors_ps','out_errors_ps','in_discards_ps','out_discards_ps'];
@@ -394,7 +421,7 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
       }
       destroy('errors');
       const data = mergeTime(series);
-      const opts = baseOpts(220, 'packets/s', fmtRate);
+      const opts = baseOpts('errors', 220, 'packets/s', fmtRate);
       opts.series = [
         {},
         { label: 'in errors', stroke: '#f85149', width: 2, spanGaps: false },
@@ -403,7 +430,12 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
         { label: 'out discards', stroke: '#79c0ff', width: 2, spanGaps: false },
       ];
       opts.axes[1].values = (u, vals) => vals.map(v => Number.isFinite(v) ? (Math.abs(v) >= 10 ? v.toFixed(1) : v.toFixed(2)) : '');
-      plots.errors = new uPlot(opts, data, document.getElementById('errors'));
+      try {
+        plots.errors = new uPlot(opts, data, document.getElementById('errors'));
+      } catch (e) {
+        console.error('errors plot failed', e);
+        renderEmpty('errors', 'Chart error: ' + (e && e.message ? e.message : e));
+      }
     }
     function drawOper(payload) {
       const s = payload.series.oper_status || [];
@@ -413,10 +445,15 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
       }
       destroy('oper');
       const data = toUplot(s);
-      const opts = baseOpts(140, 'oper', fmtOper, { y: { range: [-0.05, 1.05] } });
+      const opts = baseOpts('oper', 140, 'oper', fmtOper, { y: { range: [-0.05, 1.05] } });
       opts.series = [{}, { label: 'oper', stroke: '#3fb950', width: 2, fill: 'rgba(63,185,80,0.15)', spanGaps: false, points: { show: false } }];
       opts.axes[1].values = (u, vals) => vals.map(v => (v === 0 || v === 1) ? String(v) : '');
-      plots.oper = new uPlot(opts, data, document.getElementById('oper'));
+      try {
+        plots.oper = new uPlot(opts, data, document.getElementById('oper'));
+      } catch (e) {
+        console.error('oper plot failed', e);
+        renderEmpty('oper', 'Chart error: ' + (e && e.message ? e.message : e));
+      }
     }
     function render(payload) {
       lastPayload = payload;
