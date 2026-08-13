@@ -83,11 +83,7 @@ func BuildIndex(cfg *config.Config) *Index {
 		keys := make([]string, 0, len(dev.Interfaces))
 		for ifaceKey, ifaceCfg := range dev.Interfaces {
 			keys = append(keys, ifaceKey)
-			port := rules.MatchPort(ifaceCfg.Description, deviceRole)
-			portRole := ""
-			if port != nil {
-				portRole = port.RuleLabel
-			}
+			portRole := matchPortRole(deviceRole, ifaceCfg.Description, ifaceKey)
 			id := InterfaceIdentity{
 				Device:           deviceName,
 				Interface:        ifaceKey,
@@ -118,6 +114,21 @@ func BuildIndex(cfg *config.Config) *Index {
 
 func indexKey(device, canonical string) string {
 	return strings.ToLower(device) + "\x00" + canonical
+}
+
+// matchPortRole applies rules.MatchPort like discovery (alias first). Many live
+// aliases do not follow the rule globs (e.g. Po aliases "peer:po31" vs match
+// "po*"), so fall back to the config interface name and its canonical form.
+func matchPortRole(role *config.DeviceRole, alias, ifaceKey string) string {
+	for _, candidate := range []string{alias, ifaceKey, ifname.Canonical(ifaceKey)} {
+		if candidate == "" {
+			continue
+		}
+		if m := rules.MatchPort(candidate, role); m != nil {
+			return m.RuleLabel
+		}
+	}
+	return ""
 }
 
 func roleInfos(roles []config.DeviceRole) []RoleInfo {
@@ -253,5 +264,38 @@ func (idx *Index) PortRoleLabels() []string {
 		out = append(out, l)
 	}
 	sort.Strings(out)
+	return out
+}
+
+// PortRoleCount is a port-rule label with how many indexed interfaces match it.
+type PortRoleCount struct {
+	Label string `json:"label"`
+	Count int    `json:"count"`
+}
+
+// PortRoleCounts returns labels that appear on at least one indexed interface,
+// sorted by count descending then label. Prefer this for filter UIs so empty
+// roles (e.g. APs excluded from desired-state) are not offered as primary choices.
+func (idx *Index) PortRoleCounts() []PortRoleCount {
+	if idx == nil {
+		return nil
+	}
+	counts := make(map[string]int)
+	for _, id := range idx.list {
+		if id.PortRole == "" {
+			continue
+		}
+		counts[id.PortRole]++
+	}
+	out := make([]PortRoleCount, 0, len(counts))
+	for label, n := range counts {
+		out = append(out, PortRoleCount{Label: label, Count: n})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count != out[j].Count {
+			return out[i].Count > out[j].Count
+		}
+		return out[i].Label < out[j].Label
+	})
 	return out
 }

@@ -69,7 +69,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!DOCTYPE html>
           <label for="port_role">Port role</label>
           <select id="port_role">
             <option value="">Any</option>
-            {{range .PortRoles}}<option value="{{.}}">{{.}}</option>{{end}}
+            {{range .PortRoles}}<option value="{{.Label}}">{{.Label}} ({{.Count}})</option>{{end}}
           </select>
         </div>
         <div>
@@ -119,7 +119,7 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!DOCTYPE html>
         if (!res.ok) throw new Error(body.error || res.statusText);
         const items = body.interfaces || [];
         if (!items.length) {
-          results.innerHTML = '<div class="empty">No interfaces match.</div>';
+          results.innerHTML = '<div class="empty">No interfaces match this filter. Port roles with (0) are hidden — AP ports are often excluded from desired-state (monitor: false). Try “Any” or a role that shows a count.</div>';
           return;
         }
         let html = '<div class="count">' + items.length + ' interface' + (items.length === 1 ? '' : 's') + '</div>';

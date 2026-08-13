@@ -176,12 +176,12 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	deviceCount, ifaceCount := 0, 0
-	portRoles := []string{}
+	portRoles := []PortRoleCount{}
 	deviceRoles := []RoleInfo{}
 	if s.index != nil {
 		deviceCount = s.index.DeviceCount()
 		ifaceCount = s.index.Len()
-		portRoles = s.index.PortRoleLabels()
+		portRoles = s.index.PortRoleCounts()
 		deviceRoles = s.index.Roles()
 	}
 	data := map[string]any{
@@ -247,13 +247,16 @@ func (s *Server) handleRolesAPI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	roles := []RoleInfo{}
 	labels := []string{}
+	counts := []PortRoleCount{}
 	if s.index != nil {
 		roles = s.index.Roles()
 		labels = s.index.PortRoleLabels()
+		counts = s.index.PortRoleCounts()
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"device_roles":     roles,
 		"port_role_labels": labels,
+		"port_role_counts": counts,
 	})
 }
 

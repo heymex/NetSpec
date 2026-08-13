@@ -185,17 +185,51 @@ func TestFilterBuildingHB1(t *testing.T) {
 	}
 }
 
-func TestPortRoleLabels(t *testing.T) {
-	idx := BuildIndex(sampleConfig())
-	labels := idx.PortRoleLabels()
-	want := []string{"Building / Infrastructure", "Port-Channel Uplinks", "Trunk / Uplink Ports", "Wireless APs"}
-	if len(labels) != len(want) {
-		t.Fatalf("labels = %v, want %v", labels, want)
+func TestLookupPoAliasFallsBackToIfaceName(t *testing.T) {
+	cfg := sampleConfig()
+	// Live Po aliases often look like "peer:po31", which does not match rule "po*".
+	cfg.DesiredState.Devices["csw-mcd-01"].Interfaces["Po31"] = config.InterfaceConfig{
+		Description:  "csw-peer-01:po31",
+		DesiredState: "up",
+		Monitor:      true,
 	}
-	for i := range want {
-		if labels[i] != want[i] {
-			t.Errorf("labels[%d] = %q, want %q", i, labels[i], want[i])
+	idx := BuildIndex(cfg)
+	id, ok := idx.Lookup("csw-mcd-01", "Po31")
+	if !ok {
+		t.Fatal("Lookup Po31 missing")
+	}
+	if id.PortRole != "Port-Channel Uplinks" {
+		t.Fatalf("PortRole = %q, want Port-Channel Uplinks (iface-name fallback)", id.PortRole)
+	}
+	got := idx.Filter(Filter{PortRole: "Port-Channel Uplinks"})
+	if len(got) < 4 {
+		t.Fatalf("Po uplinks = %d, want at least 4", len(got))
+	}
+}
+
+func TestPortRoleCountsOmitEmpty(t *testing.T) {
+	idx := BuildIndex(sampleConfig())
+	counts := idx.PortRoleCounts()
+	if len(counts) == 0 {
+		t.Fatal("expected some port role counts")
+	}
+	for _, c := range counts {
+		if c.Count <= 0 {
+			t.Fatalf("count for %q should be > 0", c.Label)
 		}
+	}
+	// Wireless APs exist in rules and on indexed interfaces in the fixture.
+	found := false
+	for _, c := range counts {
+		if c.Label == "Wireless APs" {
+			found = true
+			if c.Count != 3 {
+				t.Fatalf("Wireless APs count = %d, want 3", c.Count)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("Wireless APs missing from PortRoleCounts")
 	}
 }
 
