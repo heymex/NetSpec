@@ -105,6 +105,7 @@ services:
 
   # NetSpecGraph UI/API (opt-in). Metrics still land in VM without this profile.
   #   docker compose --profile graph up -d
+  # Image ENTRYPOINT is ./netspec; override it so we do not run `netspec netspecgraph`.
   netspec-graph:
     profiles: ["graph"]
     image: ghcr.io/heymex/netspec:${NETSPEC_IMAGE_TAG:-latest}
@@ -112,7 +113,7 @@ services:
     restart: unless-stopped
     networks:
       - netspec
-    command: ["./netspecgraph"]
+    entrypoint: ["./netspecgraph"]
     ports:
       - "${GRAPH_PORT:-8090}:${GRAPH_PORT:-8090}"
     volumes:
