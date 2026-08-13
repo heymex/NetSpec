@@ -195,6 +195,26 @@ trailing window (`GRAPH_BAND_WINDOW`, default `504h` / 21 days), bucketed in
 Toolbar: “seasonality” checkbox + baseline select. With only a few days of VM
 history the band is thin; that is expected until retention fills in.
 
+## Step 6 — optics / DOM
+
+Lab subscription (Cisco native, not OpenConfig):
+
+```
+telemetry ietf subscription 31
+ encoding encode-kvgpb
+ filter xpath /xcvr-ios-xe-oper:transceiver-oper-data
+ stream yang-push
+ update-policy periodic 10000
+ receiver ip address <lab-vm> 57500 protocol grpc-tcp
+```
+
+Telegraf clones fiber optics into VM (`transceiver_*` gauges, `device`/`interface`
+labels). Copper BaseT/BaseTX SFPs are skipped. Page:
+`/device/{d}/interface/{if}/optics` (link from the traffic page).
+
+**Done-when:** vmui shows `transceiver_rx_power_dbm` for `asw-st1-01` /
+`TenGigabitEthernet1/1/1`, and the optics page charts rx/tx/bias/temp.
+
 ## Invariants (do not violate)
 
 - Do not modify subscription 251’s *existing* production receiver, `decoded.json`, or `mdt-translator` for metrics — only **add** lab receivers.

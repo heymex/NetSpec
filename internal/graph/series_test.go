@@ -46,6 +46,9 @@ func TestParseDeviceInterfacePath(t *testing.T) {
 		{"/device/csw-mcd-01/interface/GigabitEthernet1%2F0%2F1", "csw-mcd-01", "GigabitEthernet1/0/1", true},
 		{"/device/csw-mcd-01/interface/GigabitEthernet1/0/1", "csw-mcd-01", "GigabitEthernet1/0/1", true},
 		{"/api/device/csw-mcd-01/interface/Port-channel20/series", "csw-mcd-01", "Port-channel20", true},
+		{"/api/device/asw-st1-01/interface/TenGigabitEthernet1%2F1%2F1/optics/series", "asw-st1-01", "TenGigabitEthernet1/1/1", true},
+		{"/device/asw-st1-01/interface/TenGigabitEthernet1/1/1/optics", "asw-st1-01", "TenGigabitEthernet1/1/1", true},
+		{"/api/device/csw-mcd-01/interface/Port-channel20/meta", "csw-mcd-01", "Port-channel20", true},
 		{"/device/only", "", "", false},
 	}
 	for _, tc := range cases {

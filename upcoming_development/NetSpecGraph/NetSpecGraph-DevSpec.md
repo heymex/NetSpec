@@ -2,7 +2,7 @@
 
 **Status:** Design draft · **Target module:** `github.com/netspec/netspec` (`cmd/netspecgraph`) · **Companion to:** NetSpec v2.x
 
-**Implementation branch:** `feat/netspecgraph` — step 5 seasonality band done. Next: optics/DOM (step 6) or fleet deep-links (step 7). Bring-up: [`docs/NETSPECGRAPH.md`](../../docs/NETSPECGRAPH.md).
+**Implementation branch:** `feat/netspecgraph` — step 6 optics/DOM done. Next: fleet + deep-links (step 7). Bring-up: [`docs/NETSPECGRAPH.md`](../../docs/NETSPECGRAPH.md).
 
 ## Purpose
 
@@ -222,8 +222,8 @@ VM is an internal store: publish `:8428` to `127.0.0.1` only during bring-up (vm
 
 ## Open questions
 
-1. **DOM leaf coverage** — does the OC transceiver model expose temperature/voltage on this platform, or do we move DOM to `Cisco-IOS-XE-transceiver-oper`?
-2. **Per-PID threshold table** — needed as a fallback for optics that don't stream warn/alarm thresholds?
+1. **DOM leaf coverage** — ~~does the OC transceiver model expose temperature/voltage~~ **Resolved (lab):** use `Cisco-IOS-XE-transceiver-oper` (sub 31). Temperature present as `internal_temp`; **voltage not streamed** on this platform. OpenConfig sub 211 not required for 1.0.
+2. **Per-PID threshold table** — needed as a fallback for optics that don't stream warn/alarm thresholds? (1.0 ships typical SFP-10G-SR visual lines.)
 
 ## Rough build sequence
 
@@ -234,5 +234,5 @@ Each step lists its **done-when** so progress is verifiable, not vibes.
 3. `cmd/netspecgraph` skeleton: reuse config/rules/normalizer/auth, VM query client, one per-interface uPlot page. *Done when:* the page renders real utilization + errors for one interface behind `internal/auth`, and `go build ./... && go test ./...` passes. — **done** (per-interface traffic/errors/oper uPlot; seasonality band is step 5).
 4. Query-time enrichment: rules index + role/neighbor filters. *Done when:* a role filter (e.g. AP-uplinks) resolves to the correct series set, matching what `/noc` considers those ports — with a unit test on the join. — **done** (`internal/graph` Index via `rules.MatchDevice`/`MatchPort` + `ifname`; `GET /api/interfaces`, `GET /api/roles`, `/meta`; compose mounts `/data`).
 5. Seasonality band + baseline overlay. *Done when:* the band renders in site-local buckets and a baseline preset overlays a prior period; band math has unit tests on synthetic series. — **done** (`band.go` hour-of-week p10/p90 in site TZ; UI toggle + 1w/52w baseline; `GRAPH_BAND_WINDOW`).
-6. Optics/DOM page (needs subscription 211). *Done when:* per-lane rx/tx/bias render with threshold reference lines.
+6. Optics/DOM page (needs subscription 211). *Done when:* per-lane rx/tx/bias render with threshold reference lines. — **done** (lab uses sub **31** / `Cisco-IOS-XE-transceiver-oper`; Telegraf contract + `/optics` page with typical SR threshold lines; voltage absent on this platform).
 7. Fleet/aggregate view + NetSpec deep-links. *Done when:* deep-links round-trip with NetSpec's `/device/{name}` and interface-name encoding matches.

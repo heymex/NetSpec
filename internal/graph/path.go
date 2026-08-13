@@ -8,7 +8,10 @@ import (
 // parseDeviceInterfacePath extracts device + interface from paths like:
 //
 //	/device/{device}/interface/{iface}
+//	/device/{device}/interface/{iface}/optics
 //	/api/device/{device}/interface/{iface}/series
+//	/api/device/{device}/interface/{iface}/meta
+//	/api/device/{device}/interface/{iface}/optics/series
 //
 // iface may contain slashes (literal or as %2F). Prefer EscapedPath semantics
 // by passing the escaped path string so %2F survives as one interface name.
@@ -29,8 +32,11 @@ func parseDeviceInterfacePath(escapedPath string) (device, iface string, ok bool
 		return "", "", false
 	}
 	ifaceEsc := after
-	if trimmed, okCut := strings.CutSuffix(ifaceEsc, "/series"); okCut {
-		ifaceEsc = trimmed
+	for _, suffix := range []string{"/optics/series", "/optics", "/series", "/meta"} {
+		if trimmed, okCut := strings.CutSuffix(ifaceEsc, suffix); okCut {
+			ifaceEsc = trimmed
+			break
+		}
 	}
 	if ifaceEsc == "" {
 		return "", "", false
@@ -51,6 +57,18 @@ func interfacePagePath(device, iface string) string {
 	return "/device/" + url.PathEscape(device) + "/interface/" + url.PathEscape(iface)
 }
 
+func opticsPagePath(device, iface string) string {
+	return interfacePagePath(device, iface) + "/optics"
+}
+
 func interfaceSeriesAPIPath(device, iface string) string {
 	return "/api/device/" + url.PathEscape(device) + "/interface/" + url.PathEscape(iface) + "/series"
+}
+
+func opticsSeriesAPIPath(device, iface string) string {
+	return "/api/device/" + url.PathEscape(device) + "/interface/" + url.PathEscape(iface) + "/optics/series"
+}
+
+func pathIsOptics(escapedPath string) bool {
+	return strings.Contains(escapedPath, "/optics")
 }

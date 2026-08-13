@@ -171,6 +171,7 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
     header h1 { margin:0; font-size:1.15rem; font-weight:600; }
     header h1 span { color:var(--muted); font-weight:500; }
     header .meta { font-family:'JetBrains Mono',monospace; font-size:0.78rem; color:var(--muted); }
+    header .nav { display:flex; gap:1rem; align-items:center; }
     header a { color:var(--accent); text-decoration:none; }
     .toolbar { display:flex; flex-wrap:wrap; gap:0.5rem; align-items:center; padding:0.75rem 1.25rem; border-bottom:1px solid var(--bd); }
     .toolbar button, .toolbar select {
@@ -216,7 +217,10 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
       <h1>{{.Device}} <span>{{.Interface}}</span></h1>
       <div class="meta">NetSpecGraph · {{.Timezone}} · v{{.Version}}{{if .InConfig}} · {{if .DeviceRole}}{{.DeviceRole}}{{else}}unmatched device role{{end}}{{if .PortRole}} · {{.PortRole}}{{end}}{{if .Alias}} · {{.Alias}}{{end}} · desired {{.DesiredState}} · monitored {{.Monitored}}{{else}} · not in desired-state{{end}}</div>
     </div>
-    <a href="/">← All interfaces</a>
+    <div class="nav">
+      <a href="{{.OpticsPath}}">Optics / DOM</a>
+      <a href="/">← All interfaces</a>
+    </div>
   </header>
   <div class="toolbar">
     <button type="button" data-range="1h">1h</button>
@@ -671,6 +675,288 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
     modeEl.addEventListener('change', () => { if (lastPayload) drawTraffic(lastPayload); });
     bandEl.addEventListener('change', () => load());
     baselineEl.addEventListener('change', () => load());
+    window.addEventListener('resize', () => { if (lastPayload) render(lastPayload); });
+    load();
+    setInterval(load, 30000);
+  </script>
+</body>
+</html>
+`))
+
+var opticsTemplate = template.Must(template.New("optics").Parse(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Device}} {{.Interface}} optics — NetSpecGraph</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.min.css">
+  <style>
+    :root {
+      --bg:#0d1117; --bg2:#161b22; --bg3:#21262d; --bd:#30363d; --fg:#e6edf3; --muted:#8b949e;
+      --accent:#58a6ff; --green:#3fb950; --red:#f85149; --yellow:#d29922; --purple:#a371f7;
+    }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family:'Outfit',system-ui,sans-serif; background:var(--bg); color:var(--fg); min-height:100vh; }
+    header { display:flex; flex-wrap:wrap; gap:0.75rem 1.25rem; align-items:baseline; justify-content:space-between;
+      padding:1rem 1.25rem; border-bottom:1px solid var(--bd); background:var(--bg2); }
+    header h1 { margin:0; font-size:1.15rem; font-weight:600; }
+    header h1 span { color:var(--muted); font-weight:500; }
+    header .meta { font-family:'JetBrains Mono',monospace; font-size:0.78rem; color:var(--muted); }
+    header .nav { display:flex; gap:1rem; align-items:center; }
+    header a { color:var(--accent); text-decoration:none; }
+    .toolbar { display:flex; flex-wrap:wrap; gap:0.5rem; align-items:center; padding:0.75rem 1.25rem; border-bottom:1px solid var(--bd); }
+    .toolbar button {
+      background:var(--bg3); color:var(--fg); border:1px solid var(--bd); border-radius:6px;
+      padding:0.35rem 0.65rem; font:500 0.85rem 'Outfit',sans-serif; cursor:pointer;
+    }
+    .toolbar button.active { border-color:var(--accent); color:var(--accent); }
+    .status { margin-left:auto; font-family:'JetBrains Mono',monospace; font-size:0.75rem; color:var(--muted); }
+    .status.err { color:var(--red); }
+    main { padding:1rem 1.25rem 2rem; display:grid; gap:1.25rem; max-width:1200px; margin:0 auto; }
+    section { background:var(--bg2); border:1px solid var(--bd); border-radius:10px; padding:0.85rem 1rem 0.5rem; }
+    section h2 { margin:0 0 0.35rem; font-size:0.95rem; font-weight:600; }
+    section .sub { margin:0 0 0.65rem; font-size:0.78rem; color:var(--muted); font-family:'JetBrains Mono',monospace; }
+    .chart { width:100%; min-height:200px; position:relative; }
+    .empty { color:var(--muted); font-size:0.9rem; padding:1.5rem 0; text-align:center; }
+    .legend { display:flex; gap:1rem; flex-wrap:wrap; font-size:0.78rem; color:var(--muted); margin-bottom:0.35rem; }
+    .legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:0.35rem; }
+    .uplot-tip {
+      display:none; position:absolute; z-index:10; pointer-events:none;
+      background:rgba(22,27,34,0.96); border:1px solid var(--bd); border-radius:6px;
+      padding:0.45rem 0.6rem; font:500 0.75rem/1.45 'JetBrains Mono',monospace;
+      color:var(--fg); white-space:nowrap; box-shadow:0 4px 16px rgba(0,0,0,0.35);
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>{{.Device}} <span>{{.Interface}}</span> · optics</h1>
+      <div class="meta">NetSpecGraph DOM · {{.Timezone}} · v{{.Version}}</div>
+    </div>
+    <div class="nav">
+      <a href="{{.TrafficPath}}">← Traffic</a>
+      <a href="/">All interfaces</a>
+    </div>
+  </header>
+  <div class="toolbar">
+    <button type="button" data-range="1h">1h</button>
+    <button type="button" data-range="6h" class="active">6h</button>
+    <button type="button" data-range="24h">24h</button>
+    <span id="status" class="status">loading…</span>
+  </div>
+  <main>
+    <section>
+      <h2>Optical power</h2>
+      <p class="sub" id="powerSub">rx / tx dBm · dashed = typical warn lines</p>
+      <div class="legend">
+        <span><i style="background:#3fb950"></i>Rx</span>
+        <span><i style="background:#a371f7"></i>Tx</span>
+      </div>
+      <div id="power" class="chart"></div>
+    </section>
+    <section>
+      <h2>Laser bias</h2>
+      <p class="sub">mA</p>
+      <div id="bias" class="chart"></div>
+    </section>
+    <section>
+      <h2>Temperature</h2>
+      <p class="sub" id="tempSub">°C</p>
+      <div id="temp" class="chart"></div>
+    </section>
+  </main>
+  <script src="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
+  <script>
+    const SERIES_URL = {{.SeriesURLJS}};
+    const statusEl = document.getElementById('status');
+    let range = '6h';
+    let plots = {};
+    let lastPayload = null;
+
+    function fmt(v, unit) {
+      if (v == null || !isFinite(v)) return '—';
+      return v.toFixed(2) + (unit ? (' ' + unit) : '');
+    }
+    function toUplot(points) {
+      const t = [], v = [];
+      (points || []).forEach(p => { t.push(p.t); v.push(p.v == null ? null : p.v); });
+      return [t, v];
+    }
+    function mergeTime(seriesList) {
+      const set = new Set();
+      seriesList.forEach(s => (s || []).forEach(p => set.add(p.t)));
+      const t = Array.from(set).sort((a,b)=>a-b);
+      const cols = [t];
+      seriesList.forEach(points => {
+        const map = new Map((points || []).map(p => [p.t, p.v]));
+        cols.push(t.map(ts => {
+          const v = map.get(ts);
+          return v == null ? null : v;
+        }));
+      });
+      return cols;
+    }
+    function constSeries(times, value) {
+      if (value == null || !times || !times.length) return [];
+      return times.map(t => ({ t: t, v: value }));
+    }
+    function hasAny(points) {
+      return (points || []).some(p => p.v != null);
+    }
+    function destroy(name) {
+      if (plots[name]) { try { plots[name].destroy(); } catch (e) {} plots[name] = null; }
+      const el = document.getElementById(name);
+      if (el) el.innerHTML = '';
+    }
+    function renderEmpty(id, msg) {
+      destroy(id);
+      document.getElementById(id).innerHTML = '<div class="empty">' + msg + '</div>';
+    }
+    function tooltipPlugin(fmtY) {
+      let tip, root;
+      return {
+        hooks: {
+          init: [u => {
+            root = u.root && u.root.parentElement;
+            if (!root) return;
+            tip = document.createElement('div');
+            tip.className = 'uplot-tip';
+            root.appendChild(tip);
+          }],
+          setCursor: [u => {
+            if (!tip || !u.cursor || !u.data || !u.data[0]) return;
+            const { left, top, idx } = u.cursor;
+            if (idx == null || idx < 0 || left < 0 || top < 0) { tip.style.display = 'none'; return; }
+            const ts = u.data[0][idx];
+            if (ts == null) { tip.style.display = 'none'; return; }
+            let html = '<div class="t">' + new Date(ts * 1000).toLocaleString() + '</div>';
+            for (let i = 1; i < u.series.length; i++) {
+              if (!u.series[i] || u.series[i].show === false) continue;
+              const label = u.series[i].label || '';
+              if (label.indexOf('thr ') === 0) continue;
+              const v = u.data[i] ? u.data[i][idx] : null;
+              html += '<div><span style="color:' + (u.series[i].stroke || '#e6edf3') + '">' + label + '</span>: ' + fmtY(v) + '</div>';
+            }
+            tip.innerHTML = html;
+            tip.style.display = 'block';
+            tip.style.transform = 'translate(' + (left + 14) + 'px,' + (top + 14) + 'px)';
+          }]
+        }
+      };
+    }
+    function baseOpts(id, height, yLabel, fmtY) {
+      const el = document.getElementById(id);
+      return {
+        width: Math.max(320, (el && el.clientWidth) || 320),
+        height: height,
+        axes: [
+          { stroke: '#8b949e', grid: { stroke: '#21262d' }, ticks: { stroke: '#30363d' } },
+          {
+            label: yLabel, labelSize: 13, size: 64, gap: 6,
+            stroke: '#8b949e', grid: { stroke: '#21262d' }, ticks: { stroke: '#30363d' },
+            values: (u, vals) => vals.map(v => Number.isFinite(v) ? fmtY(v) : ''),
+          }
+        ],
+        series: [{}],
+        legend: { show: false },
+        plugins: [tooltipPlugin(fmtY)],
+      };
+    }
+    function drawPower(payload) {
+      const rx = payload.series.rx_power_dbm || [];
+      const tx = payload.series.tx_power_dbm || [];
+      if (!hasAny(rx) && !hasAny(tx)) {
+        renderEmpty('power', payload.has_data ? 'No power samples' : 'No optics data for this interface');
+        return;
+      }
+      destroy('power');
+      const th = payload.thresholds || {};
+      const times = (rx.length ? rx : tx).map(p => p.t);
+      const cols = [rx, tx];
+      const series = [
+        {},
+        { label: 'Rx', stroke: '#3fb950', width: 2, spanGaps: false },
+        { label: 'Tx', stroke: '#a371f7', width: 2, spanGaps: false },
+      ];
+      [['thr rx low', th.rx_low_dbm, 'rgba(248,81,73,0.7)'],
+       ['thr rx high', th.rx_high_dbm, 'rgba(248,81,73,0.45)'],
+       ['thr tx low', th.tx_low_dbm, 'rgba(210,153,34,0.7)'],
+       ['thr tx high', th.tx_high_dbm, 'rgba(210,153,34,0.45)']].forEach(row => {
+        if (row[1] == null) return;
+        cols.push(constSeries(times, row[1]));
+        series.push({ label: row[0], stroke: row[2], width: 1, dash: [6, 4], points: { show: false }, spanGaps: true });
+      });
+      const opts = baseOpts('power', 240, 'dBm', v => fmt(v, 'dBm'));
+      opts.series = series;
+      try {
+        plots.power = new uPlot(opts, mergeTime(cols), document.getElementById('power'));
+        document.getElementById('powerSub').textContent =
+          'rx / tx dBm · thresholds: ' + (payload.threshold_profile || 'default') + ' (visual only)';
+      } catch (e) {
+        renderEmpty('power', 'Chart error: ' + (e && e.message ? e.message : e));
+      }
+    }
+    function drawBias(payload) {
+      const s = payload.series.laser_bias_ma || [];
+      if (!hasAny(s)) { renderEmpty('bias', 'No bias samples'); return; }
+      destroy('bias');
+      const opts = baseOpts('bias', 180, 'mA', v => fmt(v, 'mA'));
+      opts.series = [{}, { label: 'bias', stroke: '#58a6ff', width: 2, fill: 'rgba(88,166,255,0.12)', spanGaps: false }];
+      try { plots.bias = new uPlot(opts, toUplot(s), document.getElementById('bias')); }
+      catch (e) { renderEmpty('bias', 'Chart error: ' + (e && e.message ? e.message : e)); }
+    }
+    function drawTemp(payload) {
+      const s = payload.series.temp_celsius || [];
+      if (!hasAny(s)) { renderEmpty('temp', 'No temperature samples'); return; }
+      destroy('temp');
+      const th = payload.thresholds || {};
+      const cols = [s];
+      const series = [{}, { label: 'temp', stroke: '#f85149', width: 2, fill: 'rgba(248,81,73,0.1)', spanGaps: false }];
+      if (th.temp_high_c != null) {
+        cols.push(constSeries(s.map(p => p.t), th.temp_high_c));
+        series.push({ label: 'thr high', stroke: 'rgba(248,81,73,0.6)', width: 1, dash: [6, 4], points: { show: false }, spanGaps: true });
+      }
+      const opts = baseOpts('temp', 180, '°C', v => fmt(v, '°C'));
+      opts.series = series;
+      try {
+        plots.temp = new uPlot(opts, mergeTime(cols), document.getElementById('temp'));
+        document.getElementById('tempSub').textContent = '°C · high ref ' + (th.temp_high_c != null ? th.temp_high_c + '°C' : '—');
+      } catch (e) { renderEmpty('temp', 'Chart error: ' + (e && e.message ? e.message : e)); }
+    }
+    function render(payload) {
+      lastPayload = payload;
+      drawPower(payload);
+      drawBias(payload);
+      drawTemp(payload);
+    }
+    async function load() {
+      statusEl.textContent = 'loading…';
+      statusEl.classList.remove('err');
+      try {
+        const res = await fetch(SERIES_URL + '?range=' + encodeURIComponent(range));
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error || res.statusText);
+        render(body);
+        statusEl.textContent = body.has_data
+          ? ('updated ' + new Date().toLocaleTimeString())
+          : 'no optics data yet';
+      } catch (e) {
+        statusEl.textContent = String(e.message || e);
+        statusEl.classList.add('err');
+      }
+    }
+    document.querySelectorAll('.toolbar button[data-range]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.toolbar button[data-range]').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        range = btn.getAttribute('data-range');
+        load();
+      });
+    });
     window.addEventListener('resize', () => { if (lastPayload) render(lastPayload); });
     load();
     setInterval(load, 30000);

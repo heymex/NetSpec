@@ -229,10 +229,25 @@ func (s *Server) handleInterfacePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if pathIsOptics(escaped) {
+		data := map[string]any{
+			"Device":      device,
+			"Interface":   iface,
+			"SeriesURLJS": template.JS(strconv.Quote(opticsSeriesAPIPath(device, iface))),
+			"TrafficPath": interfacePagePath(device, iface),
+			"Timezone":    s.timezone,
+			"Version":     version.GetVersion(),
+		}
+		if err := opticsTemplate.Execute(w, data); err != nil {
+			s.log.Error().Err(err).Msg("render optics page")
+		}
+		return
+	}
 	data := map[string]any{
 		"Device":       device,
 		"Interface":    iface,
 		"SeriesURLJS":  template.JS(strconv.Quote(interfaceSeriesAPIPath(device, iface))),
+		"OpticsPath":   opticsPagePath(device, iface),
 		"Timezone":     s.timezone,
 		"Version":      version.GetVersion(),
 		"DefaultRange": "6h",
@@ -327,7 +342,41 @@ func (s *Server) handleDeviceAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleInterfaceMetaAPI(w, r)
 		return
 	}
+	if pathIsOptics(escaped) {
+		s.handleOpticsSeriesAPI(w, r)
+		return
+	}
 	s.handleInterfaceSeriesAPI(w, r)
+}
+
+func (s *Server) handleOpticsSeriesAPI(w http.ResponseWriter, r *http.Request) {
+	device, iface, ok := parseDeviceInterfacePath(r.URL.EscapedPath())
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	window := 6 * time.Hour
+	if v := r.URL.Query().Get("range"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 && d <= 48*time.Hour {
+			window = d
+		}
+	}
+	step := 30 * time.Second
+	if v := r.URL.Query().Get("step"); v != "" {
+		if sec, err := strconv.Atoi(v); err == nil && sec >= 10 && sec <= 300 {
+			step = time.Duration(sec) * time.Second
+		}
+	}
+	ctx := r.Context()
+	payload, err := FetchOpticsSeries(ctx, s.vm, device, iface, time.Now().UTC(), window, step)
+	w.Header().Set("Content-Type", "application/json")
+	if err != nil {
+		s.log.Error().Err(err).Str("device", device).Str("interface", iface).Msg("optics series query failed")
+		w.WriteHeader(http.StatusBadGateway)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": err.Error()})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(payload)
 }
 
 func (s *Server) handleInterfaceMetaAPI(w http.ResponseWriter, r *http.Request) {
