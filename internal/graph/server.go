@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/netspec/netspec/internal/auth"
@@ -32,6 +33,7 @@ type Server struct {
 	auth     *auth.Manager
 	vm       *vm.Client
 	cfg      *config.Config
+	index    *Index
 	timezone string
 }
 
@@ -42,6 +44,7 @@ func NewServer(opts Options) *Server {
 		auth:     opts.Auth,
 		vm:       opts.VM,
 		cfg:      opts.Config,
+		index:    BuildIndex(opts.Config),
 		timezone: opts.Timezone,
 	}
 }
@@ -53,7 +56,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/login", s.handleLogin)
 	mux.HandleFunc("/logout", s.handleLogout)
 	mux.HandleFunc("/api/vm/health", s.handleVMHealth)
-	mux.HandleFunc("/api/device/", s.handleInterfaceSeriesAPI)
+	mux.HandleFunc("/api/roles", s.handleRolesAPI)
+	mux.HandleFunc("/api/interfaces", s.handleInterfacesAPI)
+	mux.HandleFunc("/api/device/", s.handleDeviceAPI)
 	mux.HandleFunc("/device/", s.handleInterfacePage)
 	mux.HandleFunc("/", s.handleIndex)
 	return s.authGate(mux)
@@ -170,14 +175,22 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	deviceCount := 0
-	if s.cfg != nil {
-		deviceCount = len(s.cfg.DesiredState.Devices)
+	deviceCount, ifaceCount := 0, 0
+	portRoles := []string{}
+	deviceRoles := []RoleInfo{}
+	if s.index != nil {
+		deviceCount = s.index.DeviceCount()
+		ifaceCount = s.index.Len()
+		portRoles = s.index.PortRoleLabels()
+		deviceRoles = s.index.Roles()
 	}
 	data := map[string]any{
 		"Version":     version.GetVersion(),
 		"Timezone":    s.timezone,
 		"DeviceCount": deviceCount,
+		"IfaceCount":  ifaceCount,
+		"PortRoles":   portRoles,
+		"DeviceRoles": deviceRoles,
 		"ExamplePath": interfacePagePath("csw-mcd-01", "Port-channel20"),
 	}
 	if err := indexTemplate.Execute(w, data); err != nil {
@@ -204,17 +217,124 @@ func (s *Server) handleInterfacePage(w http.ResponseWriter, r *http.Request) {
 		"Timezone":     s.timezone,
 		"Version":      version.GetVersion(),
 		"DefaultRange": "6h",
+		"PortRole":     "",
+		"DeviceRole":   "",
+		"Alias":        "",
+		"Monitored":    "",
+		"DesiredState": "",
+		"InConfig":     false,
+	}
+	if s.index != nil {
+		if id, ok := s.index.Lookup(device, iface); ok {
+			data["PortRole"] = id.PortRole
+			data["DeviceRole"] = id.DeviceRole
+			data["Alias"] = id.Alias
+			data["Monitored"] = strconv.FormatBool(id.Monitored)
+			data["DesiredState"] = id.DesiredState
+			data["InConfig"] = true
+		}
 	}
 	if err := ifaceTemplate.Execute(w, data); err != nil {
 		s.log.Error().Err(err).Msg("render interface page")
 	}
 }
 
-func (s *Server) handleInterfaceSeriesAPI(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleRolesAPI(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
+	roles := []RoleInfo{}
+	labels := []string{}
+	if s.index != nil {
+		roles = s.index.Roles()
+		labels = s.index.PortRoleLabels()
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"device_roles":     roles,
+		"port_role_labels": labels,
+	})
+}
+
+func (s *Server) handleInterfacesAPI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	f := Filter{
+		Device:       q.Get("device"),
+		DevicePrefix: firstNonEmpty(q.Get("device_prefix"), q.Get("role_prefix")),
+		DeviceRole:   q.Get("device_role"),
+		PortRole:     firstNonEmpty(q.Get("port_role"), q.Get("role")),
+		DesiredState: q.Get("desired_state"),
+		Query:        q.Get("q"),
+	}
+	if v := q.Get("monitored"); v != "" {
+		b := v == "1" || v == "true" || v == "yes"
+		f.Monitored = &b
+	}
+	items := []InterfaceIdentity{}
+	if s.index != nil {
+		items = s.index.Filter(f)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"count":      len(items),
+		"interfaces": items,
+	})
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func (s *Server) handleDeviceAPI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	escaped := r.URL.EscapedPath()
+	if strings.HasSuffix(escaped, "/meta") {
+		s.handleInterfaceMetaAPI(w, r)
+		return
+	}
+	s.handleInterfaceSeriesAPI(w, r)
+}
+
+func (s *Server) handleInterfaceMetaAPI(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimSuffix(r.URL.EscapedPath(), "/meta")
+	device, iface, ok := parseDeviceInterfacePath(path)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if s.index == nil {
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": "no identity index"})
+		return
+	}
+	id, ok := s.index.Lookup(device, iface)
+	if !ok {
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error":     "interface not in desired-state",
+			"device":    device,
+			"interface": iface,
+		})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(id)
+}
+
+func (s *Server) handleInterfaceSeriesAPI(w http.ResponseWriter, r *http.Request) {
 	device, iface, ok := parseDeviceInterfacePath(r.URL.EscapedPath())
 	if !ok {
 		http.NotFound(w, r)

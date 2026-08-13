@@ -120,6 +120,8 @@ services:
       - "${GRAPH_PORT:-8090}:${GRAPH_PORT:-8090}"
     volumes:
       - ${NETSPEC_DATA_DIR:-/opt/netspec}/config:/config:ro
+      # Split/monolithic device YAML lives under data/; LoadConfigDir reads ../data from /config.
+      - ${NETSPEC_DATA_DIR:-/opt/netspec}/data:/data:ro
     env_file:
       - path: ${NETSPEC_ENV_FILE:-.env}
         required: false

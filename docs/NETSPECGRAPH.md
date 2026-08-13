@@ -163,6 +163,22 @@ Write-time labels: `device`, `interface` (and later `lane` for optics). Routing 
 **Done-when:** vmui resolves `if_in_octets_total` (etc.) with a non-zero `rate()`,
 and series labels are only `device` / `interface` (plus optional `db` from Influx).
 
+## Step 4 — query-time enrichment
+
+Graph mounts **both** `${NETSPEC_DATA_DIR}/config` and `${NETSPEC_DATA_DIR}/data`
+read-only (same layout as NetSpec). On startup it builds an in-memory index from
+desired-state + `rules.yaml` via `rules.MatchDevice` / `MatchPort` and
+`ifname` for telemetry↔config name joins. Business labels are never written to VM.
+
+| API | Purpose |
+|---|---|
+| `GET /api/roles` | Device roles + unique port-rule labels |
+| `GET /api/interfaces?port_role=…&device_prefix=…&monitored=true&q=…` | Filter identity set |
+| `GET /api/device/{d}/interface/{if}/meta` | One interface’s enrichment record |
+
+The index page “Browse by rules” UI calls `/api/interfaces`. Verify after
+`make graph-dev-up` that logs show a non-zero `devices` / `interfaces` count.
+
 ## Invariants (do not violate)
 
 - Do not modify subscription 251’s *existing* production receiver, `decoded.json`, or `mdt-translator` for metrics — only **add** lab receivers.

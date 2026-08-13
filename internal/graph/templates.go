@@ -18,37 +18,133 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!DOCTYPE html>
     }
     * { box-sizing: border-box; }
     body { margin:0; font-family:'Outfit',system-ui,sans-serif; background:var(--bg); color:var(--fg); min-height:100vh; }
-    main { max-width: 36rem; margin: 3rem auto; padding: 0 1.25rem; }
+    main { max-width: 52rem; margin: 2.5rem auto; padding: 0 1.25rem 3rem; }
     h1 { font-size: 1.75rem; margin: 0 0 0.35rem; letter-spacing: -0.02em; }
+    h2 { font-size: 1.05rem; margin: 1.75rem 0 0.65rem; font-weight:600; }
     p { color: var(--muted); line-height: 1.5; }
-    code, input { font-family:'JetBrains Mono',monospace; }
+    code, input, select { font-family:'JetBrains Mono',monospace; }
     code { background:var(--bg2); padding:0.1em 0.35em; border-radius:4px; border:1px solid var(--bd); font-size:0.85em; }
-    form { margin-top:1.75rem; display:grid; gap:0.75rem; padding:1.25rem; background:var(--bg2); border:1px solid var(--bd); border-radius:10px; }
+    .panel { margin-top:1.25rem; display:grid; gap:0.75rem; padding:1.25rem; background:var(--bg2); border:1px solid var(--bd); border-radius:10px; }
     label { font-size:0.85rem; color:var(--muted); }
-    input[type=text] { width:100%; margin-top:0.3rem; padding:0.55rem 0.7rem; background:var(--bg); border:1px solid var(--bd); border-radius:6px; color:var(--fg); }
+    input[type=text], select { width:100%; margin-top:0.3rem; padding:0.55rem 0.7rem; background:var(--bg); border:1px solid var(--bd); border-radius:6px; color:var(--fg); }
+    .row { display:grid; gap:0.75rem; grid-template-columns:1fr 1fr; }
+    @media (max-width:640px) { .row { grid-template-columns:1fr; } }
     button { margin-top:0.35rem; padding:0.65rem 1rem; background:var(--green); color:#0d1117; border:none; border-radius:6px; font:600 0.95rem 'Outfit',sans-serif; cursor:pointer; }
+    button.secondary { background:transparent; color:var(--accent); border:1px solid var(--bd); }
     button:hover { opacity:0.9; }
-    .meta { margin-top:1.5rem; font-size:0.85rem; color:var(--muted); }
+    .meta { margin-top:1.25rem; font-size:0.85rem; color:var(--muted); }
     a { color: var(--accent); }
+    #results { margin-top:0.5rem; }
+    #results .count { font-size:0.8rem; color:var(--muted); margin-bottom:0.5rem; }
+    #results table { width:100%; border-collapse:collapse; font-size:0.82rem; }
+    #results th, #results td { text-align:left; padding:0.4rem 0.5rem; border-bottom:1px solid var(--bd); vertical-align:top; }
+    #results th { color:var(--muted); font-weight:500; }
+    #results td.mono { font-family:'JetBrains Mono',monospace; font-size:0.78rem; }
+    #results .empty { color:var(--muted); padding:0.75rem 0; }
   </style>
 </head>
 <body>
   <main>
     <h1>NetSpecGraph</h1>
-    <p>Metrics companion to NetSpec — per-interface utilization and errors.</p>
-    <form method="POST" action="/">
-      <div>
-        <label for="device">Device</label>
-        <input id="device" name="device" type="text" value="csw-mcd-01" required autocomplete="off">
-      </div>
-      <div>
-        <label for="interface">Interface</label>
-        <input id="interface" name="interface" type="text" value="Port-channel20" required autocomplete="off">
+    <p>Metrics companion to NetSpec — filter ports by the same rules NetSpec uses, then open per-interface graphs.</p>
+
+    <form class="panel" method="POST" action="/">
+      <div class="row">
+        <div>
+          <label for="device">Device</label>
+          <input id="device" name="device" type="text" value="csw-mcd-01" required autocomplete="off">
+        </div>
+        <div>
+          <label for="interface">Interface</label>
+          <input id="interface" name="interface" type="text" value="Port-channel20" required autocomplete="off">
+        </div>
       </div>
       <button type="submit">Open graphs</button>
     </form>
-    <p class="meta">{{.DeviceCount}} devices loaded · {{.Timezone}} · <a href="{{.ExamplePath}}">example</a> · v{{.Version}}</p>
+
+    <h2>Browse by rules</h2>
+    <div class="panel">
+      <div class="row">
+        <div>
+          <label for="port_role">Port role</label>
+          <select id="port_role">
+            <option value="">Any</option>
+            {{range .PortRoles}}<option value="{{.}}">{{.}}</option>{{end}}
+          </select>
+        </div>
+        <div>
+          <label for="device_prefix">Device prefix</label>
+          <select id="device_prefix">
+            <option value="">Any</option>
+            {{range .DeviceRoles}}<option value="{{.Prefix}}">{{.Prefix}} — {{.Name}}</option>{{end}}
+          </select>
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label for="monitored">Monitored</label>
+          <select id="monitored">
+            <option value="">Any</option>
+            <option value="true">Yes</option>
+            <option value="false">No</option>
+          </select>
+        </div>
+        <div>
+          <label for="q">Search</label>
+          <input id="q" type="text" placeholder="device, alias, interface…" autocomplete="off">
+        </div>
+      </div>
+      <button type="button" class="secondary" id="run-filter">Filter interfaces</button>
+      <div id="results"></div>
+    </div>
+
+    <p class="meta">{{.DeviceCount}} devices · {{.IfaceCount}} interfaces · {{.Timezone}} · <a href="{{.ExamplePath}}">example</a> · v{{.Version}}</p>
   </main>
+  <script>
+    const results = document.getElementById('results');
+    async function runFilter() {
+      const params = new URLSearchParams();
+      const portRole = document.getElementById('port_role').value;
+      const prefix = document.getElementById('device_prefix').value;
+      const monitored = document.getElementById('monitored').value;
+      const q = document.getElementById('q').value.trim();
+      if (portRole) params.set('port_role', portRole);
+      if (prefix) params.set('device_prefix', prefix);
+      if (monitored) params.set('monitored', monitored);
+      if (q) params.set('q', q);
+      results.innerHTML = '<div class="empty">loading…</div>';
+      try {
+        const res = await fetch('/api/interfaces?' + params.toString());
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error || res.statusText);
+        const items = body.interfaces || [];
+        if (!items.length) {
+          results.innerHTML = '<div class="empty">No interfaces match.</div>';
+          return;
+        }
+        let html = '<div class="count">' + items.length + ' interface' + (items.length === 1 ? '' : 's') + '</div>';
+        html += '<table><thead><tr><th>Device</th><th>Interface</th><th>Alias</th><th>Port role</th></tr></thead><tbody>';
+        for (const it of items.slice(0, 200)) {
+          html += '<tr>'
+            + '<td class="mono">' + esc(it.device) + '</td>'
+            + '<td class="mono"><a href="' + esc(it.graph_path) + '">' + esc(it.interface) + '</a></td>'
+            + '<td>' + esc(it.alias || '—') + '</td>'
+            + '<td>' + esc(it.port_role || '—') + '</td>'
+            + '</tr>';
+        }
+        html += '</tbody></table>';
+        if (items.length > 200) html += '<div class="empty">Showing first 200 of ' + items.length + '.</div>';
+        results.innerHTML = html;
+      } catch (e) {
+        results.innerHTML = '<div class="empty">Error: ' + esc(String(e.message || e)) + '</div>';
+      }
+    }
+    function esc(s) {
+      return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+    document.getElementById('run-filter').addEventListener('click', runFilter);
+    document.getElementById('q').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); runFilter(); } });
+  </script>
 </body>
 </html>
 `))
@@ -116,7 +212,7 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
   <header>
     <div>
       <h1>{{.Device}} <span>{{.Interface}}</span></h1>
-      <div class="meta">NetSpecGraph · {{.Timezone}} · v{{.Version}}</div>
+      <div class="meta">NetSpecGraph · {{.Timezone}} · v{{.Version}}{{if .InConfig}} · {{if .DeviceRole}}{{.DeviceRole}}{{else}}unmatched device role{{end}}{{if .PortRole}} · {{.PortRole}}{{end}}{{if .Alias}} · {{.Alias}}{{end}} · desired {{.DesiredState}} · monitored {{.Monitored}}{{else}} · not in desired-state{{end}}</div>
     </div>
     <a href="/">← All interfaces</a>
   </header>

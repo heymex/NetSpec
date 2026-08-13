@@ -48,8 +48,11 @@ func main() {
 	if err != nil {
 		logger.Fatal().Err(err).Str("config_dir", *configDir).Msg("failed to load NetSpec config")
 	}
+	idx := graph.BuildIndex(cfg)
 	logger.Info().
-		Int("devices", len(cfg.DesiredState.Devices)).
+		Int("devices", idx.DeviceCount()).
+		Int("interfaces", idx.Len()).
+		Int("port_roles", len(idx.PortRoleLabels())).
 		Msg("loaded NetSpec config (read-only identity source)")
 
 	authMgr := auth.NewManager(
