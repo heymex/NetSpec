@@ -179,6 +179,22 @@ desired-state + `rules.yaml` via `rules.MatchDevice` / `MatchPort` and
 The index page “Browse by rules” UI calls `/api/interfaces`. Verify after
 `make graph-dev-up` that logs show a non-zero `devices` / `interfaces` count.
 
+## Step 5 — seasonality band + baseline
+
+Per-interface traffic charts can show a **p10/p90 hour-of-week envelope** from a
+trailing window (`GRAPH_BAND_WINDOW`, default `504h` / 21 days), bucketed in
+`GRAPH_TIMEZONE` (Monday-based 168 slots). Optional baseline overlays:
+
+| Query | Effect |
+|---|---|
+| (default) | band on |
+| `band=0` | disable band |
+| `baseline=1w` | ghost of the same duration, 7 days earlier |
+| `baseline=52w` | ghost aligned to the same weekdays ~1 year earlier |
+
+Toolbar: “seasonality” checkbox + baseline select. With only a few days of VM
+history the band is thin; that is expected until retention fills in.
+
 ## Invariants (do not violate)
 
 - Do not modify subscription 251’s *existing* production receiver, `decoded.json`, or `mdt-translator` for metrics — only **add** lab receivers.

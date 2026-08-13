@@ -20,32 +20,51 @@ import (
 
 // Options configures the NetSpecGraph HTTP server.
 type Options struct {
-	Logger   zerolog.Logger
-	Auth     *auth.Manager
-	VM       *vm.Client
-	Config   *config.Config
-	Timezone string
+	Logger     zerolog.Logger
+	Auth       *auth.Manager
+	VM         *vm.Client
+	Config     *config.Config
+	Timezone   string
+	Location   *time.Location
+	BandWindow time.Duration // trailing seasonality window; default 21d
 }
 
 // Server is the NetSpecGraph HTTP front-end.
 type Server struct {
-	log      zerolog.Logger
-	auth     *auth.Manager
-	vm       *vm.Client
-	cfg      *config.Config
-	index    *Index
-	timezone string
+	log        zerolog.Logger
+	auth       *auth.Manager
+	vm         *vm.Client
+	cfg        *config.Config
+	index      *Index
+	timezone   string
+	location   *time.Location
+	bandWindow time.Duration
 }
 
 // NewServer builds a Server from Options.
 func NewServer(opts Options) *Server {
+	loc := opts.Location
+	if loc == nil {
+		loc = time.UTC
+		if opts.Timezone != "" {
+			if l, err := time.LoadLocation(opts.Timezone); err == nil {
+				loc = l
+			}
+		}
+	}
+	bw := opts.BandWindow
+	if bw == 0 {
+		bw = 21 * 24 * time.Hour
+	}
 	return &Server{
-		log:      opts.Logger,
-		auth:     opts.Auth,
-		vm:       opts.VM,
-		cfg:      opts.Config,
-		index:    BuildIndex(opts.Config),
-		timezone: opts.Timezone,
+		log:        opts.Logger,
+		auth:       opts.Auth,
+		vm:         opts.VM,
+		cfg:        opts.Config,
+		index:      BuildIndex(opts.Config),
+		timezone:   opts.Timezone,
+		location:   loc,
+		bandWindow: bw,
 	}
 }
 
@@ -356,8 +375,25 @@ func (s *Server) handleInterfaceSeriesAPI(w http.ResponseWriter, r *http.Request
 		}
 	}
 
+	opts := SeriesOptions{
+		Location:   s.location,
+		BandWindow: s.bandWindow,
+	}
+	switch r.URL.Query().Get("band") {
+	case "0", "false", "off", "no":
+		opts.BandWindow = -1
+	}
+	switch r.URL.Query().Get("baseline") {
+	case "1w", "week":
+		opts.Baseline = 7 * 24 * time.Hour
+		opts.BaselineLabel = "1 week ago"
+	case "52w", "year":
+		opts.Baseline = 52 * 7 * 24 * time.Hour // weekday-aligned year
+		opts.BaselineLabel = "same week last year"
+	}
+
 	ctx := r.Context()
-	payload, err := FetchInterfaceSeries(ctx, s.vm, device, iface, time.Now().UTC(), window, step)
+	payload, err := FetchInterfaceSeriesOpts(ctx, s.vm, device, iface, time.Now().UTC(), window, step, opts)
 	w.Header().Set("Content-Type", "application/json")
 	if err != nil {
 		s.log.Error().Err(err).Str("device", device).Str("interface", iface).Msg("series query failed")

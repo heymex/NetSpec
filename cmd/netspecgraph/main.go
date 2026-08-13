@@ -26,6 +26,7 @@ func main() {
 	vmURL := flag.String("vm-url", envOr("GRAPH_VM_URL", "http://netspec-victoriametrics:8428"), "VictoriaMetrics base URL")
 	configDir := flag.String("config-dir", envOr("GRAPH_CONFIG_DIR", "/config"), "NetSpec config directory (read-only)")
 	timezone := flag.String("timezone", envOr("GRAPH_TIMEZONE", "America/Chicago"), "IANA timezone for seasonality buckets")
+	bandWindowStr := flag.String("band-window", envOr("GRAPH_BAND_WINDOW", "504h"), "trailing window for hour-of-week band (default 21d)")
 	logLevel := flag.String("log-level", envOr("LOG_LEVEL", "info"), "Log level")
 	flag.Parse()
 
@@ -40,8 +41,13 @@ func main() {
 		Str("version", version.GetVersion()).
 		Logger().Level(level)
 
-	if _, err := time.LoadLocation(*timezone); err != nil {
+	loc, err := time.LoadLocation(*timezone)
+	if err != nil {
 		logger.Fatal().Err(err).Str("timezone", *timezone).Msg("invalid GRAPH_TIMEZONE")
+	}
+	bandWindow, err := time.ParseDuration(*bandWindowStr)
+	if err != nil || bandWindow <= 0 {
+		logger.Fatal().Err(err).Str("band_window", *bandWindowStr).Msg("invalid GRAPH_BAND_WINDOW")
 	}
 
 	cfg, err := config.LoadConfigDir(*configDir)
@@ -53,6 +59,8 @@ func main() {
 		Int("devices", idx.DeviceCount()).
 		Int("interfaces", idx.Len()).
 		Int("port_roles", len(idx.PortRoleLabels())).
+		Str("timezone", *timezone).
+		Dur("band_window", bandWindow).
 		Msg("loaded NetSpec config (read-only identity source)")
 
 	authMgr := auth.NewManager(
@@ -67,11 +75,13 @@ func main() {
 
 	vmClient := vm.NewClient(*vmURL)
 	srv := graph.NewServer(graph.Options{
-		Logger:   logger,
-		Auth:     authMgr,
-		VM:       vmClient,
-		Config:   cfg,
-		Timezone: *timezone,
+		Logger:     logger,
+		Auth:       authMgr,
+		VM:         vmClient,
+		Config:     cfg,
+		Timezone:   *timezone,
+		Location:   loc,
+		BandWindow: bandWindow,
 	})
 
 	httpServer := &http.Server{

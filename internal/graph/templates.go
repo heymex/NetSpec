@@ -178,6 +178,8 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
       padding:0.35rem 0.65rem; font:500 0.85rem 'Outfit',sans-serif; cursor:pointer;
     }
     .toolbar button.active { border-color:var(--accent); color:var(--accent); }
+    .toolbar .chk { display:inline-flex; align-items:center; gap:0.35rem; font-size:0.8rem; color:var(--muted); cursor:pointer; user-select:none; }
+    .toolbar .chk input { accent-color:var(--accent); }
     .status { margin-left:auto; font-family:'JetBrains Mono',monospace; font-size:0.75rem; color:var(--muted); }
     .status.err { color:var(--red); }
     main { padding:1rem 1.25rem 2rem; display:grid; gap:1.25rem; max-width:1200px; margin:0 auto; }
@@ -224,6 +226,12 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
       <option value="bps" selected>bits/s</option>
       <option value="pct">% utilization</option>
     </select>
+    <label class="chk"><input type="checkbox" id="band" checked> seasonality</label>
+    <select id="baseline" title="Baseline overlay">
+      <option value="" selected>No baseline</option>
+      <option value="1w">1 week ago</option>
+      <option value="52w">Same week last year</option>
+    </select>
     <span id="status" class="status">loading…</span>
   </div>
   <main>
@@ -269,6 +277,8 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
     const statusEl = document.getElementById('status');
     const speedLine = document.getElementById('speedLine');
     const modeEl = document.getElementById('mode');
+    const bandEl = document.getElementById('band');
+    const baselineEl = document.getElementById('baseline');
     let range = '6h';
     let plots = { traffic: null, errors: null, oper: null };
     let lastPayload = null;
@@ -378,10 +388,12 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
             let html = '<div class="t">' + new Date(ts * 1000).toLocaleString() + '</div>';
             for (let i = 1; i < u.series.length; i++) {
               if (!u.series[i] || u.series[i].show === false) continue;
+              const label = u.series[i].label || ('s'+i);
+              if (label.indexOf('band ') === 0) continue;
               let v = u.data[i] ? u.data[i][idx] : null;
-              if (absOut && i === 2 && v != null) v = Math.abs(v);
+              if (absOut && (label === 'Out' || label === 'Out baseline') && v != null) v = Math.abs(v);
               const color = u.series[i].stroke || '#e6edf3';
-              html += '<div><span style="color:' + color + '">' + (u.series[i].label || ('s'+i)) + '</span>: ' + fmtY(v) + '</div>';
+              html += '<div><span style="color:' + color + '">' + label + '</span>: ' + fmtY(v) + '</div>';
             }
             tip.innerHTML = html;
             tip.style.display = 'block';
@@ -463,26 +475,14 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
         return;
       }
       destroy('traffic');
-      // LibreNMS-style: In above zero, Out below zero.
-      const data = mergeTime([inS, negateSeries(outS)]);
-      if (!data[0] || data[0].length === 0) {
-        renderEmpty('traffic', 'No traffic samples in this range');
-        return;
-      }
-      const opts = baseOpts(
-        'traffic',
-        280,
-        mode === 'pct' ? '% utilization (out down)' : 'bits/s (out down)',
-        fmtY,
-        { y: { auto: true } },
-        { absOut: true }
-      );
-      opts.series = [
+
+      const cols = [inS, negateSeries(outS)];
+      const seriesOpts = [
         {},
         {
           label: 'In',
           stroke: '#3fb950',
-          fill: 'rgba(63,185,80,0.35)',
+          fill: 'rgba(63,185,80,0.28)',
           fillTo: 0,
           width: 1.5,
           spanGaps: false,
@@ -490,12 +490,83 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
         {
           label: 'Out',
           stroke: '#a371f7',
-          fill: 'rgba(163,113,247,0.35)',
+          fill: 'rgba(163,113,247,0.28)',
           fillTo: 0,
           width: 1.5,
           spanGaps: false,
         },
       ];
+      const bands = [];
+
+      const band = payload.band;
+      if (band && band.has_data && band.series) {
+        const p10in = mode === 'pct' ? (band.series.in_p10_pct || []) : (band.series.in_p10 || []);
+        const p90in = mode === 'pct' ? (band.series.in_p90_pct || []) : (band.series.in_p90 || []);
+        const p10out = mode === 'pct' ? (band.series.out_p10_pct || []) : (band.series.out_p10 || []);
+        const p90out = mode === 'pct' ? (band.series.out_p90_pct || []) : (band.series.out_p90 || []);
+        if (hasAny(p10in) || hasAny(p90in) || hasAny(p10out) || hasAny(p90out)) {
+          // Insert band series before live In/Out so live strokes stay on top.
+          cols.length = 0;
+          cols.push(p10in, p90in, negateSeries(p90out), negateSeries(p10out), inS, negateSeries(outS));
+          seriesOpts.length = 0;
+          seriesOpts.push(
+            {},
+            { label: 'band in p10', stroke: 'rgba(63,185,80,0.0)', width: 0, points: { show: false }, spanGaps: true },
+            { label: 'band in p90', stroke: 'rgba(63,185,80,0.0)', width: 0, points: { show: false }, spanGaps: true },
+            { label: 'band out p90', stroke: 'rgba(163,113,247,0.0)', width: 0, points: { show: false }, spanGaps: true },
+            { label: 'band out p10', stroke: 'rgba(163,113,247,0.0)', width: 0, points: { show: false }, spanGaps: true },
+            {
+              label: 'In',
+              stroke: '#3fb950',
+              fill: 'rgba(63,185,80,0.22)',
+              fillTo: 0,
+              width: 1.5,
+              spanGaps: false,
+            },
+            {
+              label: 'Out',
+              stroke: '#a371f7',
+              fill: 'rgba(163,113,247,0.22)',
+              fillTo: 0,
+              width: 1.5,
+              spanGaps: false,
+            },
+          );
+          bands.push(
+            { series: [1, 2], fill: 'rgba(63,185,80,0.14)' },
+            { series: [3, 4], fill: 'rgba(163,113,247,0.14)' },
+          );
+        }
+      }
+
+      const base = payload.baseline;
+      if (base && base.has_data && base.series) {
+        const bin = mode === 'pct' ? (base.series.in_util_pct || []) : (base.series.in_bps || []);
+        const bout = mode === 'pct' ? (base.series.out_util_pct || []) : (base.series.out_bps || []);
+        if (hasAny(bin) || hasAny(bout)) {
+          cols.push(bin, negateSeries(bout));
+          seriesOpts.push(
+            { label: 'In baseline', stroke: 'rgba(63,185,80,0.55)', width: 1, dash: [4, 4], points: { show: false }, spanGaps: false },
+            { label: 'Out baseline', stroke: 'rgba(163,113,247,0.55)', width: 1, dash: [4, 4], points: { show: false }, spanGaps: false },
+          );
+        }
+      }
+
+      const data = mergeTime(cols);
+      if (!data[0] || data[0].length === 0) {
+        renderEmpty('traffic', 'No traffic samples in this range');
+        return;
+      }
+      const opts = baseOpts(
+        'traffic',
+        300,
+        mode === 'pct' ? '% utilization (out down)' : 'bits/s (out down)',
+        fmtY,
+        { y: { auto: true } },
+        { absOut: true }
+      );
+      opts.series = seriesOpts;
+      if (bands.length) opts.bands = bands;
       if (mode === 'pct') {
         opts.axes[1].values = (u, vals) => vals.map(v => Number.isFinite(v) ? (Math.abs(v).toFixed(1) + '%') : '');
       } else {
@@ -553,7 +624,18 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
     }
     function render(payload) {
       lastPayload = payload;
-      speedLine.textContent = fmtSpeed(payload.speed_bps);
+      let sub = fmtSpeed(payload.speed_bps);
+      if (payload.band && payload.band.has_data) {
+        sub += ' · p10/p90 ' + (payload.band.window_days || '?') + 'd ' + (payload.band.timezone || '');
+      } else if (bandEl.checked) {
+        sub += ' · seasonality: waiting for history';
+      }
+      if (payload.baseline) {
+        sub += payload.baseline.has_data
+          ? (' · baseline: ' + (payload.baseline.label || payload.baseline.shift))
+          : ' · baseline: no data yet';
+      }
+      speedLine.textContent = sub;
       drawTraffic(payload);
       drawErrors(payload);
       drawOper(payload);
@@ -562,7 +644,11 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
       statusEl.textContent = 'loading…';
       statusEl.classList.remove('err');
       try {
-        const res = await fetch(SERIES_URL + '?range=' + encodeURIComponent(range));
+        const params = new URLSearchParams();
+        params.set('range', range);
+        if (!bandEl.checked) params.set('band', '0');
+        if (baselineEl.value) params.set('baseline', baselineEl.value);
+        const res = await fetch(SERIES_URL + '?' + params.toString());
         const body = await res.json();
         if (!res.ok) throw new Error(body.error || res.statusText);
         render(body);
@@ -583,6 +669,8 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
       });
     });
     modeEl.addEventListener('change', () => { if (lastPayload) drawTraffic(lastPayload); });
+    bandEl.addEventListener('change', () => load());
+    baselineEl.addEventListener('change', () => load());
     window.addEventListener('resize', () => { if (lastPayload) render(lastPayload); });
     load();
     setInterval(load, 30000);
