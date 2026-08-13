@@ -137,10 +137,31 @@ receiver ip address <same-host-ip> 57510 protocol grpc-tcp
 
 ## Freeze the metric schema (step 2)
 
-1. In vmui, identify the measurement/field/tag names Telegraf emits for IETF interface counters + `speed` + oper-status.
-2. Map them to the contract in the DevSpec (`if_in_octets_total`, …, labels `device` / `interface` only).
-3. Enable `[[processors.rename]]` (and any tag remaps) in `tools/sidecar/telegraf-mdt.conf` — **observe first, then pin**. Do not hardcode assumed Telegraf names.
-4. Optionally add `namepass` / `fieldpass` on the Influx output so VM only stores the contracted series.
+Observed live Telegraf shape (IETF `/interfaces-state/interface`):
+
+- measurement: `ietf-interfaces:interfaces-state/interface`
+- tags: `source` (device), `name` (interface), plus `path` / `subscription`
+- fields: `statistics/in_octets`, …, `speed`, `oper_status` (**string** `up`/`down`/…)
+
+`tools/sidecar/telegraf-mdt.conf` clones those into the NetSpecGraph contract for
+VictoriaMetrics only (starlark processor). The original metric is unchanged for
+`outputs.file` → mdt-translator.
+
+| Contract metric | Source field |
+|---|---|
+| `if_in_octets_total` / `if_out_octets_total` | `statistics/in_octets` / `out_octets` |
+| `if_in_errors_total` / `if_out_errors_total` | `statistics/in_errors` / `out_errors` |
+| `if_in_discards_total` / `if_out_discards_total` | `statistics/in_discards` / `out_discards` |
+| `if_in_unicast_pkts_total` / `if_out_unicast_pkts_total` | `statistics/in_unicast_pkts` / `out_unicast_pkts` |
+| `if_speed_bps` | `speed` |
+| `if_oper_status` | `oper_status` mapped `up→1`, else `0` |
+
+Write-time labels: `device`, `interface` (and later `lane` for optics). Routing tag
+`_netspecgraph` is stripped before VM. VictoriaMetrics runs with
+`-influxSkipSingleField` so `__name__` equals the measurement.
+
+**Done-when:** vmui resolves `if_in_octets_total` (etc.) with a non-zero `rate()`,
+and series labels are only `device` / `interface` (plus optional `db` from Influx).
 
 ## Invariants (do not violate)
 

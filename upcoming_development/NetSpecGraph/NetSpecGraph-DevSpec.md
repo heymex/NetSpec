@@ -229,10 +229,9 @@ VM is an internal store: publish `:8428` to `127.0.0.1` only during bring-up (vm
 
 Each step lists its **done-when** so progress is verifiable, not vibes.
 
-1. VM service + Telegraf VM output. *Done when:* vmui shows interface counters for a known device/interface with a non-zero `rate()` over 5 min. — **scaffolded** (compose + Telegraf output); awaiting live MDT verification on a telemetry host.
-2. Freeze metric schema + label contract via the Telegraf rename processor; interface counters + oper-status first, optics second. *Done when:* the schema's exact metric names resolve in vmui and carry only `device`/`interface`/`lane` labels.
-3. `cmd/netspecgraph` skeleton: reuse config/rules/normalizer/auth, VM query client, one per-interface uPlot page. *Done when:* the page renders real utilization + errors for one interface behind `internal/auth`, and `go build ./... && go test ./...` passes. — **partial:** binary + auth + VM client + placeholder index; uPlot vertical slice not yet.
-4. Query-time enrichment: rules index + role/neighbor filters. *Done when:* a role filter (e.g. AP-uplinks) resolves to the correct series set, matching what `/noc` considers those ports — with a unit test on the join.
+1. VM service + Telegraf VM output. *Done when:* vmui shows interface counters for a known device/interface with a non-zero `rate()` over 5 min. — **done** on lab (live IETF series + non-zero `in_octets` rates).
+2. Freeze metric schema + label contract via the Telegraf rename processor; interface counters + oper-status first, optics second. *Done when:* the schema's exact metric names resolve in vmui and carry only `device`/`interface`/`lane` labels. — **in progress** (starlark clone + contract names; optics TBD).
+3. `cmd/netspecgraph` skeleton: reuse config/rules/normalizer/auth, VM query client, one per-interface uPlot page. *Done when:* the page renders real utilization + errors for one interface behind `internal/auth`, and `go build ./... && go test ./...` passes. — **partial:** binary + auth + VM client + placeholder index; uPlot vertical slice not yet.4. Query-time enrichment: rules index + role/neighbor filters. *Done when:* a role filter (e.g. AP-uplinks) resolves to the correct series set, matching what `/noc` considers those ports — with a unit test on the join.
 5. Seasonality band + baseline overlay. *Done when:* the band renders in site-local buckets and a baseline preset overlays a prior period; band math has unit tests on synthetic series.
 6. Optics/DOM page (needs subscription 211). *Done when:* per-lane rx/tx/bias render with threshold reference lines.
 7. Fleet/aggregate view + NetSpec deep-links. *Done when:* deep-links round-trip with NetSpec's `/device/{name}` and interface-name encoding matches.

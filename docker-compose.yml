@@ -89,6 +89,8 @@ services:
       - "-storageDataPath=/victoria-metrics-data"
       - "-retentionPeriod=${VM_RETENTION_PERIOD:-400d}"
       - "-httpListenAddr=:8428"
+      # Contracted Graph series use measurement name as __name__ (single field "value").
+      - "-influxSkipSingleField"
     volumes:
       - ${NETSPEC_DATA_DIR:-/opt/netspec}/victoria-metrics:/victoria-metrics-data
     ports:
