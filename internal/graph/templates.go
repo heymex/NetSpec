@@ -723,6 +723,9 @@ var opticsTemplate = template.Must(template.New("optics").Parse(`<!DOCTYPE html>
     .empty { color:var(--muted); font-size:0.9rem; padding:1.5rem 0; text-align:center; }
     .legend { display:flex; gap:1rem; flex-wrap:wrap; font-size:0.78rem; color:var(--muted); margin-bottom:0.35rem; }
     .legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:0.35rem; }
+    .legend i.dash {
+      height:0; border-radius:0; border-top:2px dashed; background:transparent; vertical-align:middle;
+    }
     .uplot-tip {
       display:none; position:absolute; z-index:10; pointer-events:none;
       background:rgba(22,27,34,0.96); border:1px solid var(--bd); border-radius:6px;
@@ -751,8 +754,8 @@ var opticsTemplate = template.Must(template.New("optics").Parse(`<!DOCTYPE html>
   <main>
     <section>
       <h2>Optical power</h2>
-      <p class="sub" id="powerSub">rx / tx dBm · dashed = typical warn lines</p>
-      <div class="legend">
+      <p class="sub" id="powerSub">rx / tx dBm · dashed lines = typical warn thresholds (visual only)</p>
+      <div class="legend" id="powerLegend">
         <span><i style="background:#3fb950"></i>Rx</span>
         <span><i style="background:#a371f7"></i>Tx</span>
       </div>
@@ -766,6 +769,9 @@ var opticsTemplate = template.Must(template.New("optics").Parse(`<!DOCTYPE html>
     <section>
       <h2>Temperature</h2>
       <p class="sub" id="tempSub">°C</p>
+      <div class="legend" id="tempLegend">
+        <span><i style="background:#f85149"></i>Temp</span>
+      </div>
       <div id="temp" class="chart"></div>
     </section>
   </main>
@@ -836,8 +842,7 @@ var opticsTemplate = template.Must(template.New("optics").Parse(`<!DOCTYPE html>
             let html = '<div class="t">' + new Date(ts * 1000).toLocaleString() + '</div>';
             for (let i = 1; i < u.series.length; i++) {
               if (!u.series[i] || u.series[i].show === false) continue;
-              const label = u.series[i].label || '';
-              if (label.indexOf('thr ') === 0) continue;
+              const label = u.series[i].label || ('s'+i);
               const v = u.data[i] ? u.data[i][idx] : null;
               html += '<div><span style="color:' + (u.series[i].stroke || '#e6edf3') + '">' + label + '</span>: ' + fmtY(v) + '</div>';
             }
@@ -882,20 +887,29 @@ var opticsTemplate = template.Must(template.New("optics").Parse(`<!DOCTYPE html>
         { label: 'Rx', stroke: '#3fb950', width: 2, spanGaps: false },
         { label: 'Tx', stroke: '#a371f7', width: 2, spanGaps: false },
       ];
-      [['thr rx low', th.rx_low_dbm, 'rgba(248,81,73,0.7)'],
-       ['thr rx high', th.rx_high_dbm, 'rgba(248,81,73,0.45)'],
-       ['thr tx low', th.tx_low_dbm, 'rgba(210,153,34,0.7)'],
-       ['thr tx high', th.tx_high_dbm, 'rgba(210,153,34,0.45)']].forEach(row => {
+      const legendBits = [
+        '<span><i style="background:#3fb950"></i>Rx</span>',
+        '<span><i style="background:#a371f7"></i>Tx</span>',
+      ];
+      const thrRows = [
+        ['Rx high', th.rx_high_dbm, 'rgba(248,81,73,0.55)'],
+        ['Tx high', th.tx_high_dbm, 'rgba(210,153,34,0.55)'],
+        ['Tx low', th.tx_low_dbm, 'rgba(210,153,34,0.85)'],
+        ['Rx low', th.rx_low_dbm, 'rgba(248,81,73,0.85)'],
+      ];
+      thrRows.forEach(row => {
         if (row[1] == null) return;
         cols.push(constSeries(times, row[1]));
         series.push({ label: row[0], stroke: row[2], width: 1, dash: [6, 4], points: { show: false }, spanGaps: true });
+        legendBits.push('<span><i class="dash" style="border-color:' + row[2] + '"></i>' + row[0] + ' (' + Number(row[1]).toFixed(1) + ' dBm)</span>');
       });
+      document.getElementById('powerLegend').innerHTML = legendBits.join('');
       const opts = baseOpts('power', 240, 'dBm', v => fmt(v, 'dBm'));
       opts.series = series;
       try {
         plots.power = new uPlot(opts, mergeTime(cols), document.getElementById('power'));
         document.getElementById('powerSub').textContent =
-          'rx / tx dBm · thresholds: ' + (payload.threshold_profile || 'default') + ' (visual only)';
+          'rx / tx dBm · thresholds: ' + (payload.threshold_profile || 'default') + ' (visual only, not alerts)';
       } catch (e) {
         renderEmpty('power', 'Chart error: ' + (e && e.message ? e.message : e));
       }
@@ -915,16 +929,19 @@ var opticsTemplate = template.Must(template.New("optics").Parse(`<!DOCTYPE html>
       destroy('temp');
       const th = payload.thresholds || {};
       const cols = [s];
-      const series = [{}, { label: 'temp', stroke: '#f85149', width: 2, fill: 'rgba(248,81,73,0.1)', spanGaps: false }];
+      const series = [{}, { label: 'Temp', stroke: '#f85149', width: 2, fill: 'rgba(248,81,73,0.1)', spanGaps: false }];
+      const legendBits = ['<span><i style="background:#f85149"></i>Temp</span>'];
       if (th.temp_high_c != null) {
         cols.push(constSeries(s.map(p => p.t), th.temp_high_c));
-        series.push({ label: 'thr high', stroke: 'rgba(248,81,73,0.6)', width: 1, dash: [6, 4], points: { show: false }, spanGaps: true });
+        series.push({ label: 'Temp high', stroke: 'rgba(248,81,73,0.6)', width: 1, dash: [6, 4], points: { show: false }, spanGaps: true });
+        legendBits.push('<span><i class="dash" style="border-color:rgba(248,81,73,0.6)"></i>Temp high (' + Number(th.temp_high_c).toFixed(0) + ' °C)</span>');
       }
+      document.getElementById('tempLegend').innerHTML = legendBits.join('');
       const opts = baseOpts('temp', 180, '°C', v => fmt(v, '°C'));
       opts.series = series;
       try {
         plots.temp = new uPlot(opts, mergeTime(cols), document.getElementById('temp'));
-        document.getElementById('tempSub').textContent = '°C · high ref ' + (th.temp_high_c != null ? th.temp_high_c + '°C' : '—');
+        document.getElementById('tempSub').textContent = '°C · dashed = high reference (visual only)';
       } catch (e) { renderEmpty('temp', 'Chart error: ' + (e && e.message ? e.message : e)); }
     }
     function render(payload) {
