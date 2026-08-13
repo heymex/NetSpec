@@ -142,7 +142,7 @@ if [[ -z "$SNMP_COMMUNITY" ]]; then
 	fi
 fi
 
-mkdir -p "$DATA_DIR/config" "$DATA_DIR/data" "$DATA_DIR/apprise-config" "$DATA_DIR/mdt-sidecar"
+mkdir -p "$DATA_DIR/config" "$DATA_DIR/data" "$DATA_DIR/apprise-config" "$DATA_DIR/mdt-sidecar" "$DATA_DIR/victoria-metrics"
 mkdir -p "$DATA_DIR/config/devices" "$DATA_DIR/data/devices"
 
 sample_desired="$REPO_ROOT/config/desired-state.yaml"

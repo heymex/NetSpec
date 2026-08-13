@@ -6,10 +6,14 @@
 # clashing with other stacks on the same host (unique container names).
 # For local builds from source, merge docker-compose.build-local.yml.
 
+# Container names and host ports are parameterized so a Graph lab stack can run
+# beside production (see .env.graph-lab.example and docs/NETSPECGRAPH.md).
+# Docker DNS still uses *service* names (netspec-apprise, netspec-victoriametrics, …).
+
 services:
   netspec-netspec:
     image: ghcr.io/heymex/netspec:${NETSPEC_IMAGE_TAG:-latest}
-    container_name: netspec-netspec
+    container_name: ${NETSPEC_NAME_PREFIX:-netspec}-netspec
     restart: unless-stopped
     networks:
       - netspec
@@ -24,7 +28,7 @@ services:
     # Compose only interpolates ${VAR} keys that appear in `environment:` unless you also
     # load the project .env into the container via env_file.
     env_file:
-      - path: .env
+      - path: ${NETSPEC_ENV_FILE:-.env}
         required: false
     environment:
       - SNMP_COMMUNITY=${SNMP_COMMUNITY}
@@ -50,7 +54,7 @@ services:
     # - docker.io/linuxserver/apprise-api:latest (Docker Hub)
     # - ghcr.io/linuxserver/apprise-api:latest (GitHub Container Registry)
     image: ${APPRISE_IMAGE:-docker.io/linuxserver/apprise-api:latest}
-    container_name: netspec-apprise
+    container_name: ${NETSPEC_NAME_PREFIX:-netspec}-apprise
     restart: unless-stopped
     environment:
       - PUID=1000
@@ -60,8 +64,8 @@ services:
       - ${NETSPEC_DATA_DIR:-/opt/netspec}/apprise-config:/config
     ports:
       # Apprise-API uWSGI listens on 8000 inside the container (linuxserver image).
-      # Published on 8086 for direct access; netspec reaches it via Docker DNS (netspec-apprise:8000).
-      - "8086:8000"
+      # Published on APPRISE_HOST_PORT for direct access; netspec reaches it via Docker DNS (netspec-apprise:8000).
+      - "${APPRISE_HOST_PORT:-8086}:8000"
     networks:
       - netspec
     logging:
@@ -73,18 +77,83 @@ services:
     cpus: "${APPRISE_CPU_LIMIT:-1.0}"
     pids_limit: ${APPRISE_PIDS_LIMIT:-256}
 
+  # VictoriaMetrics: NetSpecGraph metrics store (Influx line protocol from Telegraf).
+  # Does not change NetSpec state path (decoded.json → mdt-translator → ingest).
+  netspec-victoriametrics:
+    image: ${VICTORIAMETRICS_IMAGE:-victoriametrics/victoria-metrics:v1.114.0}
+    container_name: ${NETSPEC_NAME_PREFIX:-netspec}-victoriametrics
+    restart: unless-stopped
+    networks:
+      - netspec
+    command:
+      - "-storageDataPath=/victoria-metrics-data"
+      - "-retentionPeriod=${VM_RETENTION_PERIOD:-400d}"
+      - "-httpListenAddr=:8428"
+    volumes:
+      - ${NETSPEC_DATA_DIR:-/opt/netspec}/victoria-metrics:/victoria-metrics-data
+    ports:
+      # Localhost-only for bring-up (vmui). Not published on the LAN.
+      - "127.0.0.1:${VM_PORT:-8428}:8428"
+    logging:
+      driver: json-file
+      options:
+        max-size: ${VM_LOG_MAX_SIZE:-10m}
+        max-file: "${VM_LOG_MAX_FILE:-5}"
+    mem_limit: ${VM_MEM_LIMIT:-1g}
+    cpus: "${VM_CPU_LIMIT:-1.0}"
+    pids_limit: ${VM_PIDS_LIMIT:-256}
+
+  # NetSpecGraph UI/API (opt-in). Metrics still land in VM without this profile.
+  #   docker compose --profile graph up -d
+  netspec-graph:
+    profiles: ["graph"]
+    image: ghcr.io/heymex/netspec:${NETSPEC_IMAGE_TAG:-latest}
+    container_name: ${NETSPEC_NAME_PREFIX:-netspec}-graph
+    restart: unless-stopped
+    networks:
+      - netspec
+    command: ["./netspecgraph"]
+    ports:
+      - "${GRAPH_PORT:-8090}:${GRAPH_PORT:-8090}"
+    volumes:
+      - ${NETSPEC_DATA_DIR:-/opt/netspec}/config:/config:ro
+    env_file:
+      - path: ${NETSPEC_ENV_FILE:-.env}
+        required: false
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - GRAPH_LISTEN_ADDR=:${GRAPH_PORT:-8090}
+      - GRAPH_VM_URL=${GRAPH_VM_URL:-http://netspec-victoriametrics:8428}
+      - GRAPH_CONFIG_DIR=/config
+      - GRAPH_TIMEZONE=${GRAPH_TIMEZONE:-America/Chicago}
+      - NETSPEC_ADMIN_PASSWORD_HASH=${NETSPEC_ADMIN_PASSWORD_HASH:-}
+      - NETSPEC_SESSION_SECRET=${NETSPEC_SESSION_SECRET:-}
+      - NETSPEC_API_TOKEN=${NETSPEC_API_TOKEN:-}
+    depends_on:
+      - netspec-victoriametrics
+    logging:
+      driver: json-file
+      options:
+        max-size: ${GRAPH_LOG_MAX_SIZE:-10m}
+        max-file: "${GRAPH_LOG_MAX_FILE:-5}"
+    mem_limit: ${GRAPH_MEM_LIMIT:-256m}
+    cpus: "${GRAPH_CPU_LIMIT:-0.5}"
+    pids_limit: ${GRAPH_PIDS_LIMIT:-128}
+
   netspec-telegraf-mdt:
     image: telegraf:1.31
-    container_name: netspec-telegraf-mdt
+    container_name: ${NETSPEC_NAME_PREFIX:-netspec}-telegraf-mdt
     restart: unless-stopped
     networks:
       - netspec
     ports:
       # Switch MDT dial-out target. Switches point to the host IP; Docker publishes to the container.
-      - "57500:57500"
+      - "${MDT_PORT:-57500}:57500"
     volumes:
       - ./tools/sidecar/telegraf-mdt.conf:/etc/telegraf/telegraf.conf:ro
       - ${NETSPEC_DATA_DIR:-/opt/netspec}/mdt-sidecar:/sidecar
+    depends_on:
+      - netspec-victoriametrics
     logging:
       driver: json-file
       options:
@@ -96,7 +165,7 @@ services:
 
   netspec-mdt-translator:
     image: ghcr.io/heymex/netspec-mdt-translator:${NETSPEC_IMAGE_TAG:-latest}
-    container_name: netspec-mdt-translator
+    container_name: ${NETSPEC_NAME_PREFIX:-netspec}-mdt-translator
     restart: unless-stopped
     networks:
       - netspec

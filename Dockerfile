@@ -17,14 +17,19 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 COPY cmd ./cmd
 COPY internal ./internal
 
-# Build with version information
+# Build NetSpec + NetSpecGraph with shared version metadata
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux go build -trimpath \
     -ldflags "-X github.com/netspec/netspec/internal/version.Version=${VERSION} \
               -X github.com/netspec/netspec/internal/version.Commit=${COMMIT} \
               -X github.com/netspec/netspec/internal/version.BuildDate=${BUILD_DATE}" \
-    -o netspec ./cmd/netspec
+    -o netspec ./cmd/netspec \
+ && CGO_ENABLED=0 GOOS=linux go build -trimpath \
+    -ldflags "-X github.com/netspec/netspec/internal/version.Version=${VERSION} \
+              -X github.com/netspec/netspec/internal/version.Commit=${COMMIT} \
+              -X github.com/netspec/netspec/internal/version.BuildDate=${BUILD_DATE}" \
+    -o netspecgraph ./cmd/netspecgraph
 
 # Final stage
 FROM alpine:latest
@@ -34,11 +39,11 @@ RUN apk --no-cache add ca-certificates tzdata
 
 WORKDIR /app
 
-COPY --from=builder /build/netspec .
+COPY --from=builder /build/netspec /build/netspecgraph .
 
 # Create config and data directories
 RUN mkdir -p /config /data
 
-EXPOSE 8088
+EXPOSE 8088 8090
 
 ENTRYPOINT ["./netspec"]

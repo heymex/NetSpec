@@ -25,3 +25,14 @@ services:
     build:
       context: ./tools/sidecar
       dockerfile: Dockerfile
+
+  # Same local image as netspec-netspec; entrypoint overridden to netspecgraph.
+  netspec-graph:
+    image: netspec:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${NETSPEC_LOCAL_VERSION:-dev}
+        COMMIT: ${NETSPEC_LOCAL_COMMIT:-unknown}
+        BUILD_DATE: ${NETSPEC_LOCAL_BUILD_DATE:-unknown}

@@ -6,6 +6,7 @@ All notable changes to this project are documented here. Release tags follow [Se
 
 ### Features
 
+- **NetSpecGraph (scaffolding):** VictoriaMetrics compose service + Telegraf Influx output for interface metrics; opt-in `netspec-graph` profile and `cmd/netspecgraph` skeleton. See `docs/NETSPECGRAPH.md`.
 - Added **OpenClaw webhook** alert channel (`type: openclaw`) that POSTs structured JSON (`event`, `alert`, optional `links`) to an OpenClaw Gateway hook URL. See `docs/OPENCLAW_ALERTING.md`.
 
 ### Bug Fixes

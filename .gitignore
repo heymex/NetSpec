@@ -34,6 +34,7 @@ __pycache__/
 # Environment files
 .env
 .env.local
+.env.graph-lab
 
 # Data directory
 data/
