@@ -28,7 +28,13 @@ git checkout feat/netspecgraph
 ### 2. Bootstrap config + stack
 
 ```bash
-sudo ./scripts/setup-netspec.sh --data-dir /opt/netspec
+# Prefer creating /opt/netspec with sudo, then run setup as your user when possible.
+# If you must sudo the script, it now chowns repo .env back to $SUDO_USER.
+sudo mkdir -p /opt/netspec && sudo chown "$USER":"$USER" /opt/netspec
+./scripts/setup-netspec.sh --data-dir /opt/netspec
+# If .env is still root-owned from an earlier sudo run:
+#   sudo chown "$USER":"$USER" .env
+
 # Optional: copy prod identity (devices/rules) into the lab — copy, don't symlink:
 #   sudo rsync -a /path/to/prod/config/ /opt/netspec/config/
 # Then silence alert channels in /opt/netspec/config/alerts.yaml so the lab never pages.

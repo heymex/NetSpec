@@ -228,6 +228,15 @@ if ! grep -q '^NETSPEC_INGEST_PORT=' "$env_dest" 2>/dev/null; then
 	printf '\nNETSPEC_INGEST_PORT=57500\n' >>"$env_dest"
 fi
 
+# If this script was run with sudo, .env (and any other files we wrote under the
+# repo) end up root-owned and `docker compose` as the normal user fails with
+# "open .env: permission denied". Hand ownership back to the invoking user.
+if [[ -n "${SUDO_USER:-}" && "$(id -u)" -eq 0 ]]; then
+	if chown "$SUDO_USER":"$SUDO_USER" "$env_dest" 2>/dev/null; then
+		log "Restored $env_dest ownership to $SUDO_USER (was created under sudo)"
+	fi
+fi
+
 # Telegraf container writes /sidecar as uid/gid 999.
 if chown -R 999:999 "$DATA_DIR/mdt-sidecar" && chmod 775 "$DATA_DIR/mdt-sidecar"; then
 	:
