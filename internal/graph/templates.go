@@ -92,6 +92,15 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
     .empty { color:var(--muted); font-size:0.9rem; padding:1.5rem 0; text-align:center; }
     .legend { display:flex; gap:1rem; flex-wrap:wrap; font-size:0.78rem; color:var(--muted); margin-bottom:0.35rem; }
     .legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:0.35rem; }
+    .stats {
+      width:100%; border-collapse:collapse; margin:0.35rem 0 0.75rem;
+      font:500 0.72rem/1.35 'JetBrains Mono',monospace; color:var(--muted);
+    }
+    .stats th, .stats td { padding:0.2rem 0.55rem; text-align:right; border-bottom:1px solid var(--bd); }
+    .stats th:first-child, .stats td:first-child { text-align:left; }
+    .stats th { color:var(--muted); font-weight:500; }
+    .stats td.cur { color:var(--fg); }
+    .stats .swatch { display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:0.4rem; vertical-align:middle; }
     .uplot-tip {
       display:none; position:absolute; z-index:10; pointer-events:none;
       background:rgba(22,27,34,0.96); border:1px solid var(--bd); border-radius:6px;
@@ -124,11 +133,22 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
   <main>
     <section>
       <h2>Traffic</h2>
-      <div class="legend">
-        <span><i style="background:var(--accent)"></i>in</span>
-        <span><i style="background:var(--green)"></i>out</span>
-      </div>
       <p class="sub" id="speedLine">speed: —</p>
+      <table class="stats" id="trafficStats">
+        <thead>
+          <tr><th></th><th>Min</th><th>Avg</th><th>Max</th><th>Current</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="swatch" style="background:#3fb950"></span>In</td>
+            <td id="stat-in-min">—</td><td id="stat-in-avg">—</td><td id="stat-in-max">—</td><td id="stat-in-cur" class="cur">—</td>
+          </tr>
+          <tr>
+            <td><span class="swatch" style="background:#a371f7"></span>Out</td>
+            <td id="stat-out-min">—</td><td id="stat-out-avg">—</td><td id="stat-out-max">—</td><td id="stat-out-cur" class="cur">—</td>
+          </tr>
+        </tbody>
+      </table>
       <div id="traffic" class="chart"></div>
     </section>
     <section>
@@ -166,7 +186,7 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
     }
     function fmtPct(v) {
       if (v == null || !isFinite(v)) return '—';
-      return v.toFixed(2) + ' %';
+      return Math.abs(v).toFixed(2) + ' %';
     }
     function fmtRate(v) {
       if (v == null || !isFinite(v)) return '—';
@@ -180,16 +200,38 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
     }
     function fmtSpeed(v) {
       if (v == null || !(v > 0)) return 'speed: unavailable (util% disabled)';
-      return 'speed: ' + fmtBPS(v);
+      return 'Port speed: ' + fmtBPS(v);
     }
     function fmtAxisBPS(v) {
       if (!Number.isFinite(v)) return '';
+      const sign = v < 0 ? '-' : '';
       const a = Math.abs(v);
-      if (a >= 1e12) return (v/1e12).toFixed(1) + 'T';
-      if (a >= 1e9) return (v/1e9).toFixed(1) + 'G';
-      if (a >= 1e6) return (v/1e6).toFixed(1) + 'M';
-      if (a >= 1e3) return (v/1e3).toFixed(1) + 'k';
-      return String(Math.round(v));
+      if (a >= 1e12) return sign + (a/1e12).toFixed(1) + 'T';
+      if (a >= 1e9) return sign + (a/1e9).toFixed(1) + 'G';
+      if (a >= 1e6) return sign + (a/1e6).toFixed(1) + 'M';
+      if (a >= 1e3) return sign + (a/1e3).toFixed(1) + 'k';
+      return sign + String(Math.round(a));
+    }
+    function seriesStats(points) {
+      let min = null, max = null, sum = 0, n = 0, cur = null;
+      (points || []).forEach(p => {
+        if (p.v == null || !isFinite(p.v)) return;
+        const v = Math.abs(p.v);
+        if (min == null || v < min) min = v;
+        if (max == null || v > max) max = v;
+        sum += v; n++; cur = v;
+      });
+      return {
+        min: min, max: max,
+        avg: n ? sum / n : null,
+        cur: cur,
+      };
+    }
+    function setStatRow(prefix, stats, fmt) {
+      document.getElementById('stat-' + prefix + '-min').textContent = fmt(stats.min);
+      document.getElementById('stat-' + prefix + '-avg').textContent = fmt(stats.avg);
+      document.getElementById('stat-' + prefix + '-max').textContent = fmt(stats.max);
+      document.getElementById('stat-' + prefix + '-cur').textContent = fmt(stats.cur);
     }
     function toUplot(points) {
       const t = [], v = [];
@@ -210,7 +252,10 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
       });
       return cols;
     }
-    function tooltipPlugin(fmtY) {
+    function negateSeries(points) {
+      return (points || []).map(p => ({ t: p.t, v: p.v == null ? null : -Math.abs(p.v) }));
+    }
+    function tooltipPlugin(fmtY, absOut) {
       let tip;
       return {
         hooks: {
@@ -229,7 +274,8 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
             let html = '<div class="t">' + new Date(ts * 1000).toLocaleString() + '</div>';
             for (let i = 1; i < u.series.length; i++) {
               if (u.series[i].show === false) continue;
-              const v = u.data[i][idx];
+              let v = u.data[i][idx];
+              if (absOut && i === 2 && v != null) v = Math.abs(v);
               const color = u.series[i].stroke || '#e6edf3';
               html += '<div><span style="color:' + color + '">' + (u.series[i].label || ('s'+i)) + '</span>: ' + fmtY(v) + '</div>';
             }
@@ -247,7 +293,7 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
         }
       };
     }
-    function baseOpts(height, yAxis, fmtY, scales) {
+    function baseOpts(height, yAxis, fmtY, scales, tipOpts) {
       return {
         width: Math.max(320, document.getElementById('traffic').clientWidth),
         height,
@@ -276,7 +322,7 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
         ],
         series: [{}],
         legend: { show: false },
-        plugins: [tooltipPlugin(fmtY)],
+        plugins: [tooltipPlugin(fmtY, !!(tipOpts && tipOpts.absOut))],
       };
     }
     function destroy(name) {
@@ -298,26 +344,42 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
       const outKey = mode === 'pct' ? 'out_util_pct' : 'out_bps';
       const inS = payload.series[inKey] || [];
       const outS = payload.series[outKey] || [];
+      const fmtY = mode === 'pct' ? fmtPct : fmtBPS;
+      setStatRow('in', seriesStats(inS), fmtY);
+      setStatRow('out', seriesStats(outS), fmtY);
       if (!hasAny(inS) && !hasAny(outS)) {
         renderEmpty('traffic', payload.has_data ? 'No traffic samples in this range' : 'No data for this interface');
         return;
       }
       destroy('traffic');
-      const data = mergeTime([inS, outS]);
-      const fmtY = mode === 'pct' ? fmtPct : fmtBPS;
+      // LibreNMS-style: In above zero, Out below zero.
+      const data = mergeTime([inS, negateSeries(outS)]);
       const opts = baseOpts(
-        260,
-        mode === 'pct' ? '% utilization' : 'bits/s',
+        280,
+        mode === 'pct' ? '% utilization (out↓)' : 'bits/s (out↓)',
         fmtY,
-        mode === 'pct' ? { y: { range: [0, null] } } : undefined
+        { y: { auto: true } },
+        { absOut: true }
       );
       opts.series = [
         {},
-        { label: 'in', stroke: '#58a6ff', width: 2, spanGaps: false },
-        { label: 'out', stroke: '#3fb950', width: 2, spanGaps: false },
+        {
+          label: 'In',
+          stroke: '#3fb950',
+          fill: 'rgba(63,185,80,0.35)',
+          width: 1.5,
+          spanGaps: false,
+        },
+        {
+          label: 'Out',
+          stroke: '#a371f7',
+          fill: 'rgba(163,113,247,0.35)',
+          width: 1.5,
+          spanGaps: false,
+        },
       ];
       if (mode === 'pct') {
-        opts.axes[1].values = (u, vals) => vals.map(v => Number.isFinite(v) ? v.toFixed(1) + '%' : '');
+        opts.axes[1].values = (u, vals) => vals.map(v => Number.isFinite(v) ? (Math.abs(v).toFixed(1) + '%') : '');
       } else {
         opts.axes[1].values = (u, vals) => vals.map(v => Number.isFinite(v) ? fmtAxisBPS(v) : '');
       }
