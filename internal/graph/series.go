@@ -75,7 +75,10 @@ func FetchInterfaceSeriesOpts(ctx context.Context, client *vm.Client, device, if
 		end = time.Now().UTC()
 	}
 	start := end.Add(-window)
-	sel := vm.Selector(device, iface)
+	sel, telemetryIface, err := selectorForDeviceIface(ctx, client, device, iface)
+	if err != nil {
+		return nil, fmt.Errorf("resolve interface label: %w", err)
+	}
 
 	type namedQuery struct {
 		key string
@@ -119,7 +122,7 @@ func FetchInterfaceSeriesOpts(ctx context.Context, client *vm.Client, device, if
 
 	out := &InterfaceSeries{
 		Device:    device,
-		Interface: iface,
+		Interface: telemetryIface,
 		Start:     start.Unix(),
 		End:       end.Unix(),
 		StepSec:   int(step.Seconds()),

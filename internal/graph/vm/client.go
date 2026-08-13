@@ -137,6 +137,54 @@ func (c *Client) QueryRange(ctx context.Context, query string, start, end time.T
 	return out, nil
 }
 
+// LabelValues returns distinct values for label (e.g. "interface"), optionally
+// filtered by Prometheus-style match[] selectors.
+func (c *Client) LabelValues(ctx context.Context, label string, matches ...string) ([]string, error) {
+	if label == "" {
+		return nil, fmt.Errorf("label is required")
+	}
+	u, err := url.Parse(c.base + "/api/v1/label/" + url.PathEscape(label) + "/values")
+	if err != nil {
+		return nil, err
+	}
+	q := u.Query()
+	for _, m := range matches {
+		if m != "" {
+			q.Add("match[]", m)
+		}
+	}
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("label values status %d: %s", resp.StatusCode, truncate(string(body), 200))
+	}
+	var parsed struct {
+		Status string   `json:"status"`
+		Data   []string `json:"data"`
+		Error  string   `json:"error"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return nil, fmt.Errorf("decode label values: %w", err)
+	}
+	if parsed.Status != "success" {
+		return nil, fmt.Errorf("label values: %s", parsed.Error)
+	}
+	return parsed.Data, nil
+}
+
 // EscapeLabel escapes a value for use inside a MetricsQL double-quoted label matcher.
 func EscapeLabel(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)

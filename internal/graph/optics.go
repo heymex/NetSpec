@@ -61,7 +61,10 @@ func FetchOpticsSeries(ctx context.Context, client *vm.Client, device, iface str
 		end = time.Now().UTC()
 	}
 	start := end.Add(-window)
-	sel := vm.Selector(device, iface)
+	sel, telemetryIface, err := selectorForDeviceIface(ctx, client, device, iface)
+	if err != nil {
+		return nil, fmt.Errorf("resolve interface label: %w", err)
+	}
 
 	type namedQuery struct {
 		key string
@@ -103,7 +106,7 @@ func FetchOpticsSeries(ctx context.Context, client *vm.Client, device, iface str
 	th, profile := DefaultOpticsThresholds()
 	out := &OpticsSeries{
 		Device:     device,
-		Interface:  iface,
+		Interface:  telemetryIface,
 		Start:      start.Unix(),
 		End:        end.Unix(),
 		StepSec:    int(step.Seconds()),
