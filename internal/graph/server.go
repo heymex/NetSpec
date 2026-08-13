@@ -3,9 +3,9 @@ package graph
 
 import (
 	"encoding/json"
-	"html/template"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/netspec/netspec/internal/auth"
@@ -51,8 +51,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/login", s.handleLogin)
 	mux.HandleFunc("/logout", s.handleLogout)
-	mux.HandleFunc("/", s.handleIndex)
 	mux.HandleFunc("/api/vm/health", s.handleVMHealth)
+	mux.HandleFunc("/api/device/", s.handleInterfaceSeriesAPI)
+	mux.HandleFunc("/device/", s.handleInterfacePage)
+	mux.HandleFunc("/", s.handleIndex)
 	return s.authGate(mux)
 }
 
@@ -128,9 +130,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login?error=1", http.StatusSeeOther)
 		return
 	}
-	loginErr := r.URL.Query().Get("error") == "1"
 	data := map[string]any{
-		"Error": loginErr,
+		"Error": r.URL.Query().Get("error") == "1",
 		"Next":  r.URL.Query().Get("next"),
 	}
 	if err := webui.LoginTemplate.Execute(w, data); err != nil {
@@ -153,46 +154,92 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if r.Method == http.MethodPost {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "bad form", http.StatusBadRequest)
+			return
+		}
+		device := r.FormValue("device")
+		iface := r.FormValue("interface")
+		if device == "" || iface == "" {
+			http.Error(w, "device and interface required", http.StatusBadRequest)
+			return
+		}
+		http.Redirect(w, r, interfacePagePath(device, iface), http.StatusSeeOther)
+		return
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	deviceCount := 0
 	if s.cfg != nil {
 		deviceCount = len(s.cfg.DesiredState.Devices)
 	}
 	data := map[string]any{
-		"Version":    version.GetVersion(),
-		"Timezone":   s.timezone,
+		"Version":     version.GetVersion(),
+		"Timezone":    s.timezone,
 		"DeviceCount": deviceCount,
-		"VMURL":      s.vm.BaseURL(),
+		"ExamplePath": interfacePagePath("csw-mcd-01", "Port-channel20"),
 	}
 	if err := indexTemplate.Execute(w, data); err != nil {
 		s.log.Error().Err(err).Msg("render index")
 	}
 }
 
-var indexTemplate = template.Must(template.New("index").Parse(`<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>NetSpecGraph</title>
-  <style>
-    :root { color-scheme: dark; --bg:#0d1117; --fg:#e6edf3; --muted:#8b949e; --accent:#58a6ff; --bd:#30363d; }
-    body { margin:0; font-family: ui-sans-serif, system-ui, sans-serif; background:var(--bg); color:var(--fg); }
-    main { max-width: 42rem; margin: 3rem auto; padding: 0 1.25rem; }
-    h1 { font-size: 1.75rem; margin: 0 0 0.5rem; letter-spacing: -0.02em; }
-    p { color: var(--muted); line-height: 1.5; }
-    code { background:#161b22; padding:0.1em 0.35em; border-radius:4px; border:1px solid var(--bd); }
-    .meta { margin-top: 2rem; font-size: 0.85rem; color: var(--muted); }
-    a { color: var(--accent); }
-  </style>
-</head>
-<body>
-  <main>
-    <h1>NetSpecGraph</h1>
-    <p>Metrics companion to NetSpec. Vertical-slice UI (per-interface uPlot) lands after VictoriaMetrics shows live counters and the Telegraf rename contract is frozen.</p>
-    <p>Loaded <strong>{{.DeviceCount}}</strong> devices from NetSpec config · timezone <code>{{.Timezone}}</code></p>
-    <p class="meta">version {{.Version}} · VM <code>{{.VMURL}}</code> · <a href="/health">/health</a> · <a href="/api/vm/health">/api/vm/health</a></p>
-  </main>
-</body>
-</html>
-`))
+func (s *Server) handleInterfacePage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	escaped := r.URL.EscapedPath()
+	device, iface, ok := parseDeviceInterfacePath(escaped)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	data := map[string]any{
+		"Device":     device,
+		"Interface":  iface,
+		"SeriesURL":  interfaceSeriesAPIPath(device, iface),
+		"Timezone":   s.timezone,
+		"Version":    version.GetVersion(),
+		"DefaultRange": "6h",
+	}
+	if err := ifaceTemplate.Execute(w, data); err != nil {
+		s.log.Error().Err(err).Msg("render interface page")
+	}
+}
+
+func (s *Server) handleInterfaceSeriesAPI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	device, iface, ok := parseDeviceInterfacePath(r.URL.EscapedPath())
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	window := 6 * time.Hour
+	if v := r.URL.Query().Get("range"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 && d <= 48*time.Hour {
+			window = d
+		}
+	}
+	step := 30 * time.Second
+	if v := r.URL.Query().Get("step"); v != "" {
+		if sec, err := strconv.Atoi(v); err == nil && sec >= 10 && sec <= 300 {
+			step = time.Duration(sec) * time.Second
+		}
+	}
+
+	ctx := r.Context()
+	payload, err := FetchInterfaceSeries(ctx, s.vm, device, iface, time.Now().UTC(), window, step)
+	w.Header().Set("Content-Type", "application/json")
+	if err != nil {
+		s.log.Error().Err(err).Str("device", device).Str("interface", iface).Msg("series query failed")
+		w.WriteHeader(http.StatusBadGateway)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": err.Error()})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(payload)
+}
