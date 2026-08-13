@@ -88,10 +88,19 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
     section { background:var(--bg2); border:1px solid var(--bd); border-radius:10px; padding:0.85rem 1rem 0.5rem; }
     section h2 { margin:0 0 0.35rem; font-size:0.95rem; font-weight:600; }
     section .sub { margin:0 0 0.65rem; font-size:0.78rem; color:var(--muted); font-family:'JetBrains Mono',monospace; }
-    .chart { width:100%; min-height:220px; }
+    .chart { width:100%; min-height:220px; position:relative; }
     .empty { color:var(--muted); font-size:0.9rem; padding:1.5rem 0; text-align:center; }
     .legend { display:flex; gap:1rem; flex-wrap:wrap; font-size:0.78rem; color:var(--muted); margin-bottom:0.35rem; }
     .legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:0.35rem; }
+    .uplot-tip {
+      display:none; position:absolute; z-index:10; pointer-events:none;
+      background:rgba(22,27,34,0.96); border:1px solid var(--bd); border-radius:6px;
+      padding:0.45rem 0.6rem; font:500 0.75rem/1.45 'JetBrains Mono',monospace;
+      color:var(--fg); white-space:nowrap; box-shadow:0 4px 16px rgba(0,0,0,0.35);
+      transform: translate(12px, 12px);
+    }
+    .uplot-tip .t { color:var(--muted); margin-bottom:0.25rem; }
+    .uplot .u-legend { font-family:'JetBrains Mono',monospace; font-size:0.72rem; }
   </style>
 </head>
 <body>
@@ -155,9 +164,32 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
       while (x >= 1000 && i < u.length - 1) { x /= 1000; i++; }
       return (v < 0 ? '-' : '') + x.toFixed(x >= 100 ? 0 : x >= 10 ? 1 : 2) + ' ' + u[i];
     }
+    function fmtPct(v) {
+      if (v == null || !isFinite(v)) return '—';
+      return v.toFixed(2) + ' %';
+    }
+    function fmtRate(v) {
+      if (v == null || !isFinite(v)) return '—';
+      if (Math.abs(v) >= 100) return v.toFixed(1) + ' /s';
+      if (Math.abs(v) >= 10) return v.toFixed(2) + ' /s';
+      return v.toFixed(3) + ' /s';
+    }
+    function fmtOper(v) {
+      if (v == null || !isFinite(v)) return '—';
+      return v >= 0.5 ? 'up (1)' : 'down (0)';
+    }
     function fmtSpeed(v) {
       if (v == null || !(v > 0)) return 'speed: unavailable (util% disabled)';
       return 'speed: ' + fmtBPS(v);
+    }
+    function fmtAxisBPS(v) {
+      if (!Number.isFinite(v)) return '';
+      const a = Math.abs(v);
+      if (a >= 1e12) return (v/1e12).toFixed(1) + 'T';
+      if (a >= 1e9) return (v/1e9).toFixed(1) + 'G';
+      if (a >= 1e6) return (v/1e6).toFixed(1) + 'M';
+      if (a >= 1e3) return (v/1e3).toFixed(1) + 'k';
+      return String(Math.round(v));
     }
     function toUplot(points) {
       const t = [], v = [];
@@ -178,18 +210,73 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
       });
       return cols;
     }
-    function baseOpts(height, scales) {
+    function tooltipPlugin(fmtY) {
+      let tip;
+      return {
+        hooks: {
+          init: [u => {
+            tip = document.createElement('div');
+            tip.className = 'uplot-tip';
+            u.over.appendChild(tip);
+          }],
+          setCursor: [u => {
+            const { left, top, idx } = u.cursor;
+            if (idx == null || left < 0 || top < 0) {
+              tip.style.display = 'none';
+              return;
+            }
+            const ts = u.data[0][idx];
+            let html = '<div class="t">' + new Date(ts * 1000).toLocaleString() + '</div>';
+            for (let i = 1; i < u.series.length; i++) {
+              if (u.series[i].show === false) continue;
+              const v = u.data[i][idx];
+              const color = u.series[i].stroke || '#e6edf3';
+              html += '<div><span style="color:' + color + '">' + (u.series[i].label || ('s'+i)) + '</span>: ' + fmtY(v) + '</div>';
+            }
+            tip.innerHTML = html;
+            tip.style.display = 'block';
+            const box = u.over.getBoundingClientRect();
+            const tw = tip.offsetWidth || 160;
+            const th = tip.offsetHeight || 60;
+            let x = left + 14;
+            let y = top + 14;
+            if (x + tw > box.width - 4) x = left - tw - 10;
+            if (y + th > box.height - 4) y = top - th - 10;
+            tip.style.transform = 'translate(' + Math.max(0, x) + 'px,' + Math.max(0, y) + 'px)';
+          }]
+        }
+      };
+    }
+    function baseOpts(height, yAxis, fmtY, scales) {
       return {
         width: Math.max(320, document.getElementById('traffic').clientWidth),
         height,
         scales: scales || { y: { auto: true } },
+        cursor: {
+          show: true,
+          points: { show: true, size: 8, width: 2, stroke: '#e6edf3' },
+        },
         axes: [
-          { stroke: '#8b949e', grid: { stroke: '#21262d' }, ticks: { stroke: '#30363d' } },
-          { stroke: '#8b949e', grid: { stroke: '#21262d' }, ticks: { stroke: '#30363d' },
-            values: (u, vals) => vals.map(v => Number.isFinite(v) ? (Math.abs(v) >= 1e9 ? (v/1e9).toFixed(1)+'G' : Math.abs(v) >= 1e6 ? (v/1e6).toFixed(1)+'M' : Math.abs(v) >= 1e3 ? (v/1e3).toFixed(1)+'k' : v.toFixed(2)) : '') }
+          {
+            stroke: '#8b949e',
+            grid: { stroke: '#21262d' },
+            ticks: { stroke: '#30363d' },
+          },
+          {
+            label: yAxis,
+            labelSize: 13,
+            labelFont: "600 12px 'Outfit', sans-serif",
+            size: 72,
+            gap: 6,
+            stroke: '#8b949e',
+            grid: { stroke: '#21262d' },
+            ticks: { stroke: '#30363d' },
+            values: (u, vals) => vals.map(v => Number.isFinite(v) ? fmtAxisBPS(v) : ''),
+          }
         ],
         series: [{}],
         legend: { show: false },
+        plugins: [tooltipPlugin(fmtY)],
       };
     }
     function destroy(name) {
@@ -217,16 +304,22 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
       }
       destroy('traffic');
       const data = mergeTime([inS, outS]);
-      const opts = baseOpts(240, mode === 'pct' ? { y: { range: [0, null] } } : undefined);
+      const fmtY = mode === 'pct' ? fmtPct : fmtBPS;
+      const opts = baseOpts(
+        260,
+        mode === 'pct' ? '% utilization' : 'bits/s',
+        fmtY,
+        mode === 'pct' ? { y: { range: [0, null] } } : undefined
+      );
       opts.series = [
         {},
         { label: 'in', stroke: '#58a6ff', width: 2, spanGaps: false },
         { label: 'out', stroke: '#3fb950', width: 2, spanGaps: false },
       ];
       if (mode === 'pct') {
-        opts.axes[1].values = (u, vals) => vals.map(v => Number.isFinite(v) ? v.toFixed(1)+'%' : '');
+        opts.axes[1].values = (u, vals) => vals.map(v => Number.isFinite(v) ? v.toFixed(1) + '%' : '');
       } else {
-        opts.axes[1].values = (u, vals) => vals.map(v => Number.isFinite(v) ? fmtBPS(v) : '');
+        opts.axes[1].values = (u, vals) => vals.map(v => Number.isFinite(v) ? fmtAxisBPS(v) : '');
       }
       plots.traffic = new uPlot(opts, data, document.getElementById('traffic'));
     }
@@ -239,14 +332,15 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
       }
       destroy('errors');
       const data = mergeTime(series);
-      const opts = baseOpts(200);
+      const opts = baseOpts(220, 'packets/s', fmtRate);
       opts.series = [
         {},
-        { label: 'in err', stroke: '#f85149', width: 2, spanGaps: false },
-        { label: 'out err', stroke: '#d29922', width: 2, spanGaps: false },
-        { label: 'in disc', stroke: '#a371f7', width: 2, spanGaps: false },
-        { label: 'out disc', stroke: '#79c0ff', width: 2, spanGaps: false },
+        { label: 'in errors', stroke: '#f85149', width: 2, spanGaps: false },
+        { label: 'out errors', stroke: '#d29922', width: 2, spanGaps: false },
+        { label: 'in discards', stroke: '#a371f7', width: 2, spanGaps: false },
+        { label: 'out discards', stroke: '#79c0ff', width: 2, spanGaps: false },
       ];
+      opts.axes[1].values = (u, vals) => vals.map(v => Number.isFinite(v) ? (Math.abs(v) >= 10 ? v.toFixed(1) : v.toFixed(2)) : '');
       plots.errors = new uPlot(opts, data, document.getElementById('errors'));
     }
     function drawOper(payload) {
@@ -257,7 +351,7 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
       }
       destroy('oper');
       const data = toUplot(s);
-      const opts = baseOpts(120, { y: { range: [-0.05, 1.05] } });
+      const opts = baseOpts(140, 'oper', fmtOper, { y: { range: [-0.05, 1.05] } });
       opts.series = [{}, { label: 'oper', stroke: '#3fb950', width: 2, fill: 'rgba(63,185,80,0.15)', spanGaps: false, points: { show: false } }];
       opts.axes[1].values = (u, vals) => vals.map(v => (v === 0 || v === 1) ? String(v) : '');
       plots.oper = new uPlot(opts, data, document.getElementById('oper'));
