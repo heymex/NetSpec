@@ -22,12 +22,26 @@ export NETSPEC_LOCAL_BUILD_DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 export NETSPEC_LOCAL_VERSION    ?= dev
 
 .PHONY: setup docker-build-netspec docker-build-mdt-translator docker-rebuild docker-up docker-down docker-logs-netspec \
+	ensure-mdt-sidecar \
 	graph-dev-up graph-dev-down \
 	setup-graph-lab graph-lab-build graph-lab-up graph-lab-down graph-lab-logs
 
 # First-time host bootstrap: data dirs, sample config, .env (see scripts/setup-netspec.sh --help)
 setup:
 	./scripts/setup-netspec.sh
+
+# Telegraf runs as uid 999 and hard-fails if decoded.json is root-owned (common after sudo recreate).
+ensure-mdt-sidecar:
+	@dir="$(NETSPEC_DATA_DIR)/mdt-sidecar"; \
+	if [ -z "$(NETSPEC_DATA_DIR)" ]; then dir="/opt/netspec/mdt-sidecar"; fi; \
+	mkdir -p "$$dir" 2>/dev/null || sudo mkdir -p "$$dir"; \
+	if chown -R 999:999 "$$dir" 2>/dev/null && chmod 775 "$$dir" 2>/dev/null; then \
+		true; \
+	elif command -v sudo >/dev/null 2>&1; then \
+		sudo chown -R 999:999 "$$dir" && sudo chmod 775 "$$dir"; \
+	else \
+		echo "WARNING: could not chown $$dir to uid 999 — Telegraf may permission-deny decoded.json" >&2; \
+	fi
 
 docker-build-netspec:
 	$(COMPOSE_LOCAL) build netspec-netspec
@@ -37,7 +51,7 @@ docker-build-mdt-translator:
 
 docker-rebuild: docker-build-netspec docker-build-mdt-translator
 
-docker-up:
+docker-up: ensure-mdt-sidecar
 	$(COMPOSE_LOCAL) up -d
 
 docker-down:
@@ -48,7 +62,7 @@ docker-logs-netspec:
 
 # --- Dedicated Graph lab VM (default ports; see docs/NETSPECGRAPH.md) ---
 
-graph-dev-up: docker-rebuild
+graph-dev-up: docker-rebuild ensure-mdt-sidecar
 	$(COMPOSE_GRAPH) up -d
 
 graph-dev-down:
@@ -63,7 +77,7 @@ graph-lab-build:
 	@test -f .env.graph-lab || (echo "missing .env.graph-lab — run: make setup-graph-lab" >&2; exit 1)
 	$(COMPOSE_LAB) build netspec-netspec netspec-mdt-translator
 
-graph-lab-up: graph-lab-build
+graph-lab-up: graph-lab-build ensure-mdt-sidecar
 	@test -f .env.graph-lab || (echo "missing .env.graph-lab — run: make setup-graph-lab" >&2; exit 1)
 	$(COMPOSE_LAB) up -d
 
