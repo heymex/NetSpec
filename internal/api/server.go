@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"github.com/netspec/netspec/internal/config"
 	"github.com/netspec/netspec/internal/discovery"
 	"github.com/netspec/netspec/internal/evaluator"
+	"github.com/netspec/netspec/internal/graph"
 	"github.com/netspec/netspec/internal/notifier"
 	"github.com/netspec/netspec/internal/rules"
 	"github.com/netspec/netspec/internal/types"
@@ -1137,13 +1139,15 @@ func (s *Server) handleDiagnosticsPage(w http.ResponseWriter, r *http.Request) {
 
 // DevicePageData holds data for the device detail page
 type DevicePageData struct {
-	Device       DeviceDetailInfo
-	Version      string
-	Commit       string
-	BuildDate    string
-	BackURL      string
-	BackLabel    string
-	SNMPWarnings []SNMPUIWarning `json:"-"`
+	Device         DeviceDetailInfo
+	Version        string
+	Commit         string
+	BuildDate      string
+	BackURL        string
+	BackLabel      string
+	GraphBaseURL   string // optional; when set, UI links out to NetSpecGraph
+	GraphFleetURL  string
+	SNMPWarnings   []SNMPUIWarning `json:"-"`
 }
 
 // DeviceDetailInfo holds detailed device information
@@ -1168,6 +1172,7 @@ type InterfaceInfo struct {
 	OperStatus                string
 	LastSNMPValidationAt      time.Time
 	LastTelemetryValidationAt time.Time
+	GraphURL                  string // absolute Graph interface page when GRAPH_PUBLIC_URL is set
 }
 
 // handleDevicePage renders the device detail page
@@ -1211,6 +1216,7 @@ func (s *Server) handleDevicePage(w http.ResponseWriter, r *http.Request) {
 	sort.Strings(ifaceNames)
 
 	interfaces := make([]InterfaceInfo, 0, len(ifaceNames))
+	graphBase := strings.TrimRight(strings.TrimSpace(os.Getenv("GRAPH_PUBLIC_URL")), "/")
 	var lastSNMPValidationAt time.Time
 	var lastTelemetryValidationAt time.Time
 	for _, ifaceName := range ifaceNames {
@@ -1246,6 +1252,7 @@ func (s *Server) handleDevicePage(w http.ResponseWriter, r *http.Request) {
 			OperStatus:                operStatus,
 			LastSNMPValidationAt:      lastSNMP,
 			LastTelemetryValidationAt: lastTelemetry,
+			GraphURL:                  graph.AbsoluteInterfaceURL(graphBase, deviceName, ifaceName),
 		})
 	}
 
@@ -1285,13 +1292,15 @@ func (s *Server) handleDevicePage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := DevicePageData{
-		Device:       deviceDetail,
-		Version:      version,
-		Commit:       commit,
-		BuildDate:    buildDate,
-		BackURL:      backURL,
-		BackLabel:    backLabel,
-		SNMPWarnings: snmpUIWarnings(cfg),
+		Device:        deviceDetail,
+		Version:       version,
+		Commit:        commit,
+		BuildDate:     buildDate,
+		BackURL:       backURL,
+		BackLabel:     backLabel,
+		GraphBaseURL:  graphBase,
+		GraphFleetURL: graph.AbsoluteFleetDeviceURL(graphBase, deviceName),
+		SNMPWarnings:  snmpUIWarnings(cfg),
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

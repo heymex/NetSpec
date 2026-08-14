@@ -20,25 +20,27 @@ import (
 
 // Options configures the NetSpecGraph HTTP server.
 type Options struct {
-	Logger     zerolog.Logger
-	Auth       *auth.Manager
-	VM         *vm.Client
-	Config     *config.Config
-	Timezone   string
-	Location   *time.Location
-	BandWindow time.Duration // trailing seasonality window; default 21d
+	Logger           zerolog.Logger
+	Auth             *auth.Manager
+	VM               *vm.Client
+	Config           *config.Config
+	Timezone         string
+	Location         *time.Location
+	BandWindow       time.Duration // trailing seasonality window; default 21d
+	NetSpecPublicURL string        // optional browser-reachable NetSpec origin for deep-links
 }
 
 // Server is the NetSpecGraph HTTP front-end.
 type Server struct {
-	log        zerolog.Logger
-	auth       *auth.Manager
-	vm         *vm.Client
-	cfg        *config.Config
-	index      *Index
-	timezone   string
-	location   *time.Location
-	bandWindow time.Duration
+	log              zerolog.Logger
+	auth             *auth.Manager
+	vm               *vm.Client
+	cfg              *config.Config
+	index            *Index
+	timezone         string
+	location         *time.Location
+	bandWindow       time.Duration
+	netspecPublicURL string
 }
 
 // NewServer builds a Server from Options.
@@ -57,14 +59,15 @@ func NewServer(opts Options) *Server {
 		bw = 21 * 24 * time.Hour
 	}
 	return &Server{
-		log:        opts.Logger,
-		auth:       opts.Auth,
-		vm:         opts.VM,
-		cfg:        opts.Config,
-		index:      BuildIndex(opts.Config),
-		timezone:   opts.Timezone,
-		location:   loc,
-		bandWindow: bw,
+		log:              opts.Logger,
+		auth:             opts.Auth,
+		vm:               opts.VM,
+		cfg:              opts.Config,
+		index:            BuildIndex(opts.Config),
+		timezone:         opts.Timezone,
+		location:         loc,
+		bandWindow:       bw,
+		netspecPublicURL: strings.TrimRight(strings.TrimSpace(opts.NetSpecPublicURL), "/"),
 	}
 }
 
@@ -77,7 +80,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/vm/health", s.handleVMHealth)
 	mux.HandleFunc("/api/roles", s.handleRolesAPI)
 	mux.HandleFunc("/api/interfaces", s.handleInterfacesAPI)
+	mux.HandleFunc("/api/fleet/top", s.handleFleetTopAPI)
 	mux.HandleFunc("/api/device/", s.handleDeviceAPI)
+	mux.HandleFunc("/fleet", s.handleFleetPage)
 	mux.HandleFunc("/device/", s.handleInterfacePage)
 	mux.HandleFunc("/", s.handleIndex)
 	return s.authGate(mux)
@@ -204,16 +209,124 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		deviceRoles = s.index.Roles()
 	}
 	data := map[string]any{
-		"Version":     version.GetVersion(),
-		"Timezone":    s.timezone,
-		"DeviceCount": deviceCount,
-		"IfaceCount":  ifaceCount,
-		"PortRoles":   portRoles,
-		"DeviceRoles": deviceRoles,
-		"ExamplePath": interfacePagePath("csw-mcd-01", "Port-channel20"),
+		"Version":          version.GetVersion(),
+		"Timezone":         s.timezone,
+		"DeviceCount":      deviceCount,
+		"IfaceCount":       ifaceCount,
+		"PortRoles":        portRoles,
+		"DeviceRoles":      deviceRoles,
+		"ExamplePath":      interfacePagePath("csw-mcd-01", "Port-channel20"),
+		"NetSpecPublicURL": s.netspecPublicURL,
 	}
 	if err := indexTemplate.Execute(w, data); err != nil {
 		s.log.Error().Err(err).Msg("render index")
+	}
+}
+
+func (s *Server) fleetOptsFromRequest(r *http.Request) FleetOptions {
+	q := r.URL.Query()
+	opts := FleetOptions{
+		PortRole:       firstNonEmpty(q.Get("port_role"), q.Get("role")),
+		DevicePrefix:   firstNonEmpty(q.Get("device_prefix"), q.Get("role_prefix")),
+		Device:         q.Get("device"),
+		NetSpecBaseURL: s.netspecPublicURL,
+		Limit:          25,
+	}
+	if v := q.Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 200 {
+			opts.Limit = n
+		}
+	}
+	switch q.Get("monitored") {
+	case "1", "true", "yes":
+		opts.MonitoredOnly = true
+	}
+	if win := q.Get("rate_window"); win != "" {
+		if d, err := time.ParseDuration(win); err == nil && d >= time.Minute && d <= time.Hour {
+			opts.RateWindow = d
+		}
+	}
+	return opts
+}
+
+func (s *Server) handleFleetTopAPI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	snap, err := FetchFleetSnapshot(r.Context(), s.vm, s.index, s.fleetOptsFromRequest(r))
+	w.Header().Set("Content-Type", "application/json")
+	if err != nil {
+		s.log.Error().Err(err).Msg("fleet snapshot failed")
+		w.WriteHeader(http.StatusBadGateway)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": err.Error()})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(snap)
+}
+
+func (s *Server) handleFleetPage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	opts := s.fleetOptsFromRequest(r)
+	// HTML default: Port-Channel uplinks (NOC uplink heat), unless caller cleared with port_role=all.
+	if r.URL.Query().Get("port_role") == "" && r.URL.Query().Get("role") == "" {
+		opts.PortRole = "Port-Channel Uplinks"
+	}
+	if r.URL.Query().Get("port_role") == "all" || r.URL.Query().Get("role") == "all" {
+		opts.PortRole = ""
+	}
+	snap, err := FetchFleetSnapshot(r.Context(), s.vm, s.index, opts)
+	if err != nil {
+		s.log.Error().Err(err).Msg("fleet page snapshot failed")
+		http.Error(w, "fleet query failed: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	portRoles := []PortRoleCount{}
+	deviceRoles := []RoleInfo{}
+	if s.index != nil {
+		portRoles = s.index.PortRoleCounts()
+		deviceRoles = s.index.Roles()
+	}
+	hex := ""
+	if snap != nil {
+		q := url.Values{}
+		if opts.PortRole != "" {
+			q.Set("port_role", opts.PortRole)
+		} else {
+			q.Set("port_role", "all")
+		}
+		if opts.DevicePrefix != "" {
+			q.Set("device_prefix", opts.DevicePrefix)
+		}
+		if opts.Limit != 25 {
+			q.Set("limit", strconv.Itoa(opts.Limit))
+		}
+		linkBase := "/fleet"
+		if enc := q.Encode(); enc != "" {
+			linkBase += "?" + enc
+		}
+		hex = RenderFleetHexSVG(snap.Devices, linkBase)
+	}
+	data := map[string]any{
+		"Version":          version.GetVersion(),
+		"Timezone":         s.timezone,
+		"PortRole":         opts.PortRole,
+		"Device":           opts.Device,
+		"DevicePrefix":     opts.DevicePrefix,
+		"Limit":            opts.Limit,
+		"PortRoles":        portRoles,
+		"DeviceRoles":      deviceRoles,
+		"Snapshot":         snap,
+		"HexSVG":           template.HTML(hex),
+		"NetSpecPublicURL": s.netspecPublicURL,
+		"Error":            "",
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := fleetTemplate.Execute(w, data); err != nil {
+		s.log.Error().Err(err).Msg("render fleet page")
 	}
 }
 
@@ -231,12 +344,14 @@ func (s *Server) handleInterfacePage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if pathIsOptics(escaped) {
 		data := map[string]any{
-			"Device":      device,
-			"Interface":   iface,
-			"SeriesURLJS": template.JS(strconv.Quote(opticsSeriesAPIPath(device, iface))),
-			"TrafficPath": interfacePagePath(device, iface),
-			"Timezone":    s.timezone,
-			"Version":     version.GetVersion(),
+			"Device":           device,
+			"Interface":        iface,
+			"SeriesURLJS":      template.JS(strconv.Quote(opticsSeriesAPIPath(device, iface))),
+			"TrafficPath":      interfacePagePath(device, iface),
+			"Timezone":         s.timezone,
+			"Version":          version.GetVersion(),
+			"NetSpecPublicURL": s.netspecPublicURL,
+			"NetSpecDeviceURL": netspecDevicePath(s.netspecPublicURL, device),
 		}
 		if err := opticsTemplate.Execute(w, data); err != nil {
 			s.log.Error().Err(err).Msg("render optics page")
@@ -244,19 +359,21 @@ func (s *Server) handleInterfacePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data := map[string]any{
-		"Device":       device,
-		"Interface":    iface,
-		"SeriesURLJS":  template.JS(strconv.Quote(interfaceSeriesAPIPath(device, iface))),
-		"OpticsPath":   opticsPagePath(device, iface),
-		"Timezone":     s.timezone,
-		"Version":      version.GetVersion(),
-		"DefaultRange": "6h",
-		"PortRole":     "",
-		"DeviceRole":   "",
-		"Alias":        "",
-		"Monitored":    "",
-		"DesiredState": "",
-		"InConfig":     false,
+		"Device":           device,
+		"Interface":        iface,
+		"SeriesURLJS":      template.JS(strconv.Quote(interfaceSeriesAPIPath(device, iface))),
+		"OpticsPath":       opticsPagePath(device, iface),
+		"Timezone":         s.timezone,
+		"Version":          version.GetVersion(),
+		"DefaultRange":     "6h",
+		"PortRole":         "",
+		"DeviceRole":       "",
+		"Alias":            "",
+		"Monitored":        "",
+		"DesiredState":     "",
+		"InConfig":         false,
+		"NetSpecPublicURL": s.netspecPublicURL,
+		"NetSpecDeviceURL": netspecDevicePath(s.netspecPublicURL, device),
 	}
 	if s.index != nil {
 		if id, ok := s.index.Lookup(device, iface); ok {

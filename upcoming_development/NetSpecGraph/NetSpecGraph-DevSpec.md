@@ -2,7 +2,7 @@
 
 **Status:** Design draft · **Target module:** `github.com/netspec/netspec` (`cmd/netspecgraph`) · **Companion to:** NetSpec v2.x
 
-**Implementation branch:** `feat/netspecgraph` — step 6 optics/DOM done. Next: fleet + deep-links (step 7). Bring-up: [`docs/NETSPECGRAPH.md`](../../docs/NETSPECGRAPH.md).
+**Implementation branch:** `feat/netspecgraph` — step 7 fleet + deep-links done (1.0 build sequence complete). Bring-up: [`docs/NETSPECGRAPH.md`](../../docs/NETSPECGRAPH.md).
 
 ## Purpose
 
@@ -235,4 +235,4 @@ Each step lists its **done-when** so progress is verifiable, not vibes.
 4. Query-time enrichment: rules index + role/neighbor filters. *Done when:* a role filter (e.g. AP-uplinks) resolves to the correct series set, matching what `/noc` considers those ports — with a unit test on the join. — **done** (`internal/graph` Index via `rules.MatchDevice`/`MatchPort` + `ifname`; `GET /api/interfaces`, `GET /api/roles`, `/meta`; compose mounts `/data`).
 5. Seasonality band + baseline overlay. *Done when:* the band renders in site-local buckets and a baseline preset overlays a prior period; band math has unit tests on synthetic series. — **done** (`band.go` hour-of-week p10/p90 in site TZ; UI toggle + 1w/52w baseline; `GRAPH_BAND_WINDOW`).
 6. Optics/DOM page (needs subscription 211). *Done when:* per-lane rx/tx/bias render with threshold reference lines. — **done** (lab uses sub **31** / `Cisco-IOS-XE-transceiver-oper`; Telegraf contract + `/optics` page with typical SR threshold lines; voltage absent on this platform).
-7. Fleet/aggregate view + NetSpec deep-links. *Done when:* deep-links round-trip with NetSpec's `/device/{name}` and interface-name encoding matches.
+7. Fleet/aggregate view + NetSpec deep-links. *Done when:* deep-links round-trip with NetSpec's `/device/{name}` and interface-name encoding matches. — **done** (`/fleet` + `/api/fleet/top`; util honeycomb; `NETSPEC_PUBLIC_URL` / `GRAPH_PUBLIC_URL`).

@@ -27,6 +27,7 @@ func main() {
 	configDir := flag.String("config-dir", envOr("GRAPH_CONFIG_DIR", "/config"), "NetSpec config directory (read-only)")
 	timezone := flag.String("timezone", envOr("GRAPH_TIMEZONE", "America/Chicago"), "IANA timezone for seasonality buckets")
 	bandWindowStr := flag.String("band-window", envOr("GRAPH_BAND_WINDOW", "504h"), "trailing window for hour-of-week band (default 21d)")
+	netspecPublic := flag.String("netspec-public-url", envOr("NETSPEC_PUBLIC_URL", ""), "browser-reachable NetSpec origin for deep-links (optional)")
 	logLevel := flag.String("log-level", envOr("LOG_LEVEL", "info"), "Log level")
 	flag.Parse()
 
@@ -75,14 +76,18 @@ func main() {
 
 	vmClient := vm.NewClient(*vmURL)
 	srv := graph.NewServer(graph.Options{
-		Logger:     logger,
-		Auth:       authMgr,
-		VM:         vmClient,
-		Config:     cfg,
-		Timezone:   *timezone,
-		Location:   loc,
-		BandWindow: bandWindow,
+		Logger:           logger,
+		Auth:             authMgr,
+		VM:               vmClient,
+		Config:           cfg,
+		Timezone:         *timezone,
+		Location:         loc,
+		BandWindow:       bandWindow,
+		NetSpecPublicURL: *netspecPublic,
 	})
+	if *netspecPublic != "" {
+		logger.Info().Str("netspec_public_url", *netspecPublic).Msg("NetSpec deep-links enabled")
+	}
 
 	httpServer := &http.Server{
 		Addr:              *listenAddr,

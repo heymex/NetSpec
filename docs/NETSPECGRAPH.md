@@ -215,6 +215,25 @@ labels). Copper BaseT/BaseTX SFPs are skipped. Page:
 **Done-when:** vmui shows `transceiver_rx_power_dbm` for `asw-st1-01` /
 `TenGigabitEthernet1/1/1`, and the optics page charts rx/tx/bias/temp.
 
+## Step 7 — fleet + deep-links
+
+| Surface | Purpose |
+|---|---|
+| `GET /fleet` | Top-talkers table + util honeycomb (defaults to Port-Channel Uplinks) |
+| `GET /api/fleet/top` | JSON snapshot (`port_role`, `device`, `device_prefix`, `limit`) |
+| Graph → NetSpec | `NETSPEC_PUBLIC_URL` → `/device/{name}` from iface/fleet rows |
+| NetSpec → Graph | `GRAPH_PUBLIC_URL` → per-interface Graphs link + Graph fleet on device page |
+
+Interface paths use `url.PathEscape` (`Gi1/0/1` → `Gi1%2F0%2F1`), matching the
+per-interface Graph routes.
+
+Lab `.env` example:
+
+```bash
+NETSPEC_PUBLIC_URL=http://10.10.199.192:8088
+GRAPH_PUBLIC_URL=http://10.10.199.192:8090
+```
+
 ## Invariants (do not violate)
 
 - Do not modify subscription 251’s *existing* production receiver, `decoded.json`, or `mdt-translator` for metrics — only **add** lab receivers.

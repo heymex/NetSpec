@@ -2404,6 +2404,7 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                 </div>
             </div>
             <div>
+                {{if .GraphFleetURL}}<a href="{{.GraphFleetURL}}" class="btn btn-secondary" target="_blank" rel="noopener">Graph fleet</a>{{end}}
                 <button class="btn btn-danger" onclick="deleteDevice()">Delete Device</button>
                 <a href="/wizard?device_key={{queryEscape .Device.Name}}&amp;address={{queryEscape .Device.Address}}" class="btn btn-secondary">Re-walk interfaces</a>
                 <a href="/api-browser" class="btn btn-secondary">API</a>
@@ -2538,7 +2539,7 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                     {{range .Device.Interfaces}}
                     <li class="interface-item" data-iface-name="{{.Name}}">
                         <div class="interface-info">
-                            <h4>{{.Name}}</h4>
+                            <h4>{{.Name}}{{if .GraphURL}} <a href="{{.GraphURL}}" style="font-size:0.75rem;font-weight:500;margin-left:0.35rem;" target="_blank" rel="noopener">Graphs</a>{{end}}</h4>
                             <div class="interface-meta">
                                 {{if .Description}}<span>{{.Description}}</span>{{end}}
                                 <span>Desired: {{.DesiredState}}</span>

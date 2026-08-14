@@ -57,6 +57,30 @@ func interfacePagePath(device, iface string) string {
 	return "/device/" + url.PathEscape(device) + "/interface/" + url.PathEscape(iface)
 }
 
+// InterfacePagePath is the Graph UI path for one interface (slashes → %2F).
+func InterfacePagePath(device, iface string) string {
+	return interfacePagePath(device, iface)
+}
+
+// AbsoluteInterfaceURL joins an optional Graph public origin with InterfacePagePath.
+// Empty base yields "".
+func AbsoluteInterfaceURL(base, device, iface string) string {
+	base = strings.TrimRight(strings.TrimSpace(base), "/")
+	if base == "" || device == "" || iface == "" {
+		return ""
+	}
+	return base + interfacePagePath(device, iface)
+}
+
+// AbsoluteFleetDeviceURL joins an optional Graph public origin with /fleet?device=.
+func AbsoluteFleetDeviceURL(base, device string) string {
+	base = strings.TrimRight(strings.TrimSpace(base), "/")
+	if base == "" || device == "" {
+		return ""
+	}
+	return base + "/fleet?device=" + url.QueryEscape(device)
+}
+
 func opticsPagePath(device, iface string) string {
 	return interfacePagePath(device, iface) + "/optics"
 }

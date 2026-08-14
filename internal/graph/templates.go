@@ -47,6 +47,10 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!DOCTYPE html>
   <main>
     <h1>NetSpecGraph</h1>
     <p>Metrics companion to NetSpec — filter ports by the same rules NetSpec uses, then open per-interface graphs.</p>
+    <p class="meta" style="margin-top:0.5rem">
+      <a href="/fleet">Fleet / top-talkers</a>
+      {{if .NetSpecPublicURL}} · <a href="{{.NetSpecPublicURL}}">NetSpec</a>{{end}}
+    </p>
 
     <form class="panel" method="POST" action="/">
       <div class="row">
@@ -218,7 +222,9 @@ var ifaceTemplate = template.Must(template.New("iface").Parse(`<!DOCTYPE html>
       <div class="meta">NetSpecGraph · {{.Timezone}} · v{{.Version}}{{if .InConfig}} · {{if .DeviceRole}}{{.DeviceRole}}{{else}}unmatched device role{{end}}{{if .PortRole}} · {{.PortRole}}{{end}}{{if .Alias}} · {{.Alias}}{{end}} · desired {{.DesiredState}} · monitored {{.Monitored}}{{else}} · not in desired-state{{end}}</div>
     </div>
     <div class="nav">
+      <a href="/fleet">Fleet</a>
       <a href="{{.OpticsPath}}">Optics / DOM</a>
+      {{if .NetSpecDeviceURL}}<a href="{{.NetSpecDeviceURL}}">NetSpec device</a>{{end}}
       <a href="/">← All interfaces</a>
     </div>
   </header>
@@ -741,7 +747,9 @@ var opticsTemplate = template.Must(template.New("optics").Parse(`<!DOCTYPE html>
       <div class="meta">NetSpecGraph DOM · {{.Timezone}} · v{{.Version}}</div>
     </div>
     <div class="nav">
+      <a href="/fleet">Fleet</a>
       <a href="{{.TrafficPath}}">← Traffic</a>
+      {{if .NetSpecDeviceURL}}<a href="{{.NetSpecDeviceURL}}">NetSpec device</a>{{end}}
       <a href="/">All interfaces</a>
     </div>
   </header>
@@ -978,6 +986,162 @@ var opticsTemplate = template.Must(template.New("optics").Parse(`<!DOCTYPE html>
     load();
     setInterval(load, 30000);
   </script>
+</body>
+</html>
+`))
+
+var fleetTemplate = template.Must(template.New("fleet").Funcs(template.FuncMap{
+	"fmtBPS": FormatBPS,
+	"fmtPct": FormatUtilPct,
+}).Parse(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fleet — NetSpecGraph</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg:#0d1117; --bg2:#161b22; --bg3:#21262d; --bd:#30363d; --fg:#e6edf3; --muted:#8b949e;
+      --accent:#58a6ff; --green:#3fb950; --red:#f85149; --yellow:#d29922;
+    }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family:'Outfit',system-ui,sans-serif; background:var(--bg); color:var(--fg); min-height:100vh; }
+    header { display:flex; flex-wrap:wrap; gap:0.75rem 1.25rem; align-items:baseline; justify-content:space-between;
+      padding:1rem 1.25rem; border-bottom:1px solid var(--bd); background:var(--bg2); }
+    header h1 { margin:0; font-size:1.25rem; font-weight:600; }
+    header .meta { font-family:'JetBrains Mono',monospace; font-size:0.78rem; color:var(--muted); }
+    header .nav { display:flex; gap:1rem; align-items:center; }
+    a { color:var(--accent); text-decoration:none; }
+    main { padding:1rem 1.25rem 2.5rem; max-width:1200px; margin:0 auto; display:grid; gap:1rem; }
+    .filters { display:grid; gap:0.75rem; grid-template-columns:repeat(4,minmax(0,1fr)); padding:1rem;
+      background:var(--bg2); border:1px solid var(--bd); border-radius:10px; }
+    @media (max-width:900px) { .filters { grid-template-columns:1fr 1fr; } }
+    label { font-size:0.8rem; color:var(--muted); display:block; }
+    select, input[type=text], input[type=number] {
+      width:100%; margin-top:0.3rem; padding:0.5rem 0.65rem; background:var(--bg); border:1px solid var(--bd);
+      border-radius:6px; color:var(--fg); font:500 0.85rem 'JetBrains Mono',monospace;
+    }
+    button { margin-top:1.35rem; padding:0.55rem 0.9rem; background:var(--green); color:#0d1117; border:none;
+      border-radius:6px; font:600 0.9rem 'Outfit',sans-serif; cursor:pointer; }
+    .grid { display:grid; grid-template-columns:1.4fr 1fr; gap:1rem; align-items:start; }
+    @media (max-width:960px) { .grid { grid-template-columns:1fr; } }
+    .panel { background:var(--bg2); border:1px solid var(--bd); border-radius:10px; overflow:hidden; }
+    .panel h2 { margin:0; padding:0.75rem 1rem; font-size:0.95rem; background:var(--bg3); border-bottom:1px solid var(--bd); }
+    .panel .body { padding:0.75rem 1rem 1rem; }
+    table { width:100%; border-collapse:collapse; font-size:0.8rem; }
+    th, td { text-align:left; padding:0.4rem 0.45rem; border-bottom:1px solid var(--bd); vertical-align:top; }
+    th { color:var(--muted); font-weight:500; }
+    td.mono, .mono { font-family:'JetBrains Mono',monospace; font-size:0.75rem; }
+    td.num { text-align:right; font-family:'JetBrains Mono',monospace; font-size:0.75rem; }
+    .sev-ok { color:var(--green); }
+    .sev-warning { color:var(--yellow); }
+    .sev-critical { color:var(--red); font-weight:600; }
+    .hex-map-svg { max-height:320px; width:100%; display:block; }
+    .hex-link { outline:none; }
+    .hex-shape { cursor:pointer; transition:filter 0.15s ease; }
+    .hex-link:hover .hex-shape { filter:brightness(1.12); }
+    .hex-empty, .empty { color:var(--muted); padding:1rem 0; font-size:0.9rem; }
+    .legend { display:flex; gap:1rem; flex-wrap:wrap; font-size:0.75rem; color:var(--muted); margin-top:0.65rem; }
+    .legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:0.3rem; vertical-align:middle; }
+    .count { font-size:0.78rem; color:var(--muted); padding:0 1rem 0.5rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Fleet utilization</h1>
+      <div class="meta">NetSpecGraph · {{.Timezone}} · v{{.Version}} · rate window {{if .Snapshot}}{{.Snapshot.Range}}{{else}}5m{{end}}</div>
+    </div>
+    <div class="nav">
+      <a href="/">Browse</a>
+      {{if .NetSpecPublicURL}}<a href="{{.NetSpecPublicURL}}/noc">NetSpec NOC</a>{{end}}
+    </div>
+  </header>
+  <main>
+    <form class="filters" method="GET" action="/fleet">
+      <div>
+        <label for="port_role">Port role</label>
+        <select id="port_role" name="port_role">
+          <option value="all" {{if eq .PortRole ""}}selected{{end}}>Any</option>
+          {{range .PortRoles}}
+          <option value="{{.Label}}" {{if eq $.PortRole .Label}}selected{{end}}>{{.Label}} ({{.Count}})</option>
+          {{end}}
+        </select>
+      </div>
+      <div>
+        <label for="device_prefix">Device prefix</label>
+        <select id="device_prefix" name="device_prefix">
+          <option value="">Any</option>
+          {{range .DeviceRoles}}
+          <option value="{{.Prefix}}" {{if eq $.DevicePrefix .Prefix}}selected{{end}}>{{.Prefix}} — {{.Name}}</option>
+          {{end}}
+        </select>
+      </div>
+      <div>
+        <label for="device">Device</label>
+        <input id="device" name="device" type="text" value="{{.Device}}" placeholder="e.g. csw-mcd-01" autocomplete="off">
+      </div>
+      <div>
+        <label for="limit">Top N</label>
+        <input id="limit" name="limit" type="number" min="5" max="200" value="{{.Limit}}">
+        <button type="submit">Apply</button>
+      </div>
+    </form>
+
+    <div class="grid">
+      <div class="panel">
+        <h2>Top talkers</h2>
+        {{if .Snapshot}}
+        <div class="count">{{.Snapshot.Count}} interfaces{{if .PortRole}} · {{.PortRole}}{{end}}</div>
+        {{if .Snapshot.Talkers}}
+        <table>
+          <thead>
+            <tr>
+              <th>Device</th>
+              <th>Interface</th>
+              <th class="num">In</th>
+              <th class="num">Out</th>
+              <th class="num">Util</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {{range .Snapshot.Talkers}}
+            <tr>
+              <td class="mono">{{.Device}}</td>
+              <td class="mono"><a href="{{.GraphPath}}">{{.Interface}}</a>{{if .Alias}}<div style="color:var(--muted);font-size:0.7rem">{{.Alias}}</div>{{end}}</td>
+              <td class="num">{{fmtBPS .InBPS}}</td>
+              <td class="num">{{fmtBPS .OutBPS}}</td>
+              <td class="num">{{fmtPct .UtilPct}}</td>
+              <td>{{if .NetSpecPath}}<a href="{{.NetSpecPath}}">NetSpec</a>{{end}}</td>
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+        {{else}}
+        <div class="body empty">No interfaces with traffic for this filter.</div>
+        {{end}}
+        {{else}}
+        <div class="body empty">No snapshot.</div>
+        {{end}}
+      </div>
+      <div class="panel">
+        <h2>Utilization honeycomb</h2>
+        <div class="body">
+          {{.HexSVG}}
+          <div class="legend">
+            <span><i style="background:none;border:1.5px solid #3fb950"></i>&lt;50%</span>
+            <span><i style="background:#d29922"></i>50–80%</span>
+            <span><i style="background:#f85149"></i>≥80%</span>
+          </div>
+          <p class="empty" style="padding-top:0.5rem;font-size:0.78rem">Hex color = worst util among filtered ports on that device. Click a tile to filter the table.</p>
+        </div>
+      </div>
+    </div>
+  </main>
 </body>
 </html>
 `))

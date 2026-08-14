@@ -78,6 +78,66 @@ type queryRangeResponse struct {
 	Error string `json:"error"`
 }
 
+// Query runs an instant MetricsQL query and returns typed series (one sample each).
+func (c *Client) Query(ctx context.Context, query string) ([]Series, error) {
+	u, err := url.Parse(c.base + "/api/v1/query")
+	if err != nil {
+		return nil, err
+	}
+	q := u.Query()
+	q.Set("query", query)
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("query status %d: %s", resp.StatusCode, truncate(string(body), 200))
+	}
+
+	var parsed struct {
+		Status string `json:"status"`
+		Data   struct {
+			ResultType string `json:"resultType"`
+			Result     []struct {
+				Metric map[string]string `json:"metric"`
+				Value  []any             `json:"value"`
+			} `json:"result"`
+		} `json:"data"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return nil, fmt.Errorf("decode query: %w", err)
+	}
+	if parsed.Status != "success" {
+		return nil, fmt.Errorf("query: %s", parsed.Error)
+	}
+
+	out := make([]Series, 0, len(parsed.Data.Result))
+	for _, r := range parsed.Data.Result {
+		s := Series{Metric: r.Metric}
+		if len(r.Value) >= 2 {
+			ts, ok := asInt64(r.Value[0])
+			if !ok {
+				continue
+			}
+			s.Points = []Sample{{T: ts, V: asFloatPtr(r.Value[1])}}
+		}
+		out = append(out, s)
+	}
+	return out, nil
+}
+
 // QueryRange runs a MetricsQL range query and returns typed series.
 func (c *Client) QueryRange(ctx context.Context, query string, start, end time.Time, step time.Duration) ([]Series, error) {
 	if step <= 0 {
