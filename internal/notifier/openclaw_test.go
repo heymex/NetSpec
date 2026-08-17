@@ -46,6 +46,30 @@ func TestBuildOpenClawPayload_Firing(t *testing.T) {
 	if payload.Links.Device != "https://netspec.example/device/core-sw-01" {
 		t.Fatalf("links.device: %q", payload.Links.Device)
 	}
+}
+
+func TestBuildOpenClawPayload_SyntheticDeviceLinksToDashboard(t *testing.T) {
+	t.Parallel()
+	alert := &types.Alert{
+		ID:        "__pipeline__|__ingest__|telemetry_ingest_stale-1",
+		Device:    "__pipeline__",
+		Entity:    "__ingest__",
+		AlertType: "telemetry_ingest_stale",
+		Severity:  "warning",
+		State:     "firing",
+		FiredAt:   time.Date(2026, 8, 17, 13, 0, 0, 0, time.UTC),
+		Message:   "ingest stale",
+	}
+	payload := buildOpenClawPayload(alert, "https://netspec.example")
+	if payload.Links == nil {
+		t.Fatal("expected links")
+	}
+	if payload.Links.Alert != "https://netspec.example/alerts" {
+		t.Fatalf("links.alert: %q", payload.Links.Alert)
+	}
+	if payload.Links.Device != "https://netspec.example/" {
+		t.Fatalf("links.device: %q", payload.Links.Device)
+	}
 
 	raw, err := json.Marshal(payload)
 	if err != nil {

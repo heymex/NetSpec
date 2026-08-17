@@ -392,6 +392,30 @@ func main() {
 				}
 			}()
 		}
+
+		ingestStartedAt := time.Now()
+		staleAfter := cfg.DesiredState.Global.Ingest.StaleAfter
+		if staleAfter <= 0 {
+			staleAfter = config.DefaultIngestStaleAfter
+		}
+		logger.Info().
+			Dur("stale_after", staleAfter).
+			Msg("Push ingest stale alert enabled")
+		go func() {
+			ticker := time.NewTicker(15 * time.Second)
+			defer ticker.Stop()
+			for {
+				cur := runningCfg.Load()
+				if cur != nil {
+					syncTelemetryIngestStaleAlert(alertEngine, pushIngestors, ingestStartedAt, cur)
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+				}
+			}
+		}()
 	default:
 		logger.Fatal().
 			Str("telemetry_mode", cfg.DesiredState.Global.TelemetryMode).
@@ -672,4 +696,28 @@ func syncSNMPReachAlerts(engine *alerter.Engine, tr *collector.ReachabilityTrack
 		errMsg = st.LastError
 	}
 	engine.SyncSNMPReachability(device, ok, errMsg)
+}
+
+func syncTelemetryIngestStaleAlert(engine *alerter.Engine, ingestors []*collector.PushIngestor, startedAt time.Time, cfg *config.Config) {
+	if engine == nil || cfg == nil {
+		return
+	}
+	if strings.ToLower(cfg.DesiredState.Global.TelemetryMode) != "telemetry_ingest_push" {
+		engine.SyncTelemetryIngestStale(false, time.Time{}, 0)
+		return
+	}
+	threshold := cfg.DesiredState.Global.Ingest.StaleAfter
+	if threshold <= 0 {
+		threshold = config.DefaultIngestStaleAfter
+	}
+	var lastEventAt time.Time
+	if len(ingestors) > 0 {
+		parts := make([]collector.PushIngestorStats, 0, len(ingestors))
+		for _, ing := range ingestors {
+			parts = append(parts, ing.Stats())
+		}
+		lastEventAt = collector.AggregatePushIngestorStats(parts).LastEventAt
+	}
+	stale := collector.IngestStale(lastEventAt, startedAt, time.Now(), threshold)
+	engine.SyncTelemetryIngestStale(stale, lastEventAt, threshold)
 }

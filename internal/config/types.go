@@ -68,13 +68,17 @@ type SNMPConfig struct {
 	// TelemetryFallbackEnabled enables periodic full SNMP polling while in
 	// telemetry_ingest_push mode. This is a safety net for missed telemetry and
 	// increases SNMP/device load significantly.
-	TelemetryFallbackEnabled bool          `yaml:"telemetry_fallback_enabled,omitempty"`
+	TelemetryFallbackEnabled bool `yaml:"telemetry_fallback_enabled,omitempty"`
 	// TelemetryFallbackInterval controls how often fallback full-device SNMP
 	// polls run when telemetry_fallback_enabled is true.
 	TelemetryFallbackInterval time.Duration `yaml:"telemetry_fallback_interval,omitempty"`
-	Timeout            time.Duration `yaml:"timeout,omitempty"`
-	Retries            int           `yaml:"retries,omitempty"`
+	Timeout                   time.Duration `yaml:"timeout,omitempty"`
+	Retries                   int           `yaml:"retries,omitempty"`
 }
+
+// DefaultIngestStaleAfter is used when telemetry_ingest_push is on and
+// global.ingest.stale_after is omitted or zero.
+const DefaultIngestStaleAfter = 5 * time.Minute
 
 // IngestConfig contains push telemetry ingest listener configuration.
 // Use one TCP port per upstream pipeline (e.g. Cribl destination) and optional
@@ -88,6 +92,10 @@ type IngestConfig struct {
 	// AdditionalListeners binds more TCP ports to optional source labels. Ports must be unique with Port.
 	AdditionalListeners []IngestListenerEntry `yaml:"additional_listeners,omitempty"`
 	TokenEnv            string                `yaml:"token_env,omitempty"`
+	// StaleAfter is how long without an accepted ingest event before firing
+	// telemetry_ingest_stale. Zero (or omitted) defaults to 5m when
+	// telemetry_mode is telemetry_ingest_push.
+	StaleAfter time.Duration `yaml:"stale_after,omitempty"`
 }
 
 // IngestListenerEntry is an extra TCP listener with the same auth and address as the primary ingest block.
@@ -189,8 +197,8 @@ type ChannelConfig struct {
 // SlackChatOpsConfig enables two-way Slack alerting via the Slack Web API.
 type SlackChatOpsConfig struct {
 	Enabled          bool   `yaml:"enabled"`
-	BotTokenEnv      string `yaml:"bot_token_env"`       // env var: xoxb-… bot token
-	SigningSecretEnv string  `yaml:"signing_secret_env"`  // env var: Slack signing secret for webhook validation
+	BotTokenEnv      string `yaml:"bot_token_env"`      // env var: xoxb-… bot token
+	SigningSecretEnv string `yaml:"signing_secret_env"` // env var: Slack signing secret for webhook validation
 }
 
 // AlertRule defines routing rules for alerts

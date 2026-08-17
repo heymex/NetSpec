@@ -111,6 +111,10 @@ func LoadConfigDir(dir string) (*Config, error) {
 	if cfg.DesiredState.Global.Ingest.Port == 0 {
 		cfg.DesiredState.Global.Ingest.Port = 57500
 	}
+	if cfg.DesiredState.Global.TelemetryMode == "telemetry_ingest_push" &&
+		cfg.DesiredState.Global.Ingest.StaleAfter == 0 {
+		cfg.DesiredState.Global.Ingest.StaleAfter = DefaultIngestStaleAfter
+	}
 	if cfg.Alerts.AlertBehavior.DeduplicationWindow == 0 {
 		cfg.Alerts.AlertBehavior.DeduplicationWindow = 5 * time.Minute
 	}
@@ -336,6 +340,9 @@ func ValidateConfig(cfg *Config) error {
 
 	if err := validateIngestListeners(&cfg.DesiredState.Global.Ingest); err != nil {
 		return err
+	}
+	if cfg.DesiredState.Global.Ingest.StaleAfter < 0 {
+		return fmt.Errorf("global.ingest.stale_after must be >= 0")
 	}
 
 	// Validate alert channels

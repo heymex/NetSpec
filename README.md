@@ -75,6 +75,8 @@ The `.env` file should contain:
 - **`telemetry_ingest_push`** (default in the sample file): line-delimited JSON push ingest on **`global.ingest`** (**`NETSPEC_INGEST_PORT`** must match **`global.ingest.port`** — sample **57500** on bridge: Telegraf and NetSpec listen in **different containers**) with targeted SNMP confirmation per event — Telegraf + **`mdt-translator`** decode IOS-XE dial-out into that ingest. **`additional_listeners`** optional for per-port “sourcetype” tagging (same JSON format).
 - **`snmp_validate_only`**: SNMP validation only; no push ingest listener.
 
+In `telemetry_ingest_push` mode, if no **accepted** ingest event arrives for `global.ingest.stale_after` (default **5m**), NetSpec fires a **`telemetry_ingest_stale`** warning (`device: __pipeline__`, `entity: __ingest__`) through the same alert channels as interface drift. The alert clears when ingest resumes. SNMP fallback polling does **not** suppress this — it is specifically the push path going quiet (translator, Telegraf, or MDT).
+
 In `telemetry_ingest_push` mode you can optionally enable `global.snmp.telemetry_fallback_enabled` to run periodic full-device SNMP polling as a safety net when telemetry is missing. This fallback can significantly increase SNMP/device load and slow large deployments; use conservative intervals (for example `5m` or longer).
 
 ### First-time setup script

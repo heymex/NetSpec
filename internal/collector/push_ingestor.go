@@ -212,6 +212,23 @@ func (i *PushIngestor) handleConn(ctx context.Context, conn net.Conn) {
 	i.logger.Debug().Str("remote", remote).Time("closed_at", time.Now()).Msg("Push telemetry client disconnected")
 }
 
+// IngestStale reports whether accepted push ingest has been quiet longer than threshold.
+// A zero lastEventAt means no event has been accepted yet; age is then measured from
+// startedAt so a freshly started process does not fire immediately.
+func IngestStale(lastEventAt, startedAt, now time.Time, threshold time.Duration) bool {
+	if threshold <= 0 {
+		return false
+	}
+	ref := lastEventAt
+	if ref.IsZero() {
+		ref = startedAt
+	}
+	if ref.IsZero() || now.Before(ref) {
+		return false
+	}
+	return now.Sub(ref) >= threshold
+}
+
 func (i *PushIngestor) incReceived() {
 	i.statsMu.Lock()
 	defer i.statsMu.Unlock()

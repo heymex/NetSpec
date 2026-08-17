@@ -111,3 +111,57 @@ func TestProcessStateChange_ResolvedMatchesUpsertedAlert(t *testing.T) {
 		t.Fatalf("stale alert should clear on resolve: %#v", got)
 	}
 }
+
+func testEngine(t *testing.T) *Engine {
+	t.Helper()
+	cfg := &config.Config{
+		Alerts: config.AlertsConfig{
+			AlertBehavior: config.AlertBehavior{DeduplicationWindow: time.Minute},
+		},
+	}
+	return NewEngine(cfg, nil, zerolog.Nop(), "")
+}
+
+func TestSyncTelemetryIngestStale_FireAndResolve(t *testing.T) {
+	t.Parallel()
+	engine := testEngine(t)
+	last := time.Now().UTC().Add(-13 * time.Hour)
+
+	engine.SyncTelemetryIngestStale(true, last, 5*time.Minute)
+	engine.process(<-engine.events)
+
+	active := engine.GetActiveAlerts()
+	if len(active) != 1 {
+		t.Fatalf("expected 1 active alert, got %d", len(active))
+	}
+	a := active[0]
+	if a.AlertType != AlertTypeTelemetryIngestStale {
+		t.Fatalf("alert type: %q", a.AlertType)
+	}
+	if a.Device != PipelineSyntheticDevice || a.Entity != IngestSyntheticEntity {
+		t.Fatalf("identity: %s %s", a.Device, a.Entity)
+	}
+	if a.Severity != "warning" {
+		t.Fatalf("severity: %q", a.Severity)
+	}
+	if a.RelatedState["last_event_at"] != last.Format(time.RFC3339) {
+		t.Fatalf("related last_event_at: %#v", a.RelatedState)
+	}
+
+	engine.SyncTelemetryIngestStale(false, time.Now().UTC(), 5*time.Minute)
+	engine.process(<-engine.events)
+	if got := engine.GetActiveAlerts(); len(got) != 0 {
+		t.Fatalf("expected resolve to clear alert, still have %d: %#v", len(got), got)
+	}
+}
+
+func TestSyncTelemetryIngestStale_ResolveNoopWithoutActive(t *testing.T) {
+	t.Parallel()
+	engine := testEngine(t)
+	engine.SyncTelemetryIngestStale(false, time.Time{}, 5*time.Minute)
+	select {
+	case ev := <-engine.events:
+		t.Fatalf("expected no event when ingest is healthy and no alert is active, got %#v", ev)
+	default:
+	}
+}

@@ -36,6 +36,15 @@ type Engine struct {
 	notify          NotifyFunc
 }
 
+const (
+	// AlertTypeTelemetryIngestStale is the fleet-wide push-ingest silence alert.
+	AlertTypeTelemetryIngestStale = "telemetry_ingest_stale"
+	// PipelineSyntheticDevice is the alert.Device for pipeline-level (non-switch) alerts.
+	PipelineSyntheticDevice = "__pipeline__"
+	// IngestSyntheticEntity is the alert.Entity for ingest-listener conditions.
+	IngestSyntheticEntity = "__ingest__"
+)
+
 // persistedState is the on-disk format for alert-state.json.
 type persistedState struct {
 	ActiveAlerts    map[string]*types.Alert `json:"active_alerts"`
@@ -280,6 +289,57 @@ func (e *Engine) SyncSNMPReachability(device string, reachable bool, errMsg stri
 	case e.events <- ev:
 	default:
 		e.logger.Warn().Str("device", device).Msg("alert event channel full, dropping snmp reachability")
+	}
+}
+
+// SyncTelemetryIngestStale raises or clears a synthetic pipeline alert when
+// accepted push ingest has been quiet longer than threshold (or has resumed).
+func (e *Engine) SyncTelemetryIngestStale(stale bool, lastEventAt time.Time, threshold time.Duration) {
+	if !stale {
+		key := fmt.Sprintf("%s|%s|%s", PipelineSyntheticDevice, IngestSyntheticEntity, AlertTypeTelemetryIngestStale)
+		e.mu.RLock()
+		_, active := e.activeAlerts[key]
+		e.mu.RUnlock()
+		if !active {
+			return
+		}
+	}
+
+	related := map[string]string{
+		"threshold": threshold.String(),
+	}
+	var msg string
+	if lastEventAt.IsZero() {
+		related["last_event_at"] = "never"
+		if stale {
+			msg = fmt.Sprintf("Push telemetry ingest has received no events since startup (threshold %s)", threshold)
+		} else {
+			msg = "Push telemetry ingest is receiving events"
+		}
+	} else {
+		age := time.Since(lastEventAt).Truncate(time.Second)
+		related["last_event_at"] = lastEventAt.UTC().Format(time.RFC3339)
+		related["age"] = age.String()
+		if stale {
+			msg = fmt.Sprintf("Push telemetry ingest last event %s ago (threshold %s)", age, threshold)
+		} else {
+			msg = fmt.Sprintf("Push telemetry ingest resumed (last event at %s)", lastEventAt.UTC().Format(time.RFC3339))
+		}
+	}
+
+	ev := AlertEvent{
+		Device:    PipelineSyntheticDevice,
+		Entity:    IngestSyntheticEntity,
+		AlertType: AlertTypeTelemetryIngestStale,
+		Severity:  "warning",
+		Firing:    stale,
+		Message:   msg,
+		Related:   related,
+	}
+	select {
+	case e.events <- ev:
+	default:
+		e.logger.Warn().Msg("alert event channel full, dropping telemetry ingest stale")
 	}
 }
 

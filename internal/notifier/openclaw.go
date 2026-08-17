@@ -73,9 +73,14 @@ func buildOpenClawPayload(alert *types.Alert, publicBase string) openClawWebhook
 
 	base := strings.TrimRight(strings.TrimSpace(publicBase), "/")
 	if base != "" {
+		deviceLink := base + "/device/" + url.PathEscape(alert.Device)
+		// Synthetic pipeline/host entities are not real devices.
+		if strings.HasPrefix(alert.Device, "__") {
+			deviceLink = base + "/"
+		}
 		payload.Links = &openClawLinks{
 			Alert:  base + "/alerts",
-			Device: base + "/device/" + url.PathEscape(alert.Device),
+			Device: deviceLink,
 		}
 	}
 	return payload

@@ -11,6 +11,7 @@ All notable changes to this project are documented here. Release tags follow [Se
 - **NetSpecGraph per-interface UI:** uPlot traffic / errors / oper-status page querying contracted VictoriaMetrics series (`/device/{device}/interface/{iface}`).
 - **NetSpecGraph fleet view:** `/fleet` top-talkers + util honeycomb; bidirectional deep-links via `NETSPEC_PUBLIC_URL` / `GRAPH_PUBLIC_URL`.
 - Added **OpenClaw webhook** alert channel (`type: openclaw`) that POSTs structured JSON (`event`, `alert`, optional `links`) to an OpenClaw Gateway hook URL. See `docs/OPENCLAW_ALERTING.md`.
+- **`telemetry_ingest_stale`:** in `telemetry_ingest_push` mode, NetSpec fires a warning (and resolves it when ingest resumes) if no accepted push event arrives for `global.ingest.stale_after` (default **5m**). Uses the existing alert engine / OpenClaw / Apprise path so a dead MDT translator is not silent.
 
 ### Bug Fixes
 

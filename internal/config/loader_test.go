@@ -197,6 +197,9 @@ devices: {}
 	if cfg.TotalDeviceCount() != 0 {
 		t.Fatalf("device count: want 0, got %d", cfg.TotalDeviceCount())
 	}
+	if cfg.DesiredState.Global.Ingest.StaleAfter != DefaultIngestStaleAfter {
+		t.Fatalf("stale_after default: want %s, got %s", DefaultIngestStaleAfter, cfg.DesiredState.Global.Ingest.StaleAfter)
+	}
 }
 
 func TestValidateIngestDuplicateListenerPorts(t *testing.T) {
@@ -235,6 +238,57 @@ func TestValidateIngestDuplicateListenerPorts(t *testing.T) {
 	}
 	if err := ValidateConfig(cfg); err == nil {
 		t.Fatal("expected duplicate ingest port validation error")
+	}
+}
+
+func TestLoadConfigDirIngestStaleAfter(t *testing.T) {
+	t.Parallel()
+	tmp := t.TempDir()
+	cfgDir := filepath.Join(tmp, "cfg")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	desired := []byte(`global:
+  telemetry_mode: telemetry_ingest_push
+  snmp:
+    version: "2c"
+  ingest:
+    stale_after: 15m
+devices: {}
+`)
+	if err := os.WriteFile(filepath.Join(cfgDir, "desired-state.yaml"), desired, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfigDir(cfgDir)
+	if err != nil {
+		t.Fatalf("LoadConfigDir: %v", err)
+	}
+	if cfg.DesiredState.Global.Ingest.StaleAfter != 15*time.Minute {
+		t.Fatalf("stale_after: want 15m, got %s", cfg.DesiredState.Global.Ingest.StaleAfter)
+	}
+}
+
+func TestValidateConfigIngestStaleAfterNegative(t *testing.T) {
+	t.Parallel()
+	cfg := &Config{
+		DesiredState: DesiredStateConfig{
+			Global: GlobalConfig{
+				TelemetryMode: "telemetry_ingest_push",
+				SNMP:          SNMPConfig{Version: "2c"},
+				Ingest:        IngestConfig{StaleAfter: -time.Second},
+			},
+			Devices: map[string]DeviceConfig{
+				"sw1": {
+					Address: "10.0.0.1",
+					Interfaces: map[string]InterfaceConfig{
+						"Gi1/0/1": {DesiredState: "up", Monitor: true},
+					},
+				},
+			},
+		},
+	}
+	if err := ValidateConfig(cfg); err == nil {
+		t.Fatal("expected negative stale_after validation error")
 	}
 }
 

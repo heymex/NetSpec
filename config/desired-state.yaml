@@ -28,5 +28,8 @@ global:
     # additional_listeners:
     #   - port: 57501
     #     source: cribl_mdt
+    # Fire telemetry_ingest_stale (warning) when no accepted ingest event arrives
+    # for this long. Default 5m. SNMP fallback does not suppress this alert.
+    # stale_after: 5m
 
 devices: {}

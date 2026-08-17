@@ -56,6 +56,8 @@ Firing example:
 
 `event` is `alert.firing`, `alert.acked`, or `alert.resolved` based on `alert.state`. `links` is omitted when `NETSPEC_PUBLIC_URL` is unset.
 
+Pipeline-level alerts (not a switch) use synthetic identity `device: "__pipeline__"` / `entity: "__ingest__"`. The current one is **`telemetry_ingest_stale`** (warning): no accepted push ingest event for `global.ingest.stale_after` (default 5m). `related_state` includes `last_event_at`, `age`, and `threshold`. `links.device` points at the dashboard (`/`) rather than a device page.
+
 ## OpenClaw side
 
 1. Enable hooks with a dedicated token (`hooks.token`).
