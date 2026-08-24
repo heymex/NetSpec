@@ -3,6 +3,7 @@ package discovery
 import (
 	"fmt"
 	"net"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,13 +28,18 @@ const (
 	ifStackStatusOID = "1.3.6.1.2.1.31.1.2.1.3"
 )
 
-var ifTypeLabels = map[int]string{
-	6:   "ethernetCsmacd",
-	24:  "softwareLoopback",
-	53:  "propVirtual",
-	131: "tunnel",
-	161: "ieee8023adLag",
-}
+var (
+	ifTypeLabels = map[int]string{
+		6:   "ethernetCsmacd",
+		24:  "softwareLoopback",
+		53:  "propVirtual",
+		131: "tunnel",
+		161: "ieee8023adLag",
+	}
+
+	// hostnamePattern validates hostnames for allowed characters.
+	hostnamePattern = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9\-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9\-]{0,61}[A-Za-z0-9])?)*$`)
+)
 
 func ProbeDevice(address string, port uint16, community string, timeout time.Duration) (*ProbeResult, error) {
 	if err := validateAddress(address); err != nil {
@@ -187,17 +193,30 @@ func newSNMPClient(address string, port uint16, community string, timeout time.D
 }
 
 func validateAddress(address string) error {
+	address = strings.TrimSpace(address)
+	if address == "" {
+		return fmt.Errorf("address is required")
+	}
 	if strings.Contains(address, "://") {
 		return fmt.Errorf("address must not include URL scheme")
 	}
-	if net.ParseIP(address) != nil {
-		return nil
-	}
-	if strings.TrimSpace(address) == "" {
-		return fmt.Errorf("address is required")
-	}
 	if strings.Contains(address, "/") {
 		return fmt.Errorf("invalid hostname")
+	}
+	if strings.Contains(address, "@") {
+		return fmt.Errorf("invalid hostname")
+	}
+
+	if ip := net.ParseIP(address); ip != nil {
+		if ip.IsUnspecified() || ip.IsMulticast() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+			return fmt.Errorf("invalid address")
+		}
+		return nil
+	}
+
+	normalized := strings.ToLower(address)
+	if !hostnamePattern.MatchString(normalized) {
+		return fmt.Errorf("invalid address")
 	}
 	return nil
 }
