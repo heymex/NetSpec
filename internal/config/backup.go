@@ -279,8 +279,17 @@ func normalizeBackupZipPath(name string) (string, error) {
 	if name == "" {
 		return "", fmt.Errorf("empty zip entry path")
 	}
-	// Normalize separators first so Clean collapses ".." on all platforms.
+	// Reject ".." components before Clean so entries like "a/../b.yaml" are
+	// not silently collapsed into a sibling path.
 	name = filepath.ToSlash(name)
+	if filepath.IsAbs(name) || strings.HasPrefix(name, "/") {
+		return "", fmt.Errorf("absolute zip entry path rejected: %s", name)
+	}
+	for _, part := range strings.Split(name, "/") {
+		if part == ".." {
+			return "", fmt.Errorf("zip entry path traversal rejected: %s", name)
+		}
+	}
 	name = filepath.Clean(name)
 	name = filepath.ToSlash(name)
 	name = strings.TrimPrefix(name, "./")
