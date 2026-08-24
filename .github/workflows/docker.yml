@@ -16,7 +16,7 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
-  # Build-only job for pull requests with read-only permissions
+  # Pull requests: build only, with no package-write token.
   build-pr:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -26,11 +26,11 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
 
       - name: Detect image-related changes
         id: changes
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
         with:
           filters: |
             netspec:
@@ -46,11 +46,11 @@ jobs:
               - '.github/workflows/docker.yml'
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@f95db51fddba0c2d1ec667646a06c2ce06100226 # v3.0.0
 
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@96383f45573cb7f253c731d3b3ab81c87ef81934 # v5.0.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
@@ -68,7 +68,7 @@ jobs:
 
       - name: Build (validation only)
         if: steps.changes.outputs.netspec == 'true'
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@0565240e2d4ab88bba5387d719585280857ece09 # v5.0.0
         with:
           context: .
           platforms: linux/amd64
@@ -84,7 +84,7 @@ jobs:
 
       - name: Extract metadata (mdt-translator)
         id: meta_mdt
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@96383f45573cb7f253c731d3b3ab81c87ef81934 # v5.0.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-mdt-translator
           tags: |
@@ -92,7 +92,7 @@ jobs:
 
       - name: Build mdt-translator (validation only)
         if: steps.changes.outputs.translator == 'true'
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@0565240e2d4ab88bba5387d719585280857ece09 # v5.0.0
         with:
           context: ./tools/sidecar
           file: ./tools/sidecar/Dockerfile
@@ -103,7 +103,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # Build and push job for trusted push/tag events with write permissions
+  # Pushes and tags: trusted events with package-write permission.
   build-push:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
@@ -113,11 +113,11 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
 
       - name: Detect image-related changes
         id: changes
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
         with:
           filters: |
             netspec:
@@ -133,10 +133,10 @@ jobs:
               - '.github/workflows/docker.yml'
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@f95db51fddba0c2d1ec667646a06c2ce06100226 # v3.0.0
 
       - name: Log in to Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@343f7c4344506bcbf9b4de18042ae17996df046d # v3.0.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -144,7 +144,7 @@ jobs:
 
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@96383f45573cb7f253c731d3b3ab81c87ef81934 # v5.0.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
@@ -157,9 +157,18 @@ jobs:
 
       - name: Set version info
         id: version
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
         run: |
-          if [ "${{ github.ref_type }}" = "tag" ]; then
-            VERSION="${{ github.ref_name }}"
+          if [ "$REF_TYPE" = "tag" ]; then
+            # Validate that the tag matches semantic versioning pattern to prevent injection
+            if echo "$REF_NAME" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9._-]+)?(\+[a-zA-Z0-9._-]+)?$'; then
+              VERSION="$REF_NAME"
+            else
+              echo "Error: Tag '$REF_NAME' does not match semantic versioning pattern" >&2
+              exit 1
+            fi
           else
             VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
           fi
@@ -172,7 +181,7 @@ jobs:
       - name: Build and push
         # Always publish tagged releases, even if this commit touched docs only.
         if: github.ref_type == 'tag' || steps.changes.outputs.netspec == 'true'
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@0565240e2d4ab88bba5387d719585280857ece09 # v5.0.0
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -188,7 +197,7 @@ jobs:
 
       - name: Extract metadata (mdt-translator)
         id: meta_mdt
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@96383f45573cb7f253c731d3b3ab81c87ef81934 # v5.0.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-mdt-translator
           tags: |
@@ -202,7 +211,7 @@ jobs:
       - name: Build and push mdt-translator
         # Always publish tagged releases, even if translator paths were unchanged.
         if: github.ref_type == 'tag' || steps.changes.outputs.translator == 'true'
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@0565240e2d4ab88bba5387d719585280857ece09 # v5.0.0
         with:
           context: ./tools/sidecar
           file: ./tools/sidecar/Dockerfile

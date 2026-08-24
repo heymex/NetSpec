@@ -412,17 +412,18 @@ func main() {
 			signingSecret = os.Getenv(cfg.Alerts.Slack.SigningSecretEnv)
 		}
 		if signingSecret == "" {
-			logger.Warn().Msg("Slack ChatOps: SLACK_SIGNING_SECRET not set — webhook signature validation disabled")
+			logger.Warn().Msg("Slack ChatOps: SLACK_SIGNING_SECRET not set — webhook will not be registered (signature validation required)")
+		} else {
+			slackWebhookHandler := webhook.NewSlackHandler(signingSecret, alertEngine, slackNotifier, logger)
+			apiServer.SetSlackWebhookHandler(slackWebhookHandler)
+			logger.Info().
+				Str("path", "/webhook/slack/interactions").
+				Str("port", apiPort).
+				Msg("Slack interaction webhook registered")
 		}
-		slackWebhookHandler := webhook.NewSlackHandler(signingSecret, alertEngine, slackNotifier, logger)
-		apiServer.SetSlackWebhookHandler(slackWebhookHandler)
-		logger.Info().
-			Str("path", "/webhook/slack/interactions").
-			Str("port", apiPort).
-			Msg("Slack interaction webhook registered")
 	}
 
-	// Configure auth (disabled when NETSPEC_ADMIN_PASSWORD_HASH is unset).
+	// Configure auth (disabled when both NETSPEC_ADMIN_PASSWORD_HASH and NETSPEC_API_TOKEN are unset).
 	authManager := auth.NewManager(
 		os.Getenv("NETSPEC_ADMIN_PASSWORD_HASH"),
 		os.Getenv("NETSPEC_API_TOKEN"),
@@ -430,11 +431,24 @@ func main() {
 	if authManager.Enabled() {
 		logger.Info().Msg("Authentication enabled")
 	} else {
-		logger.Warn().Msg("Authentication disabled: set NETSPEC_ADMIN_PASSWORD_HASH to enable")
+		logger.Warn().Msg("Authentication disabled: set NETSPEC_ADMIN_PASSWORD_HASH or NETSPEC_API_TOKEN to enable")
+	}
+
+	// Configure TLS (optional, but strongly recommended for production).
+	tlsCertPath := os.Getenv("TLS_CERT_PATH")
+	tlsKeyPath := os.Getenv("TLS_KEY_PATH")
+	if tlsCertPath != "" && tlsKeyPath != "" {
+		logger.Info().
+			Str("cert", tlsCertPath).
+			Str("key", tlsKeyPath).
+			Msg("TLS configured - server will use HTTPS")
+	} else {
+		logger.Warn().Msg("TLS not configured - server will use HTTP (set TLS_CERT_PATH and TLS_KEY_PATH for HTTPS)")
 	}
 
 	// Configure the API server with log buffer, config, version, and collector getter
 	apiServer.SetAuthManager(authManager)
+	apiServer.SetTLSConfig(tlsCertPath, tlsKeyPath)
 	apiServer.SetLogBuffer(logBuffer)
 	apiServer.SetConfig(cfg, *configPath)
 	apiServer.SetSNMPReachabilityTracker(reachTracker)
