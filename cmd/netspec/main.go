@@ -422,7 +422,7 @@ func main() {
 			Msg("Slack interaction webhook registered")
 	}
 
-	// Configure auth (disabled when NETSPEC_ADMIN_PASSWORD_HASH is unset).
+	// Configure auth (disabled when both NETSPEC_ADMIN_PASSWORD_HASH and NETSPEC_API_TOKEN are unset).
 	authManager := auth.NewManager(
 		os.Getenv("NETSPEC_ADMIN_PASSWORD_HASH"),
 		os.Getenv("NETSPEC_API_TOKEN"),
@@ -430,7 +430,7 @@ func main() {
 	if authManager.Enabled() {
 		logger.Info().Msg("Authentication enabled")
 	} else {
-		logger.Warn().Msg("Authentication disabled: set NETSPEC_ADMIN_PASSWORD_HASH to enable")
+		logger.Warn().Msg("Authentication disabled: set NETSPEC_ADMIN_PASSWORD_HASH or NETSPEC_API_TOKEN to enable")
 	}
 
 	// Configure TLS (optional, but strongly recommended for production).

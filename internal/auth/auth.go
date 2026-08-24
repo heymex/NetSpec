@@ -37,12 +37,12 @@ func NewManager(passwordHash, apiToken string) *Manager {
 
 // Enabled reports whether authentication is active.
 func (m *Manager) Enabled() bool {
-	return m.passwordHash != nil
+	return m.passwordHash != nil || m.apiToken != ""
 }
 
 // ValidatePassword returns true if password matches the stored bcrypt hash.
 func (m *Manager) ValidatePassword(password string) bool {
-	if !m.Enabled() {
+	if m.passwordHash == nil {
 		return false
 	}
 	return bcrypt.CompareHashAndPassword(m.passwordHash, []byte(password)) == nil
