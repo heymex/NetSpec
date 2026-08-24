@@ -25,6 +25,30 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # Fetch full history to validate tag ancestry
+          fetch-depth: 0
+
+      - name: Validate tag points to main branch commit
+        if: github.ref_type == 'tag'
+        run: |
+          set -euo pipefail
+          
+          TAG_COMMIT=$(git rev-parse HEAD)
+          echo "Tag '${{ github.ref_name }}' points to commit: $TAG_COMMIT"
+          
+          # Fetch main branch to ensure we have the latest
+          git fetch origin main:main
+          
+          # Check if the tagged commit is reachable from main
+          if ! git merge-base --is-ancestor "$TAG_COMMIT" main; then
+            echo "::error::Tag '${{ github.ref_name }}' points to commit $TAG_COMMIT which is not in the main branch history."
+            echo "::error::Only commits that have been merged to main can be released."
+            echo "::error::This prevents unauthorized releases from unreviewed commits."
+            exit 1
+          fi
+          
+          echo "✓ Tag validation passed: commit $TAG_COMMIT is in main branch history"
 
       - name: Detect image-related changes
         id: changes
