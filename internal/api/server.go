@@ -188,6 +188,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/alerts/", s.handleAlertAction)
 	mux.HandleFunc("/api/logs", s.handleLogsAPI)
 	mux.HandleFunc("/api/reload", s.handleReload)
+	mux.HandleFunc("/api/config/export", s.handleConfigExport)
+	mux.HandleFunc("/api/config/import", s.handleConfigImport)
 	mux.HandleFunc("/api/notifications/test", s.handleNotificationTest)
 	mux.HandleFunc("/api/devices", s.handleDevicesAPI)
 	mux.HandleFunc("/api/devices/", s.handleDeviceDetailAPI)

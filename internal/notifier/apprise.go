@@ -48,33 +48,25 @@ func NewNotifier(logger zerolog.Logger, channels map[string]config.ChannelConfig
 }
 
 // SendAlert delivers an alert to the given logical channel names (from alert_rules).
+// Supports type "apprise" (default) and "openclaw". type "slack_chatops" is skipped here
+// (handled by SlackNotifier in the alert engine).
 func (n *Notifier) SendAlert(alert *types.Alert, channelNames []string) error {
 	if len(channelNames) == 0 {
 		return nil
 	}
 
 	apiBase := strings.TrimSpace(os.Getenv("APPRISE_API_URL"))
-	if apiBase == "" {
-		return fmt.Errorf("APPRISE_API_URL is not set; cannot deliver notifications (set it to your Apprise-API base URL, e.g. http://localhost:8086)")
-	}
-
 	title := fmt.Sprintf("NetSpec: %s", alert.Severity)
 	body := n.formatMessage(alert)
 	notifyType := appriseNotifyType(alert.Severity, alert.State)
 
 	var errs []error
-	attempted := 0
 
 	for _, name := range channelNames {
 		ch, ok := n.channels[name]
 		if !ok {
 			n.logger.Warn().Str("channel", name).Msg("unknown alert channel referenced in alert_rules")
 			errs = append(errs, fmt.Errorf("channel %q: not defined in alerts.channels", name))
-			continue
-		}
-		// Non-Apprise channel types (e.g. slack_chatops) are handled by their own notifiers.
-		if ch.Type != "" && ch.Type != "apprise" {
-			n.logger.Debug().Str("channel", name).Str("type", ch.Type).Msg("skipping non-apprise channel")
 			continue
 		}
 		if !severityAllows(ch.SeverityFilter, alert.Severity) {
@@ -85,28 +77,65 @@ func (n *Notifier) SendAlert(alert *types.Alert, channelNames []string) error {
 			continue
 		}
 
-		serviceURL := strings.TrimSpace(os.Getenv(ch.URLEnv))
-		if serviceURL == "" {
-			n.logger.Warn().
-				Str("channel", name).
-				Str("url_env", ch.URLEnv).
-				Msg("notification URL environment variable is empty")
-			errs = append(errs, fmt.Errorf("channel %q: environment variable %s is not set or empty", name, ch.URLEnv))
+		switch ch.Type {
+		case "slack_chatops":
+			// Handled by SlackNotifier in the alert engine.
+			n.logger.Debug().Str("channel", name).Str("type", ch.Type).Msg("skipping non-apprise channel")
 			continue
-		}
-
-		attempted++
-		if err := n.deliver(apiBase, serviceURL, title, body, notifyType, name, scrubServiceURL(serviceURL)); err != nil {
-			n.logger.Error().Err(err).Str("channel", name).Msg("failed to send notification")
-			errs = append(errs, fmt.Errorf("channel %q: %w", name, err))
-		} else {
-			n.logger.Info().Str("channel", name).Str("alert_id", alert.ID).Msg("notification sent")
+		case "openclaw":
+			webhookURL := strings.TrimSpace(os.Getenv(ch.URLEnv))
+			if webhookURL == "" {
+				n.logger.Warn().
+					Str("channel", name).
+					Str("url_env", ch.URLEnv).
+					Msg("openclaw webhook URL environment variable is empty")
+				errs = append(errs, fmt.Errorf("channel %q: environment variable %s is not set or empty", name, ch.URLEnv))
+				continue
+			}
+			token := ""
+			if ch.TokenEnv != "" {
+				token = strings.TrimSpace(os.Getenv(ch.TokenEnv))
+				if token == "" {
+					n.logger.Warn().
+						Str("channel", name).
+						Str("token_env", ch.TokenEnv).
+						Msg("openclaw token environment variable is empty")
+					errs = append(errs, fmt.Errorf("channel %q: environment variable %s is not set or empty", name, ch.TokenEnv))
+					continue
+				}
+			}
+			if err := n.deliverOpenClaw(webhookURL, token, name, alert); err != nil {
+				n.logger.Error().Err(err).Str("channel", name).Msg("failed to send openclaw notification")
+				errs = append(errs, fmt.Errorf("channel %q: %w", name, err))
+			} else {
+				n.logger.Info().Str("channel", name).Str("alert_id", alert.ID).Msg("openclaw notification sent")
+			}
+		case "apprise", "":
+			if apiBase == "" {
+				errs = append(errs, fmt.Errorf("channel %q: APPRISE_API_URL is not set; cannot deliver Apprise notifications (set it to your Apprise-API base URL, e.g. http://localhost:8086)", name))
+				continue
+			}
+			serviceURL := strings.TrimSpace(os.Getenv(ch.URLEnv))
+			if serviceURL == "" {
+				n.logger.Warn().
+					Str("channel", name).
+					Str("url_env", ch.URLEnv).
+					Msg("notification URL environment variable is empty")
+				errs = append(errs, fmt.Errorf("channel %q: environment variable %s is not set or empty", name, ch.URLEnv))
+				continue
+			}
+			if err := n.deliver(apiBase, serviceURL, title, body, notifyType, name, scrubServiceURL(serviceURL)); err != nil {
+				n.logger.Error().Err(err).Str("channel", name).Msg("failed to send notification")
+				errs = append(errs, fmt.Errorf("channel %q: %w", name, err))
+			} else {
+				n.logger.Info().Str("channel", name).Str("alert_id", alert.ID).Msg("notification sent")
+			}
+		default:
+			n.logger.Warn().Str("channel", name).Str("type", ch.Type).Msg("unsupported alert channel type")
+			errs = append(errs, fmt.Errorf("channel %q: unsupported type %q", name, ch.Type))
 		}
 	}
 
-	if attempted == 0 {
-		return errors.Join(errs...)
-	}
 	return errors.Join(errs...)
 }
 
@@ -149,6 +178,14 @@ func (n *Notifier) NotifyAppriseTest(channelNames []string) ([]ChannelTestOutcom
 		if !ok {
 			outcomes = append(outcomes, ChannelTestOutcome{Channel: name, OK: false, Message: "unknown channel (not in alerts.yaml)"})
 			errs = append(errs, fmt.Errorf("channel %q: not defined in alerts.channels", name))
+			continue
+		}
+		if ch.Type != "" && ch.Type != "apprise" {
+			outcomes = append(outcomes, ChannelTestOutcome{
+				Channel: name,
+				OK:      true,
+				Message: fmt.Sprintf("skipped: channel type %q is not delivered via Apprise test (use a real alert or openclaw webhook)", ch.Type),
+			})
 			continue
 		}
 		if !severityAllows(ch.SeverityFilter, testSeverity) {

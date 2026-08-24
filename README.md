@@ -60,6 +60,7 @@ The `.env` file should contain:
 - `APPRISE_API_URL` - Apprise-API **base URL** NetSpec uses to deliver alerts (`{APPRISE_API_URL}/notify/`). Default compose (**bridge** NetSpec ↔ Apprise): **`http://netspec-apprise:8000`** (Docker DNS). The host publishes Apprise UI on **`http://127.0.0.1:8086`** for convenience.
 - Channel targets come from env vars named in `config/alerts.yaml` under `channels.*.url_env` (for example `APPRISE_SLACK_WEBHOOK`). See `.env.example` for placeholders.
 - Optional: `APPRISE_NOTIFY_TIMEOUT` (HTTP timeout per notify, e.g. `15s`). Troubleshooting: [Apprise alerting](docs/APPRISE_ALERTING.md).
+- Optional OpenClaw webhooks: channel `type: openclaw` with `url_env` / `token_env`, plus `NETSPEC_PUBLIC_URL` for embedded UI links. See [OpenClaw alerting](docs/OPENCLAW_ALERTING.md).
 - `NETSPEC_INGEST_HOST` / `NETSPEC_INGEST_PORT` - where **`mdt-translator`** sends NetSpec JSON lines (must match `global.ingest` when `telemetry_mode` is `telemetry_ingest_push`; default compose **`NETSPEC_INGEST_HOST=netspec-netspec`**)
 - `NETSPEC_ADMIN_PASSWORD_HASH` / `NETSPEC_SESSION_SECRET` - optional **browser session** login for the web UI and API HTML routes (see **`.env.example`**; use `netspec hash-password` or CI image entrypoint). Omit both (or leave hash empty) for open access.
 - `NETSPEC_API_TOKEN` - optional **bearer token** for scripted API access alongside session cookies
@@ -106,7 +107,7 @@ docker compose up -d
 
 This starts **NetSpec** (web/API on host **`API_PORT`**, default **8088**), **Apprise-API** (**`8086:8000`** on the host), **Telegraf MDT** (host **`57500/tcp`** published into the container for MDT dial-out), and **mdt-translator**. All services attach to the Compose **`netspec` bridge** (`docker-compose.yml` uses a **`netspec-` name prefix**).
 
-Runtime artifacts: `${NETSPEC_DATA_DIR}/mdt-sidecar` (`decoded.json`, `forwarder.log`).
+Runtime artifacts: `${NETSPEC_DATA_DIR}/mdt-sidecar` (`decoded.json`, `forwarder.log`). **`decoded.json` is a tail-only buffer** between Telegraf and `mdt-translator` — it is **not** long-term storage. Telegraf rotates it at **100MB** (`tools/sidecar/telegraf-mdt.conf`); the translator prunes `decoded.json.N` archives on start and rotates `forwarder.log` (see **`MDT_FORWARDER_LOG_*`** in `.env.example`). If disk is already full from an older deploy without rotation, stop **`netspec-telegraf-mdt`** and **`netspec-mdt-translator`**, remove or truncate `${NETSPEC_DATA_DIR}/mdt-sidecar/decoded.json` (and any `decoded.json.*`), then redeploy/restart.
 
 All services use Docker log rotation via the `json-file` driver with per-service overrides. Tune `NETSPEC_*`, `APPRISE_*`, `TELEGRAF_*`, and `TRANSLATOR_*` limits in `.env` to avoid multi-GB container logs on low-activity stacks.
 
@@ -201,7 +202,7 @@ As of **v2.0.0-beta.2**, highlights include:
 - ✅ SNMP validator with targeted polling
 - ✅ Interface state evaluation (including **port-channel** members, `member_policy` thresholds, and high-speed interface alias normalization for SNMP vs. telemetry name drift)
 - ✅ Push telemetry ingest via **Telegraf MDT + `mdt-translator`** (newline-delimited JSON into NetSpec)
-- ✅ **Alerts on desired-state mismatch**, delivered via **Apprise-API** (`/notify/`) and channels in `config/alerts.yaml`
+- ✅ **Alerts on desired-state mismatch**, delivered via **Apprise-API** (`/notify/`), optional **OpenClaw** webhooks, and channels in `config/alerts.yaml`
 - ✅ YAML configuration (split devices, optional credentials and maintenance files)
 - ✅ Docker deployment and **local parity** Makefile workflow
 - ✅ Web status interface, discovery wizard (including **re-walk / sync** monitored interfaces for existing devices), API browser (OpenAPI/Swagger)
@@ -224,6 +225,7 @@ NetSpec includes a built-in web UI accessible at `http://localhost:8088` (or you
 - **Live Logs** - Auto-refreshing log stream (newest entries first; periodic refresh)
 - **Configuration View** - Collection interval and dedup settings
 - **Config Reload** - Button to reload all configuration files from the config directory without restart
+- **Config export / import** - Dashboard buttons download or restore a zip backup of YAML configuration (devices, alerts, rules, credentials, maintenance)
 - **Test alerts** - Dashboard button that POSTs to Apprise for every channel in `alerts.yaml` (synthetic **warning**, same URLs and **severity_filter** behavior as production alerts); per-channel results appear in a toast
 - **API Browser** - Interactive OpenAPI documentation at `/api-browser` (Swagger UI with try-it-out; machine-readable spec at `/openapi.json`). Interface names in URLs must be **percent-encoded** (for example `GigabitEthernet1%2F0%2F1`).
 - **SNMP notices** - When SNMP matters for your deployment (fallback polling, snmp-only mode, or telemetry + SNMP reachability), the dashboard, device pages, wizard, and `/status` surface short **banner warnings** so operators see load/behavior expectations beyond log lines alone.
@@ -244,6 +246,8 @@ NetSpec includes a built-in web UI accessible at `http://localhost:8088` (or you
 | `/api/devices/{name}` | DELETE | Remove device from desired-state YAML (and split device file if present), reload when configured, clear active alerts for that device |
 | `/api/devices/{name}/interfaces/{iface}` | PATCH | Update interface policy fields (`monitor`, `desired_state`, `admin_state`, `description`, `alert_severity`, etc.) |
 | `/api/reload` | POST | Reload configuration |
+| `/api/config/export` | GET | Download zip backup of YAML configuration |
+| `/api/config/import` | POST | Upload zip backup (`?mode=replace` or `merge`); reloads on success |
 | `/api/notifications/test` | POST | Optional JSON body `{"channels":["name",...]}`; send synthetic Apprise **warning** to those channels or to **all** when omitted (`all_ok`, per-channel `outcomes` in response; **502**/**503** on prerequisites errors) |
 | `/api/telemetry/stats` | GET | Push ingest counters, **10-minute ingest-rate points**, listener stats, last event time, top talkers, and unknown devices (with wizard URLs; telemetry source IP can prefill the wizard when the device is not in config yet) |
 | `/noc` | GET | NOC wallboard-style high-density operational view |
@@ -255,7 +259,7 @@ NetSpec includes a built-in web UI accessible at `http://localhost:8088` (or you
 
 ## Architecture
 
-`SNMP Validation / Push Ingest → State Evaluator → Alert Engine → Apprise`
+`SNMP Validation / Push Ingest → State Evaluator → Alert Engine → Apprise / OpenClaw`
 
 ### Current Telemetry Modes
 

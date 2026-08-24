@@ -191,3 +191,39 @@ device_roles:
           state_mismatch: critical
           member_down: critical
           channel_down: critical
+
+  # ── Legacy Access switch ─────────────────────────────────────────────────────────────
+  - prefix: sw
+    name: Access Switch
+    port_rules:
+      - label: Trunk / Uplink Ports
+        match: "t|*"
+        monitor: true
+        desired_state: up
+        alerts:
+          state_mismatch: critical
+          channel_down: critical
+
+      - label: Port-Channel Uplinks
+        match: "po*"
+        monitor: true
+        desired_state: up
+        alerts:
+          state_mismatch: critical
+          member_down: warning
+          channel_down: critical
+
+      - label: Wireless APs
+        match: "ap*"
+        monitor: false
+
+      - label: Building / Infrastructure
+        match: "bldg*"
+        monitor: true
+        desired_state: up
+        alerts:
+          state_mismatch: warning
+
+      - label: NAC Access Ports
+        match: "*nac access port*"
+        monitor: false

@@ -101,6 +101,9 @@ func main() {
 		Int("monolithic_device_count", cfg.MonolithicDeviceCount).
 		Int("split_device_count", cfg.SplitDeviceCount).
 		Msg("Configuration loaded")
+	if cfg.TotalDeviceCount() == 0 {
+		logger.Warn().Msg("No devices configured — use the discovery wizard to add devices")
+	}
 
 	var runningCfg atomic.Pointer[config.Config]
 	runningCfg.Store(cfg)

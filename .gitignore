@@ -21,9 +21,15 @@ go.work
 # IDE
 .idea/
 .vscode/
+*.code-workspace
 *.swp
 *.swo
 *~
+
+# Python (sidecar tooling under tools/)
+__pycache__/
+*.py[cod]
+*$py.class
 
 # Environment files
 .env

@@ -104,9 +104,10 @@ ok "ingest ports match: $INGEST_PORT_YAML"
 
 if [[ -d "$DATA_DIR/config/devices" ]]; then
 	if ! ls -1 "$DATA_DIR/config/devices"/*.yaml >/dev/null 2>&1; then
-		die "no split-device YAML files in $DATA_DIR/config/devices"
+		warn "no split-device YAML files in $DATA_DIR/config/devices (valid after deleting all devices; use /wizard to add devices)"
+	else
+		ok "split-device files present in config/devices"
 	fi
-	ok "split-device files present in config/devices"
 else
 	warn "split-device directory missing: $DATA_DIR/config/devices (monolithic devices may still be valid)"
 fi
@@ -120,6 +121,13 @@ if [[ -d "$SIDECAR_DIR" ]]; then
 		uid=$(stat -c '%u' "$f" 2>/dev/null || true)
 		if [[ -n "$uid" && "$uid" != "999" ]]; then
 			warn "mdt-sidecar file owned by uid $uid (Telegraf needs 999): $f — fix: sudo chown -R 999:999 \"$SIDECAR_DIR\" && sudo docker restart netspec-telegraf-mdt netspec-mdt-translator"
+		fi
+	done
+	for f in "$SIDECAR_DIR"/decoded.json "$SIDECAR_DIR"/decoded.json.* "$SIDECAR_DIR"/forwarder.log*; do
+		[[ -e "$f" ]] || continue
+		size=$(stat -c '%s' "$f" 2>/dev/null || stat -f '%z' "$f" 2>/dev/null || echo 0)
+		if [[ "$size" -gt 104857600 ]]; then
+			warn "mdt-sidecar file exceeds 100MB ($(numfmt --to=iec "$size" 2>/dev/null || echo "${size} bytes")): $f — deploy Telegraf rotation + translator prune, or stop telegraf/translator and truncate/remove stale files"
 		fi
 	done
 	ok "mdt-sidecar checked (decoded.json / forwarder.log must be uid 999 when present)"

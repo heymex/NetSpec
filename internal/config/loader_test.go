@@ -173,6 +173,32 @@ devices:
 	}
 }
 
+func TestLoadConfigDirAllowsZeroDevices(t *testing.T) {
+	t.Parallel()
+	tmp := t.TempDir()
+	cfgDir := filepath.Join(tmp, "cfg")
+	if err := os.MkdirAll(filepath.Join(cfgDir, "devices"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	desired := []byte(`global:
+  telemetry_mode: telemetry_ingest_push
+  snmp:
+    version: "2c"
+devices: {}
+`)
+	if err := os.WriteFile(filepath.Join(cfgDir, "desired-state.yaml"), desired, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadConfigDir(cfgDir)
+	if err != nil {
+		t.Fatalf("LoadConfigDir with zero devices: %v", err)
+	}
+	if cfg.TotalDeviceCount() != 0 {
+		t.Fatalf("device count: want 0, got %d", cfg.TotalDeviceCount())
+	}
+}
+
 func TestValidateIngestDuplicateListenerPorts(t *testing.T) {
 	t.Parallel()
 	cfg := &Config{
@@ -209,6 +235,46 @@ func TestValidateIngestDuplicateListenerPorts(t *testing.T) {
 	}
 	if err := ValidateConfig(cfg); err == nil {
 		t.Fatal("expected duplicate ingest port validation error")
+	}
+}
+
+func TestValidateConfigOpenClawChannelRequiresURLEnv(t *testing.T) {
+	t.Parallel()
+	cfg := &Config{
+		DesiredState: DesiredStateConfig{
+			Global: GlobalConfig{
+				TelemetryMode: "snmp_validate_only",
+				SNMP:          SNMPConfig{Version: "2c"},
+			},
+			Devices: map[string]DeviceConfig{
+				"sw1": {
+					Address: "10.0.0.1",
+					Interfaces: map[string]InterfaceConfig{
+						"Gi1/0/1": {DesiredState: "up", Monitor: true},
+					},
+				},
+			},
+		},
+		Alerts: AlertsConfig{
+			Channels: map[string]ChannelConfig{
+				"ops-openclaw": {Type: "openclaw"},
+			},
+			AlertRules: map[string]AlertRule{},
+			AlertBehavior: AlertBehavior{
+				DeduplicationWindow: time.Minute,
+			},
+		},
+	}
+	if err := ValidateConfig(cfg); err == nil {
+		t.Fatal("expected url_env required for openclaw")
+	}
+
+	cfg.Alerts.Channels["ops-openclaw"] = ChannelConfig{
+		Type:   "openclaw",
+		URLEnv: "OPENCLAW_WEBHOOK_URL",
+	}
+	if err := ValidateConfig(cfg); err != nil {
+		t.Fatalf("unexpected: %v", err)
 	}
 }
 
