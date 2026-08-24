@@ -37,10 +37,6 @@ var (
 		161: "ieee8023adLag",
 	}
 
-	// allowedDomains defines the permitted SNMP target domains.
-	// add your allowed domains here
-	allowedDomains = []string{"example.com"}
-
 	// hostnamePattern validates hostnames for allowed characters.
 	hostnamePattern = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9\-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9\-]{0,61}[A-Za-z0-9])?)*$`)
 )
@@ -197,46 +193,31 @@ func newSNMPClient(address string, port uint16, community string, timeout time.D
 }
 
 func validateAddress(address string) error {
+	address = strings.TrimSpace(address)
+	if address == "" {
+		return fmt.Errorf("address is required")
+	}
 	if strings.Contains(address, "://") {
 		return fmt.Errorf("address must not include URL scheme")
-	}
-	if strings.TrimSpace(address) == "" {
-		return fmt.Errorf("address is required")
 	}
 	if strings.Contains(address, "/") {
 		return fmt.Errorf("invalid hostname")
 	}
-
-	// Normalize the address for validation
-	normalizedAddr := strings.ToLower(strings.TrimSpace(address))
-
-	// Check if it's an IP address
-	if net.ParseIP(normalizedAddr) != nil {
-		// IP addresses are not allowed - only allowlisted domains
-		return fmt.Errorf("invalid address")
+	if strings.Contains(address, "@") {
+		return fmt.Errorf("invalid hostname")
 	}
 
-	// Validate hostname format
-	if !hostnamePattern.MatchString(normalizedAddr) {
-		return fmt.Errorf("invalid address")
-	}
-
-	// Extract the domain for allowlist checking
-	// For FQDN like "host.example.com", we check if it matches or ends with an allowed domain
-	domainAllowed := false
-	for _, allowed := range allowedDomains {
-		allowedLower := strings.ToLower(allowed)
-		// Exact match or subdomain match
-		if normalizedAddr == allowedLower || strings.HasSuffix(normalizedAddr, "."+allowedLower) {
-			domainAllowed = true
-			break
+	if ip := net.ParseIP(address); ip != nil {
+		if ip.IsUnspecified() || ip.IsMulticast() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+			return fmt.Errorf("invalid address")
 		}
+		return nil
 	}
 
-	if !domainAllowed {
+	normalized := strings.ToLower(address)
+	if !hostnamePattern.MatchString(normalized) {
 		return fmt.Errorf("invalid address")
 	}
-
 	return nil
 }
 
