@@ -3,6 +3,7 @@ package discovery
 import (
 	"fmt"
 	"net"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,13 +28,22 @@ const (
 	ifStackStatusOID = "1.3.6.1.2.1.31.1.2.1.3"
 )
 
-var ifTypeLabels = map[int]string{
-	6:   "ethernetCsmacd",
-	24:  "softwareLoopback",
-	53:  "propVirtual",
-	131: "tunnel",
-	161: "ieee8023adLag",
-}
+var (
+	ifTypeLabels = map[int]string{
+		6:   "ethernetCsmacd",
+		24:  "softwareLoopback",
+		53:  "propVirtual",
+		131: "tunnel",
+		161: "ieee8023adLag",
+	}
+
+	// allowedDomains defines the permitted SNMP target domains.
+	// add your allowed domains here
+	allowedDomains = []string{"example.com"}
+
+	// hostnamePattern validates hostnames for allowed characters.
+	hostnamePattern = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9\-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9\-]{0,61}[A-Za-z0-9])?)*$`)
+)
 
 func ProbeDevice(address string, port uint16, community string, timeout time.Duration) (*ProbeResult, error) {
 	if err := validateAddress(address); err != nil {
@@ -190,15 +200,43 @@ func validateAddress(address string) error {
 	if strings.Contains(address, "://") {
 		return fmt.Errorf("address must not include URL scheme")
 	}
-	if net.ParseIP(address) != nil {
-		return nil
-	}
 	if strings.TrimSpace(address) == "" {
 		return fmt.Errorf("address is required")
 	}
 	if strings.Contains(address, "/") {
 		return fmt.Errorf("invalid hostname")
 	}
+
+	// Normalize the address for validation
+	normalizedAddr := strings.ToLower(strings.TrimSpace(address))
+
+	// Check if it's an IP address
+	if net.ParseIP(normalizedAddr) != nil {
+		// IP addresses are not allowed - only allowlisted domains
+		return fmt.Errorf("invalid address")
+	}
+
+	// Validate hostname format
+	if !hostnamePattern.MatchString(normalizedAddr) {
+		return fmt.Errorf("invalid address")
+	}
+
+	// Extract the domain for allowlist checking
+	// For FQDN like "host.example.com", we check if it matches or ends with an allowed domain
+	domainAllowed := false
+	for _, allowed := range allowedDomains {
+		allowedLower := strings.ToLower(allowed)
+		// Exact match or subdomain match
+		if normalizedAddr == allowedLower || strings.HasSuffix(normalizedAddr, "."+allowedLower) {
+			domainAllowed = true
+			break
+		}
+	}
+
+	if !domainAllowed {
+		return fmt.Errorf("invalid address")
+	}
+
 	return nil
 }
 
