@@ -98,6 +98,7 @@ func (m *Manager) IsAuthenticated(r *http.Request) bool {
 }
 
 // SessionCookie returns a cookie that stores the given session ID.
+// The Secure flag is set to true to ensure the cookie is only transmitted over HTTPS.
 func (m *Manager) SessionCookie(id string) *http.Cookie {
 	return &http.Cookie{
 		Name:     cookieName,
@@ -105,6 +106,7 @@ func (m *Manager) SessionCookie(id string) *http.Cookie {
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
+		Secure:   true,
 		MaxAge:   int(sessionDuration.Seconds()),
 	}
 }
