@@ -64,6 +64,7 @@ The `.env` file should contain:
 - `NETSPEC_INGEST_HOST` / `NETSPEC_INGEST_PORT` - where **`mdt-translator`** sends NetSpec JSON lines (must match `global.ingest` when `telemetry_mode` is `telemetry_ingest_push`; default compose **`NETSPEC_INGEST_HOST=netspec-netspec`**)
 - `NETSPEC_ADMIN_PASSWORD_HASH` / `NETSPEC_SESSION_SECRET` - optional **browser session** login for the web UI and API HTML routes (see **`.env.example`**; use `netspec hash-password` or CI image entrypoint). Omit both (or leave hash empty) for open access.
 - `NETSPEC_API_TOKEN` - optional **bearer token** for scripted API access alongside session cookies
+- **`TLS_CERT_PATH` / `TLS_KEY_PATH`** - **STRONGLY RECOMMENDED for production**: paths to TLS certificate and private key files to enable HTTPS. Without TLS, passwords, session cookies, API tokens, and SNMP communities are transmitted in plaintext. See **[docs/TLS_SETUP.md](docs/TLS_SETUP.md)** for detailed setup instructions.
 - `MDT_ALLOWED_DEVICES` - optional comma-separated device-name allowlist for the translator sidecar
 - `NETSPEC_IMAGE_TAG` - optional container image tag override (**`v2.0.0`**, **`v2.0.0-beta.3`**, **`v2.0.0-beta.2`**, **`v2.0.0-beta.1`**, **`v1.0.0`**, or **`latest`**)
 - `NETSPEC_*`, `APPRISE_*`, `TELEGRAF_*`, `TRANSLATOR_*` runtime knobs - per-service `*_LOG_MAX_SIZE`, `*_LOG_MAX_FILE`, `*_MEM_LIMIT`, `*_CPU_LIMIT`, `*_PIDS_LIMIT` (see `.env.example`)

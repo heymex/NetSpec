@@ -433,8 +433,21 @@ func main() {
 		logger.Warn().Msg("Authentication disabled: set NETSPEC_ADMIN_PASSWORD_HASH to enable")
 	}
 
+	// Configure TLS (optional, but strongly recommended for production).
+	tlsCertPath := os.Getenv("TLS_CERT_PATH")
+	tlsKeyPath := os.Getenv("TLS_KEY_PATH")
+	if tlsCertPath != "" && tlsKeyPath != "" {
+		logger.Info().
+			Str("cert", tlsCertPath).
+			Str("key", tlsKeyPath).
+			Msg("TLS configured - server will use HTTPS")
+	} else {
+		logger.Warn().Msg("TLS not configured - server will use HTTP (set TLS_CERT_PATH and TLS_KEY_PATH for HTTPS)")
+	}
+
 	// Configure the API server with log buffer, config, version, and collector getter
 	apiServer.SetAuthManager(authManager)
+	apiServer.SetTLSConfig(tlsCertPath, tlsKeyPath)
 	apiServer.SetLogBuffer(logBuffer)
 	apiServer.SetConfig(cfg, *configPath)
 	apiServer.SetSNMPReachabilityTracker(reachTracker)

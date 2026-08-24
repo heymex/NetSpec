@@ -15,10 +15,11 @@ const sessionDuration = 24 * time.Hour
 
 // Manager handles password validation, session lifecycle, and bearer token checks.
 type Manager struct {
-	passwordHash []byte
-	apiToken     string
-	sessions     map[string]time.Time
-	mu           sync.Mutex
+	passwordHash  []byte
+	apiToken      string
+	sessions      map[string]time.Time
+	mu            sync.Mutex
+	secureCookies bool
 }
 
 // NewManager returns an auth manager. passwordHash must be a bcrypt hash string;
@@ -97,6 +98,12 @@ func (m *Manager) IsAuthenticated(r *http.Request) bool {
 	return m.ValidateSession(c.Value)
 }
 
+// SetSecureCookies sets the Secure flag on session cookies. Enable this when
+// the server is actually serving HTTPS so HTTP deployments can still log in.
+func (m *Manager) SetSecureCookies(secure bool) {
+	m.secureCookies = secure
+}
+
 // SessionCookie returns a cookie that stores the given session ID.
 func (m *Manager) SessionCookie(id string) *http.Cookie {
 	return &http.Cookie{
@@ -105,6 +112,7 @@ func (m *Manager) SessionCookie(id string) *http.Cookie {
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
+		Secure:   m.secureCookies,
 		MaxAge:   int(sessionDuration.Seconds()),
 	}
 }
