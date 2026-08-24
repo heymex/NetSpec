@@ -381,6 +381,10 @@ func validateCommitRequest(req *CommitRequest) error {
 	if req.Address == "" {
 		return errors.New("address is required")
 	}
+	// Validate address to prevent SSRF
+	if err := validateAddress(req.Address); err != nil {
+		return fmt.Errorf("invalid address: %w", err)
+	}
 	if len(req.Interfaces) == 0 {
 		return errors.New("at least one interface is required")
 	}

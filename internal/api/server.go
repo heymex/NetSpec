@@ -1,11 +1,13 @@
 package api
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"html/template"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -98,6 +100,8 @@ type Server struct {
 	reachMu         sync.RWMutex
 	reachTracker    *collector.ReachabilityTracker
 	authManager     *auth.Manager
+	tlsCertPath     string
+	tlsKeyPath      string
 }
 
 // NewServer creates a new API server
@@ -167,6 +171,13 @@ func (s *Server) SetSNMPReachabilityTracker(t *collector.ReachabilityTracker) {
 	s.reachTracker = t
 }
 
+// SetTLSConfig configures TLS certificate and key paths for HTTPS.
+// If both paths are provided and valid, the server will use HTTPS.
+func (s *Server) SetTLSConfig(certPath, keyPath string) {
+	s.tlsCertPath = certPath
+	s.tlsKeyPath = keyPath
+}
+
 func (s *Server) snmpReachTracker() *collector.ReachabilityTracker {
 	s.reachMu.RLock()
 	defer s.reachMu.RUnlock()
@@ -216,9 +227,58 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/", s.handleWebUI)
 
 	addr := ":" + s.port
-	s.logger.Info().
+
+	if (s.tlsCertPath == "") != (s.tlsKeyPath == "") {
+		return fmt.Errorf("both TLS_CERT_PATH and TLS_KEY_PATH must be set to enable HTTPS")
+	}
+
+	if s.tlsCertPath != "" && s.tlsKeyPath != "" {
+		if _, err := os.Stat(s.tlsCertPath); err != nil {
+			return fmt.Errorf("TLS certificate %s: %w", s.tlsCertPath, err)
+		}
+		if _, err := os.Stat(s.tlsKeyPath); err != nil {
+			return fmt.Errorf("TLS key %s: %w", s.tlsKeyPath, err)
+		}
+		if s.authManager != nil {
+			s.authManager.SetSecureCookies(true)
+		}
+
+		s.logger.Info().
+			Str("address", addr).
+			Str("protocol", "HTTPS").
+			Str("cert", s.tlsCertPath).
+			Msg("Starting API server with Web UI over TLS")
+
+		// Configure TLS with secure defaults
+		tlsConfig := &tls.Config{
+			MinVersion:               tls.VersionTLS12,
+			CurvePreferences:         []tls.CurveID{tls.CurveP521, tls.CurveP384, tls.CurveP256},
+			PreferServerCipherSuites: true,
+			CipherSuites: []uint16{
+				tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+				tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+				tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+				tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+			},
+		}
+
+		server := &http.Server{
+			Addr:      addr,
+			Handler:   s.requireAuth(mux),
+			TLSConfig: tlsConfig,
+		}
+
+		return server.ListenAndServeTLS(s.tlsCertPath, s.tlsKeyPath)
+	}
+
+	// No TLS configured - warn and fall back to HTTP
+	s.logger.Warn().
 		Str("address", addr).
-		Msg("Starting API server with Web UI")
+		Msg("WARNING: TLS not configured - server running over HTTP")
+	s.logger.Warn().
+		Msg("WARNING: Credentials, session cookies, API tokens, and all traffic will be transmitted in plaintext")
+	s.logger.Warn().
+		Msg("Set TLS_CERT_PATH and TLS_KEY_PATH environment variables to enable HTTPS")
 
 	return http.ListenAndServe(addr, s.requireAuth(mux))
 }
