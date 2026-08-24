@@ -412,14 +412,15 @@ func main() {
 			signingSecret = os.Getenv(cfg.Alerts.Slack.SigningSecretEnv)
 		}
 		if signingSecret == "" {
-			logger.Warn().Msg("Slack ChatOps: SLACK_SIGNING_SECRET not set — webhook signature validation disabled")
+			logger.Warn().Msg("Slack ChatOps: SLACK_SIGNING_SECRET not set — webhook will not be registered (signature validation required)")
+		} else {
+			slackWebhookHandler := webhook.NewSlackHandler(signingSecret, alertEngine, slackNotifier, logger)
+			apiServer.SetSlackWebhookHandler(slackWebhookHandler)
+			logger.Info().
+				Str("path", "/webhook/slack/interactions").
+				Str("port", apiPort).
+				Msg("Slack interaction webhook registered")
 		}
-		slackWebhookHandler := webhook.NewSlackHandler(signingSecret, alertEngine, slackNotifier, logger)
-		apiServer.SetSlackWebhookHandler(slackWebhookHandler)
-		logger.Info().
-			Str("path", "/webhook/slack/interactions").
-			Str("port", apiPort).
-			Msg("Slack interaction webhook registered")
 	}
 
 	// Configure auth (disabled when both NETSPEC_ADMIN_PASSWORD_HASH and NETSPEC_API_TOKEN are unset).
