@@ -228,26 +228,19 @@ func (s *Server) Start() error {
 
 	addr := ":" + s.port
 
-	// Check if TLS is configured
+	if (s.tlsCertPath == "") != (s.tlsKeyPath == "") {
+		return fmt.Errorf("both TLS_CERT_PATH and TLS_KEY_PATH must be set to enable HTTPS")
+	}
+
 	if s.tlsCertPath != "" && s.tlsKeyPath != "" {
-		// Verify certificate files exist
 		if _, err := os.Stat(s.tlsCertPath); err != nil {
-			s.logger.Error().
-				Err(err).
-				Str("cert_path", s.tlsCertPath).
-				Msg("TLS certificate file not found, falling back to HTTP")
-			s.logger.Warn().
-				Msg("WARNING: Server running without TLS - credentials and API traffic will be transmitted in plaintext")
-			return http.ListenAndServe(addr, s.requireAuth(mux))
+			return fmt.Errorf("TLS certificate %s: %w", s.tlsCertPath, err)
 		}
 		if _, err := os.Stat(s.tlsKeyPath); err != nil {
-			s.logger.Error().
-				Err(err).
-				Str("key_path", s.tlsKeyPath).
-				Msg("TLS key file not found, falling back to HTTP")
-			s.logger.Warn().
-				Msg("WARNING: Server running without TLS - credentials and API traffic will be transmitted in plaintext")
-			return http.ListenAndServe(addr, s.requireAuth(mux))
+			return fmt.Errorf("TLS key %s: %w", s.tlsKeyPath, err)
+		}
+		if s.authManager != nil {
+			s.authManager.SetSecureCookies(true)
 		}
 
 		s.logger.Info().
