@@ -32,8 +32,8 @@ type SlackHandler struct {
 	logger        zerolog.Logger
 }
 
-// NewSlackHandler creates a SlackHandler. signingSecret may be empty to disable signature validation
-// (not recommended for production).
+// NewSlackHandler creates a SlackHandler. signingSecret must be non-empty to ensure
+// all webhook requests are authenticated via Slack's signature verification.
 func NewSlackHandler(signingSecret string, engine AlertManager, slack *notifier.SlackNotifier, logger zerolog.Logger) *SlackHandler {
 	return &SlackHandler{
 		signingSecret: signingSecret,
@@ -154,7 +154,7 @@ func (h *SlackHandler) handleClose(alertID, by, channelID, msgTS string) {
 // See: https://api.slack.com/authentication/verifying-requests-from-slack
 func (h *SlackHandler) verifySignature(r *http.Request, body []byte) error {
 	if h.signingSecret == "" {
-		return nil
+		return fmt.Errorf("signing secret not configured")
 	}
 	ts := r.Header.Get("X-Slack-Request-Timestamp")
 	sig := r.Header.Get("X-Slack-Signature")
