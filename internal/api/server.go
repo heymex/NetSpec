@@ -263,9 +263,10 @@ func (s *Server) Start() error {
 		}
 
 		server := &http.Server{
-			Addr:      addr,
-			Handler:   s.requireAuth(mux),
-			TLSConfig: tlsConfig,
+			Addr:        addr,
+			Handler:     s.requireAuth(mux),
+			TLSConfig:   tlsConfig,
+			ReadTimeout: 5 * time.Second,
 		}
 
 		return server.ListenAndServeTLS(s.tlsCertPath, s.tlsKeyPath)
