@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -61,8 +62,19 @@ type Server struct {
 	lastMu       sync.Mutex
 	lastPacketAt time.Time
 
+	pathMu sync.Mutex
+	byPath map[string]uint64
+	byKind map[string]uint64
+
 	mu      sync.Mutex
 	started bool
+}
+
+// PathStat is an encoding_path or kind rollup from unpacked kvGPB rows.
+type PathStat struct {
+	Kind         string `json:"kind"`
+	EncodingPath string `json:"encoding_path,omitempty"`
+	Count        uint64 `json:"count"`
 }
 
 // Stats is a point-in-time copy of receiver + transformer counters.
@@ -81,6 +93,8 @@ type Stats struct {
 	StreamsOpened       uint64               `json:"streams_opened"`
 	StreamsClosed       uint64               `json:"streams_closed"`
 	LastPacketAt        time.Time            `json:"last_packet_at,omitempty"`
+	ByKind              []PathStat           `json:"by_kind,omitempty"`
+	ByEncodingPath      []PathStat           `json:"by_encoding_path,omitempty"`
 	Transformer         transformer.Snapshot `json:"transformer"`
 }
 
@@ -117,6 +131,8 @@ func New(cfg Config, xf *transformer.Transformer, onEvent func(collector.PushTel
 		xf:      xf,
 		onEvent: onEvent,
 		queue:   make(chan job, cfg.QueueSize),
+		byPath:  map[string]uint64{},
+		byKind:  map[string]uint64{},
 	}
 }
 
@@ -147,6 +163,10 @@ func (s *Server) Stats() Stats {
 		qlen = len(s.queue)
 		qcap = cap(s.queue)
 	}
+	s.pathMu.Lock()
+	byKind := snapshotPathStats(s.byKind, false)
+	byPath := snapshotPathStats(s.byPath, true)
+	s.pathMu.Unlock()
 	return Stats{
 		ListenAddr:          addr,
 		QueueLen:            qlen,
@@ -162,6 +182,8 @@ func (s *Server) Stats() Stats {
 		StreamsOpened:       s.streamsOpened.Load(),
 		StreamsClosed:       s.streamsClosed.Load(),
 		LastPacketAt:        last,
+		ByKind:              byKind,
+		ByEncodingPath:      byPath,
 		Transformer:         s.xf.Snapshot(),
 	}
 }
@@ -174,6 +196,49 @@ func (s *Server) noteQueued() {
 			return
 		}
 	}
+}
+
+func (s *Server) notePaths(recs []*decoder.Record) {
+	if len(recs) == 0 {
+		return
+	}
+	s.pathMu.Lock()
+	defer s.pathMu.Unlock()
+	for _, rec := range recs {
+		path := ""
+		if rec != nil {
+			path = rec.EncodingPath
+		}
+		s.byPath[path]++
+		s.byKind[decoder.ClassifyPath(path)]++
+	}
+}
+
+func snapshotPathStats(m map[string]uint64, asPath bool) []PathStat {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make([]PathStat, 0, len(m))
+	for key, n := range m {
+		ps := PathStat{Count: n}
+		if asPath {
+			ps.EncodingPath = key
+			ps.Kind = decoder.ClassifyPath(key)
+		} else {
+			ps.Kind = key
+		}
+		out = append(out, ps)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count != out[j].Count {
+			return out[i].Count > out[j].Count
+		}
+		if out[i].Kind != out[j].Kind {
+			return out[i].Kind < out[j].Kind
+		}
+		return out[i].EncodingPath < out[j].EncodingPath
+	})
+	return out
 }
 
 // Start listens and serves until ctx is cancelled.
@@ -247,6 +312,7 @@ func (s *Server) handle(j job) {
 		return
 	}
 	s.recordsUnpacked.Add(uint64(len(recs)))
+	s.notePaths(recs)
 	for _, ev := range s.xf.Events(recs) {
 		s.onEvent(ev)
 	}

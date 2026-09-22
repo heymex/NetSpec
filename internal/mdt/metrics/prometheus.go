@@ -3,6 +3,8 @@ package metrics
 import (
 	"fmt"
 	"io"
+
+	"github.com/netspec/netspec/internal/mdt/receiver"
 )
 
 // WritePrometheus renders Snapshot as Prometheus text exposition.
@@ -21,6 +23,8 @@ func WritePrometheus(w io.Writer, snap Snapshot) error {
 	p.counter("netspec_mdt_packets_error_payload_total", "MDT dial-out packets that carried an errors string.", rx.PacketsErrorPayload)
 	p.counter("netspec_mdt_decode_failed_total", "Telemetry protobuf unmarshal failures.", rx.DecodeFailed)
 	p.counter("netspec_mdt_records_unpacked_total", "kvGPB rows unpacked from MDT packets.", rx.RecordsUnpacked)
+	p.kinds(rx.ByKind)
+	p.paths(rx.ByEncodingPath)
 	p.gauge("netspec_mdt_streams_active", "Open MdtDialout gRPC streams.", float64(rx.StreamsActive))
 	p.counter("netspec_mdt_streams_opened_total", "MdtDialout streams accepted.", rx.StreamsOpened)
 	p.counter("netspec_mdt_streams_closed_total", "MdtDialout streams closed.", rx.StreamsClosed)
@@ -37,9 +41,8 @@ func WritePrometheus(w io.Writer, snap Snapshot) error {
 }
 
 type promWriter struct {
-	w   io.Writer
-	err error
-	// skipHeaderOnce ensures HELP/TYPE for skipped_total is written once.
+	w        io.Writer
+	err      error
 	skipMeta bool
 }
 
@@ -60,6 +63,28 @@ func (p *promWriter) skip(reason string, v uint64) {
 		p.skipMeta = true
 	}
 	p.printf("%s{reason=%q} %d\n", name, reason, v)
+}
+
+func (p *promWriter) kinds(rows []receiver.PathStat) {
+	if len(rows) == 0 {
+		return
+	}
+	const name = "netspec_mdt_records_by_kind_total"
+	p.meta(name, "Unpacked kvGPB rows by coarse encoding_path kind.", "counter")
+	for _, row := range rows {
+		p.printf("%s{kind=%q} %d\n", name, row.Kind, row.Count)
+	}
+}
+
+func (p *promWriter) paths(rows []receiver.PathStat) {
+	if len(rows) == 0 {
+		return
+	}
+	const name = "netspec_mdt_records_by_encoding_path_total"
+	p.meta(name, "Unpacked kvGPB rows by Cisco encoding_path.", "counter")
+	for _, row := range rows {
+		p.printf("%s{kind=%q,encoding_path=%q} %d\n", name, row.Kind, row.EncodingPath, row.Count)
+	}
 }
 
 func (p *promWriter) meta(name, help, typ string) {

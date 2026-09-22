@@ -102,6 +102,12 @@ func TestMdtDialoutEmitsInterfaceEvents(t *testing.T) {
 	if st.StreamsOpened != 1 || st.LastPacketAt.IsZero() {
 		t.Fatalf("stream stats: %+v", st)
 	}
+	if len(st.ByKind) != 1 || st.ByKind[0].Kind != "interface" || st.ByKind[0].Count != 2 {
+		t.Fatalf("by_kind: %+v", st.ByKind)
+	}
+	if len(st.ByEncodingPath) != 1 || st.ByEncodingPath[0].EncodingPath != "openconfig-interfaces:interfaces/interface" {
+		t.Fatalf("by_path: %+v", st.ByEncodingPath)
+	}
 }
 
 func TestQueueBlockedIncrements(t *testing.T) {
@@ -167,6 +173,64 @@ func waitAddr(t *testing.T, srv *Server) string {
 	return ""
 }
 
+func TestPathKindBreakdown(t *testing.T) {
+	xf := transformer.New(transformer.Config{ResendInterval: time.Hour})
+	srv := New(Config{
+		ListenAddr: "127.0.0.1:0",
+		Workers:    1,
+		QueueSize:  8,
+	}, xf, func(collector.PushTelemetryEvent) {}, zerolog.Nop())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.Start(ctx) }()
+
+	addr := waitAddr(t, srv)
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	stream, err := mdtdialout.NewGRPCMdtDialoutClient(conn).MdtDialout(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	msgs := []*telemetrybis.Telemetry{
+		decoderFixture(),
+		pathFixture("Cisco-IOS-XE-device-hardware-oper:device-hardware-data", "cpu"),
+		pathFixture("Cisco-IOS-XE-transceiver-oper:transceiver-oper-data", "Te1/1/1"),
+	}
+	for i, msg := range msgs {
+		raw, err := proto.Marshal(msg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := stream.Send(&mdtdialout.MdtDialoutArgs{ReqId: int64(i + 1), Data: raw}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	waitUntil(t, 2*time.Second, func() bool {
+		return srv.Stats().RecordsUnpacked == 4
+	})
+	st := srv.Stats()
+	got := map[string]uint64{}
+	for _, row := range st.ByKind {
+		got[row.Kind] = row.Count
+	}
+	if got["interface"] != 2 || got["hardware"] != 1 || got["optics"] != 1 {
+		t.Fatalf("by_kind=%+v stats=%+v", st.ByKind, got)
+	}
+	_ = stream.CloseSend()
+	cancel()
+	select {
+	case <-errCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("server did not stop")
+	}
+}
+
 func decoderFixture() *telemetrybis.Telemetry {
 	return &telemetrybis.Telemetry{
 		NodeId:       &telemetrybis.Telemetry_NodeIdStr{NodeIdStr: "csw-01"},
@@ -175,6 +239,14 @@ func decoderFixture() *telemetrybis.Telemetry {
 			row("GigabitEthernet1/0/1", "DOWN", "UP"),
 			row("GigabitEthernet1/0/2", "UP", "UP"),
 		},
+	}
+}
+
+func pathFixture(encodingPath, name string) *telemetrybis.Telemetry {
+	return &telemetrybis.Telemetry{
+		NodeId:       &telemetrybis.Telemetry_NodeIdStr{NodeIdStr: "csw-01"},
+		EncodingPath: encodingPath,
+		DataGpbkv:    []*telemetrybis.TelemetryField{row(name, "UP", "UP")},
 	}
 }
 

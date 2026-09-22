@@ -34,6 +34,13 @@ func sample() Snapshot {
 			StreamsActive:   34,
 			StreamsOpened:   40,
 			StreamsClosed:   6,
+			ByKind: []receiver.PathStat{
+				{Kind: "interface", Count: 70},
+				{Kind: "optics", Count: 10},
+			},
+			ByEncodingPath: []receiver.PathStat{
+				{Kind: "interface", EncodingPath: "openconfig-interfaces:interfaces/interface", Count: 70},
+			},
 			Transformer: transformer.Snapshot{
 				Emitted:            50,
 				SkippedUnknownPath: 10,
@@ -78,6 +85,8 @@ func TestStatsAndMetricsHandlers(t *testing.T) {
 		`netspec_mdt_events_skipped_total{reason="dedup"} 20`,
 		"netspec_mdt_forward_failed_total 1",
 		"netspec_mdt_tracked_interfaces 400",
+		`netspec_mdt_records_by_kind_total{kind="interface"} 70`,
+		`netspec_mdt_records_by_kind_total{kind="optics"} 10`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("metrics missing %q\n%s", want, text)
