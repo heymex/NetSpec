@@ -112,25 +112,24 @@ else
 	warn "split-device directory missing: $DATA_DIR/config/devices (monolithic devices may still be valid)"
 fi
 
-# Telegraf writes /sidecar/decoded.json as uid 999. If composer/translator creates these as root first,
-# Telegraf crash-loops and nothing listens on 57500 (MDT dial-out silently fails).
+# Legacy Telegraf decoded.json tree — only relevant if docker-compose.legacy-mdt.yml is in use.
 SIDECAR_DIR="$DATA_DIR/mdt-sidecar"
 if [[ -d "$SIDECAR_DIR" ]]; then
 	for f in "$SIDECAR_DIR/decoded.json" "$SIDECAR_DIR/forwarder.log"; do
 		[[ -e "$f" ]] || continue
 		uid=$(stat -c '%u' "$f" 2>/dev/null || true)
 		if [[ -n "$uid" && "$uid" != "999" ]]; then
-			warn "mdt-sidecar file owned by uid $uid (Telegraf needs 999): $f — fix: sudo chown -R 999:999 \"$SIDECAR_DIR\" && sudo docker restart netspec-telegraf-mdt netspec-mdt-translator"
+			warn "legacy mdt-sidecar file owned by uid $uid (Telegraf needs 999): $f"
 		fi
 	done
 	for f in "$SIDECAR_DIR"/decoded.json "$SIDECAR_DIR"/decoded.json.* "$SIDECAR_DIR"/forwarder.log*; do
 		[[ -e "$f" ]] || continue
 		size=$(stat -c '%s' "$f" 2>/dev/null || stat -f '%z' "$f" 2>/dev/null || echo 0)
 		if [[ "$size" -gt 104857600 ]]; then
-			warn "mdt-sidecar file exceeds 100MB ($(numfmt --to=iec "$size" 2>/dev/null || echo "${size} bytes")): $f — deploy Telegraf rotation + translator prune, or stop telegraf/translator and truncate/remove stale files"
+			warn "legacy mdt-sidecar file exceeds 100MB ($(numfmt --to=iec "$size" 2>/dev/null || echo "${size} bytes")): $f"
 		fi
 	done
-	ok "mdt-sidecar checked (decoded.json / forwarder.log must be uid 999 when present)"
+	ok "legacy mdt-sidecar directory present (unused by the Go netspec-mdt sidecar)"
 fi
 
 ok "validation passed"

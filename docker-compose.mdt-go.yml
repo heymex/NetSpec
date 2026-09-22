@@ -1,0 +1,4 @@
+# Deprecated no-op. Go MDT is defined in docker-compose.yml (host :57500 + :8089).
+# Kept so existing Komodo stacks that still list this overlay continue to parse.
+# Do not add ports here — Compose list-merges them onto the sidecar.
+services: {}

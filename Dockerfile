@@ -24,9 +24,26 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     -ldflags "-X github.com/netspec/netspec/internal/version.Version=${VERSION} \
               -X github.com/netspec/netspec/internal/version.Commit=${COMMIT} \
               -X github.com/netspec/netspec/internal/version.BuildDate=${BUILD_DATE}" \
-    -o netspec ./cmd/netspec
+    -o netspec ./cmd/netspec \
+    && CGO_ENABLED=0 GOOS=linux go build -trimpath \
+    -ldflags "-X github.com/netspec/netspec/internal/version.Version=${VERSION} \
+              -X github.com/netspec/netspec/internal/version.Commit=${COMMIT} \
+              -X github.com/netspec/netspec/internal/version.BuildDate=${BUILD_DATE}" \
+    -o netspec-mdt ./cmd/netspec-mdt
 
-# Final stage
+FROM alpine:latest AS netspec-mdt
+
+RUN apk --no-cache add ca-certificates tzdata
+
+WORKDIR /app
+
+COPY --from=builder /build/netspec-mdt .
+
+EXPOSE 57500 8089
+
+ENTRYPOINT ["./netspec-mdt"]
+
+# Default target: NetSpec API/engine
 FROM alpine:latest
 
 # Keep runtime certs/timezone data

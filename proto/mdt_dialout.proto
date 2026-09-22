@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+// Cisco MDT dial-out gRPC service as implemented by IOS-XE (grpc-tcp / grpc-tls)
+// and Telegraf's cisco_telemetry_mdt input.
+// Source: https://github.com/cisco-ie/cisco-proto/blob/master/proto/xe/mdt_grpc_dialout.proto
+package mdt_dialout;
+
+option go_package = "github.com/netspec/netspec/internal/mdt/pb/mdtdialout;mdtdialout";
+
+service gRPCMdtDialout {
+    rpc MdtDialout(stream MdtDialoutArgs) returns (stream MdtDialoutArgs) {}
+}
+
+message MdtDialoutArgs {
+    int64 ReqId = 1;
+    bytes data = 2;
+    string errors = 3;
+}

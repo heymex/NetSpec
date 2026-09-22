@@ -12,14 +12,14 @@ This runbook documents the standard operational flow for `derek-ghrunner` so tel
 - Alert routing: `/home/derek/netspec-config/alerts.yaml` (required for Apprise delivery; the loader does **not** read a top-level `alerts:` key from `desired-state.yaml`)
 - Host env for NetSpec: `/home/derek/netspec-config/netspec.env` (sourced by `restart-netspec-dev.sh`; the Go binary also auto-loads `netspec.env` and `.env` in the **config directory** when started directly, without overriding variables already set in the process environment)
 - NetSpec process mode: **prefer Docker** (see below); legacy option was host `./netspec` for fast Go iteration
-- Sidecar files: `/home/derek/mdt-sidecar` (or `${NETSPEC_DATA_DIR}/mdt-sidecar` when using Compose)
+- Sidecar: Compose service **`netspec-mdt`** (metrics **:8089**). Host Python/`mdt-sidecar` is legacy only (`docker-compose.legacy-mdt.yml`).
 
 ## Recommended: containerized dev (matches prod)
 
-Use the same **`docker-compose.yml`** (plus **`docker-compose.build-local.yml`** for local builds) so volumes and **bridge** service wiring match production `main`. Build **`netspec:local`** and **`netspec-mdt-translator:local`** on the dev host instead of waiting for GHCR.
+Use the same **`docker-compose.yml`** (plus **`docker-compose.build-local.yml`** for local builds) so volumes and **bridge** service wiring match production `main`. Build **`netspec:local`** and **`netspec-mdt:local`** on the dev host instead of waiting for GHCR.
 
-1. **Stop legacy processes** so ports **8088**, **57500** (default MDT / ingest publish), and **8086** are not double-bound: `pkill -x netspec` and stop any host `python3 …/mdt_to_netspec.py` (see §6 for `ps`/`grep` that avoids matching `ssh`).
-2. **`NETSPEC_DATA_DIR`** should be one tree containing **`config/`**, **`data/`**, **`apprise-config/`**, **`mdt-sidecar/`** (same layout as prod). Example: `/opt/netspec` with your files symlinked or copied there.
+1. **Stop legacy processes** so ports **8088**, **57500** (MDT gRPC), **8089** (sidecar metrics), and **8086** are not double-bound: `pkill -x netspec` and stop any host `python3 …/mdt_to_netspec.py` (see §6 for `ps`/`grep` that avoids matching `ssh`).
+2. **`NETSPEC_DATA_DIR`** should be one tree containing **`config/`**, **`data/`**, **`apprise-config/`** (same layout as prod). Example: `/opt/netspec` with your files symlinked or copied there. The default Go sidecar does **not** need **`mdt-sidecar/`**.
 3. **Compose env:** `.env` supplies `${SNMP_COMMUNITY}`, **`APPRISE_API_URL=http://netspec-apprise:8000`**, **`NETSPEC_INGEST_HOST=netspec-netspec`**, **`NETSPEC_INGEST_PORT`** matching **`global.ingest.port`** (sample **57500**), etc. If you still run a **host** NetSpec binary instead of the container, **`APPRISE_API_URL=http://127.0.0.1:8086`** can still work because Apprise is published on the host—but the **containerized** path should use Docker DNS.
 4. Build and start:
 
@@ -31,7 +31,7 @@ sudo -E make docker-rebuild
 sudo -E make docker-up
 ```
 
-6. Verify: `curl -sS http://127.0.0.1:8088/health` and `curl -sS http://127.0.0.1:8088/api/telemetry/stats`. Optional: open `http://127.0.0.1:8088/api-browser` for the interactive API reference (loads `/openapi.json`).
+6. Verify: `curl -sS http://127.0.0.1:8088/health`, `curl -sS http://127.0.0.1:8088/api/telemetry/stats`, and `curl -sS http://127.0.0.1:8089/stats`. Optional: open `http://127.0.0.1:8088/api-browser` for the interactive API reference (loads `/openapi.json`).
 
 Do **not** run **`restart-netspec-dev.sh`** at the same time as the NetSpec container (both would bind **8088**).
 
@@ -100,26 +100,30 @@ Expected:
 - NetSpec listens on `:8088` (inside the container; mapped to host) and ingest port from **`global.ingest`** (sample **57500** on bridge).
 - `received` and `accepted` counters increase.
 
-## 6) Sidecar forwarder checks
+## 6) Sidecar checks
 
-Verify sidecar process (avoid `pgrep -f mdt_to_netspec.py` alone — it can match the wrapping `ssh` command; prefer `ps aux | grep '[m]dt_to_netspec'`):
+Default path is **`netspec-mdt`**:
+
+```bash
+tsh ssh derek@derek-ghrunner "docker ps --filter name=netspec-mdt --format '{{.Names}} {{.Status}}'"
+tsh ssh derek@derek-ghrunner "curl -sS http://127.0.0.1:8089/health && echo && curl -sS http://127.0.0.1:8089/stats"
+```
+
+Expect `healthy`, `receiver.packets` climbing, `transformer.emitted` equal to `egress.forward_ok`, and `by_kind` showing interface vs optics vs other encoding paths.
+
+If the sidecar is not running, recreate it from the repo with matching **`NETSPEC_DATA_DIR`** and **`NETSPEC_INGEST_PORT`**:
+
+```bash
+cd /home/derek/NetSpec-dev
+sudo -E make docker-rebuild
+sudo -E make docker-up
+```
+
+Legacy Telegraf + Python (`docker-compose.legacy-mdt.yml` only — do not bind host **:57500** twice):
 
 ```bash
 tsh ssh derek@derek-ghrunner "ps aux | grep '[m]dt_to_netspec'"
-```
-
-Verify forwarder activity:
-
-```bash
 tsh ssh derek@derek-ghrunner "tail -n 40 /home/derek/mdt-sidecar/forwarder.log"
-```
-
-If forwarder is not running, prefer the **containerized translator**: `make docker-up` or `docker compose -f docker-compose.yml -f docker-compose.build-local.yml up -d netspec-mdt-translator` from the NetSpec repo with matching **`NETSPEC_DATA_DIR`** and **`NETSPEC_INGEST_PORT`**.
-
-Legacy host fallback (only if you are not using Compose for the translator):
-
-```bash
-tsh ssh derek@derek-ghrunner "cd /home/derek/mdt-sidecar && nohup env MDT_DECODED_FILE=/home/derek/mdt-sidecar/decoded.json NETSPEC_INGEST_HOST=127.0.0.1 NETSPEC_INGEST_PORT=57501 MDT_FORWARDER_LOG=/home/derek/mdt-sidecar/forwarder.log python3 /home/derek/mdt-sidecar/mdt_to_netspec.py > /home/derek/mdt-sidecar/forwarder.stdout.log 2>&1 < /dev/null &"
 ```
 
 ## 7) Known failure patterns
@@ -129,13 +133,12 @@ tsh ssh derek@derek-ghrunner "cd /home/derek/mdt-sidecar && nohup env MDT_DECODE
   - Fix: choose one runtime (`pkill -x netspec` **or** stop the `netspec` service from Compose), then start once.
 
 - Telemetry counters stay at zero while NetSpec is healthy
-  - Cause: `mdt-translator` / forwarder stopped, wrong `NETSPEC_INGEST_PORT`, or Telegraf not writing `decoded.json`.
-  - Fix: align `global.ingest.port` in YAML with `NETSPEC_INGEST_PORT`; restart `make docker-up` or the translator container.
+  - Cause: **`netspec-mdt`** stopped, wrong `NETSPEC_INGEST_PORT` (must match `global.ingest.port` inside the compose network), or switches still using `grpc-tls`.
+  - Fix: `curl http://127.0.0.1:8089/stats`; align YAML ingest port with `.env`; `make docker-up`.
 
-- `${NETSPEC_DATA_DIR}/mdt-sidecar/decoded.json` grows without bound (100GB+)
-  - Cause: Telegraf `outputs.file` appends every MDT event; older stacks had no rotation on `decoded.json`.
-  - Fix (immediate): `docker stop netspec-telegraf-mdt netspec-mdt-translator`, then `rm -f /opt/netspec/mdt-sidecar/decoded.json /opt/netspec/mdt-sidecar/decoded.json.*` (adjust path), redeploy/pull images with rotation enabled, `docker start …`.
-  - Fix (prevent): current `tools/sidecar/telegraf-mdt.conf` sets `rotation_max_size = "100MB"`; translator prunes `decoded.json.N` on start and rotates `forwarder.log`.
+- Legacy `${NETSPEC_DATA_DIR}/mdt-sidecar/decoded.json` grows without bound (100GB+)
+  - Cause: Telegraf `outputs.file` on **`docker-compose.legacy-mdt.yml`**. The default Go sidecar does **not** write this file.
+  - Fix: migrate to default compose (`netspec-mdt`); stop `netspec-telegraf-mdt` / `netspec-mdt-translator` and remove leftover `decoded.json*`.
 
 - Container vs host binary
   - Prefer **one** runtime: containerized NetSpec (this runbook § “Recommended: containerized dev”) **or** host `./netspec` for quick Go iteration—not both on the same ports. This host has often run the **host** `./netspec` process operationally; if you switch to Compose, ensure port/config paths are correct.

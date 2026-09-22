@@ -1,0 +1,3 @@
+# Deprecated no-op. Telegraf is no longer in docker-compose.yml.
+# Legacy Telegraf+translator: docker-compose.legacy-mdt.yml
+services: {}

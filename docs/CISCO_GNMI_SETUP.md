@@ -83,27 +83,27 @@ Notes:
 - Exact telemetry CLI can vary by IOS-XE train/platform; use `telemetry ietf ?` and `subscription ?` to discover valid syntax.
 - Start with a narrow XPath/filter and low receiver count, then expand.
 - Keep SNMP targeted validation enabled in NetSpec to confirm telemetry events.
-- NetSpec `telemetry_ingest_push` listens for **newline-delimited JSON** on `global.ingest.listen_address` / `global.ingest.port` (defaults `0.0.0.0:57500`). IOS-XE dial-out uses **grpc-tcp** to Telegraf (or another collector), not directly to NetSpec. **Telegraf** decodes MDT to `${NETSPEC_DATA_DIR}/mdt-sidecar/decoded.json`, and **`mdt-translator`** forwards NetSpec-shaped JSON lines to `NETSPEC_INGEST_HOST:NETSPEC_INGEST_PORT` — both run as part of the standard `docker compose up -d` stack together with NetSpec and Apprise-API (see [README](../README.md#running)).
-- Optional `MDT_ALLOWED_DEVICES` restricts which device names the translator forwards.
+- NetSpec `telemetry_ingest_push` listens for **newline-delimited JSON** on `global.ingest.listen_address` / `global.ingest.port` (defaults `0.0.0.0:57500` **inside** the NetSpec container). IOS-XE dial-out uses **grpc-tcp** to **`netspec-mdt`** on host **:57500**, not directly to NetSpec. The sidecar unpacks kvGPB in memory and forwards NDJSON to `NETSPEC_INGEST_HOST:NETSPEC_INGEST_PORT` (default compose: **`netspec-netspec:57500`**). There is no `decoded.json` disk buffer. Sidecar stats: **`http://<host>:8089/stats`**. See [README](../README.md#running).
+- Optional `MDT_ALLOWED_DEVICES` restricts which device names the sidecar forwards.
 - In isolated management VRF/firewall environments, token-based payload auth can be omitted and transport isolation can be the primary control. For payload-level checks, set `global.ingest.token_env` in YAML and set that environment variable for NetSpec.
 
 ## Troubleshooting
 
 ### TCP handshake never completes (`SYN`, `SYN-ACK`, then `RST` from the router)
 
-**Symptom**: `tcpdump` on the collector shows the switch (source IP) repeatedly sending **`SYN`** to `:57500`, the host answers **`SYN-ACK`**, then the switch sends **`RST`** almost immediately — **no gRPC session**, **`decoded.json` stays empty**, NetSpec **`/api/telemetry/stats`** stays at zero.
+**Symptom**: `tcpdump` on the collector shows the switch (source IP) repeatedly sending **`SYN`** to `:57500`, the host answers **`SYN-ACK`**, then the switch sends **`RST`** almost immediately — **no gRPC session**, sidecar **`/stats`** stays at zero packets, NetSpec **`/api/telemetry/stats`** stays at zero.
 
 That pattern is usually a **receiver protocol mismatch**, not firewall or NetSpec:
 
 | Switch subscription (`receiver … protocol`) | Collector must |
 |--------------------------------------------|----------------|
-| **`grpc-tcp`**                             | Plain gRPC listener (matches the shipped **`telegraf-mdt.conf`**: `transport = "grpc"` with **no** `tls_cert` / `tls_key`) |
-| **`grpc-tls`**                             | Telegraf gRPC **with TLS** (`tls_cert`, `tls_key`, and optionally `tls_allowed_cacerts`); device needs matching **trustpoint** / profile |
+| **`grpc-tcp`**                             | Plain gRPC listener (default **`netspec-mdt`**: no TLS) |
+| **`grpc-tls`**                             | gRPC with TLS on the collector; device needs matching **trustpoint** / profile. Default **`netspec-mdt` does not serve TLS yet** — keep the subscription on **`grpc-tcp`**, or wait for a TLS-enabled sidecar. |
 
 **Fix (pick one)**
 
-1. **Plaintext on a trusted management network (simplest)** — On IOS-XE, use **`receiver ip address <collector-ip> 57500 protocol grpc-tcp`** (not `grpc-tls`) so it matches the default Telegraf sidecar config in this repo.
-2. **Keep `grpc-tls` on the device** — Configure Telegraf with **`tls_cert`** / **`tls_key`** pointing at PEM files in the **`netspec-telegraf-mdt`** container (compose bind-mount), reusing the trust model you already use elsewhere.
+1. **Plaintext on a trusted management network (simplest)** — On IOS-XE, use **`receiver ip address <collector-ip> 57500 protocol grpc-tcp`** (not `grpc-tls`) so it matches default **`netspec-mdt`**.
+2. **Keep `grpc-tls` on the device** — not supported on the default Go sidecar yet. Do not point TLS subscriptions at `:57500` until the sidecar is configured for TLS.
 
 Sanity-check on the device:
 
@@ -125,7 +125,8 @@ Confirm the receiver entry shows **`grpc-tcp`** versus **`grpc-tls`** exactly as
    ```
 
 2. Verify receiver IP/port is reachable from switch management VRF.
-3. Confirm NetSpec `global.ingest.port` matches the translator destination.
+3. Confirm NetSpec `global.ingest.port` matches `NETSPEC_INGEST_PORT` (inside the compose network). Host **:57500** is the sidecar gRPC listener, not NetSpec ingest.
+4. `curl -sS http://127.0.0.1:8089/stats` — `receiver.packets` and `transformer.emitted` should climb; `egress.forward_ok` should match `emitted`.
 
 ## Security Considerations
 

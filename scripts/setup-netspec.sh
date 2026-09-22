@@ -142,7 +142,7 @@ if [[ -z "$SNMP_COMMUNITY" ]]; then
 	fi
 fi
 
-mkdir -p "$DATA_DIR/config" "$DATA_DIR/data" "$DATA_DIR/apprise-config" "$DATA_DIR/mdt-sidecar"
+mkdir -p "$DATA_DIR/config" "$DATA_DIR/data" "$DATA_DIR/apprise-config"
 mkdir -p "$DATA_DIR/config/devices" "$DATA_DIR/data/devices"
 
 sample_desired="$REPO_ROOT/config/desired-state.yaml"
@@ -223,35 +223,22 @@ esc_snmp=$(printf '%s' "$SNMP_COMMUNITY" | sed 's/[\/&|]/\\&/g')
 tmp=$(mktemp)
 sed "s/^SNMP_COMMUNITY=.*/SNMP_COMMUNITY=$esc_snmp/" "$env_dest" >"$tmp" && mv "$tmp" "$env_dest"
 
-# Default translator target port when absent (must match global.ingest.port in desired-state.yaml).
+# Default MDT sidecar ingest target (must match global.ingest.port in desired-state.yaml).
 if ! grep -q '^NETSPEC_INGEST_PORT=' "$env_dest" 2>/dev/null; then
 	printf '\nNETSPEC_INGEST_PORT=57500\n' >>"$env_dest"
 fi
 
-# Telegraf container writes /sidecar as uid/gid 999.
-if chown -R 999:999 "$DATA_DIR/mdt-sidecar" && chmod 775 "$DATA_DIR/mdt-sidecar"; then
-	:
-elif command -v sudo >/dev/null 2>&1 && sudo -n chown -R 999:999 "$DATA_DIR/mdt-sidecar" && sudo -n chmod 775 "$DATA_DIR/mdt-sidecar"; then
-	log "Adjusted $DATA_DIR/mdt-sidecar ownership via passwordless sudo (uid 999)."
-else
-	printf '%s\n' "WARNING: could not chown/chmod $DATA_DIR/mdt-sidecar for uid 999 — Telegraf will restart-loop with permission denied." >&2
-	printf '%s\n' "         Fix: sudo chown -R 999:999 \"$DATA_DIR/mdt-sidecar\" && sudo chmod 775 \"$DATA_DIR/mdt-sidecar\"" >&2
-fi
-
-log ""
-log "If Telegraf logs \"permission denied\" on decoded.json after the first compose up:"
-log "  sudo chown -R 999:999 \"$DATA_DIR/mdt-sidecar\" && sudo docker restart netspec-telegraf-mdt netspec-mdt-translator"
 log ""
 log "Next steps (repo root: $REPO_ROOT):"
 log "  1. Edit $DATA_DIR/config/desired-state.yaml (devices, telemetry_mode, ingest)."
 log "  2. Edit $DATA_DIR/config/alerts.yaml and $env_dest (APPRISE_* / url_env — destinations for drift alerts)."
-log "  3. docker compose pull && docker compose up -d   # sample UI: http://127.0.0.1:8088 — Apprise on :8086"
+log "  3. docker compose pull && docker compose up -d   # UI: http://127.0.0.1:8088 — MDT :57500 — metrics :8089 — Apprise :8086"
 log "  4. Reload after YAML edits: POST /api/reload or the dashboard button."
 log "  5. Optional check: ./scripts/validate-netspec-stack.sh --project-dir $REPO_ROOT"
 log ""
 log "If you deploy with Komodo, Portainer, or similar: keep this checkout as the Compose"
-log "project root (needs ./tools/sidecar next to docker-compose.yml) and point NETSPEC_DATA_DIR"
-log "at the same path you used here. Details: README «Komodo, Portainer, and similar UIs»."
+log "project root and point NETSPEC_DATA_DIR at the same path you used here."
+log "Details: README «Komodo, Portainer, and similar UIs»."
 log ""
 log "NETSPEC_DATA_DIR=$DATA_DIR"
 

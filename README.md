@@ -25,18 +25,18 @@ NetSpec is a declarative network monitor: you define how the network *should* be
 ### Prerequisites
 
 - Docker and Docker Compose v2 (`docker compose`)
-- Cisco IOS-XE devices using **dial-out MDT** (grpc-tcp) into the repo’s Telegraf path, plus SNMP for targeted confirmation
+- Cisco IOS-XE devices using **dial-out MDT** (`grpc-tcp` to host **:57500**), plus SNMP for targeted confirmation
 
 ### Run a sample stack (recommended first boot)
 
-From a **repo checkout** (so `./tools/sidecar` exists next to `docker-compose.yml`):
+From a **repo checkout** (so `docker-compose.yml` is in the project root):
 
 ```bash
 ./scripts/setup-netspec.sh
 docker compose pull && docker compose up -d
 ```
 
-Then open **`http://127.0.0.1:8088`** (sample devices + alerting in the YAML; SNMP/Slack wiring is still yours to fix). **`docker compose up` alone is not sufficient**: the compose file mounts **`${NETSPEC_DATA_DIR}/config`**; that tree must contain **`desired-state.yaml`**, **`alerts.yaml`**, and **split devices under `config/devices/*.yaml`** because the shipped **`desired-state.yaml` uses `devices: {}`**. The setup script installs all of that, aligns **`NETSPEC_INGEST_PORT`** with **`global.ingest.port`** when missing (**57500** in the sample bridge stack), aligns **`.env`**, and fixes **mdt-sidecar** ownership for uid **999**. Upgrading from **v1.x** host-network compose: **[docs/MIGRATION_BRIDGE_AND_AUTH.md](docs/MIGRATION_BRIDGE_AND_AUTH.md)**.
+Then open **`http://127.0.0.1:8088`** (sample devices + alerting in the YAML; SNMP/Slack wiring is still yours to fix). **`docker compose up` alone is not sufficient**: the compose file mounts **`${NETSPEC_DATA_DIR}/config`**; that tree must contain **`desired-state.yaml`**, **`alerts.yaml`**, and **split devices under `config/devices/*.yaml`** because the shipped **`desired-state.yaml` uses `devices: {}`**. The setup script installs all of that, and aligns **`NETSPEC_INGEST_PORT`** with **`global.ingest.port`** when missing (**57500** in the sample bridge stack). Upgrading from **v1.x** host-network compose: **[docs/MIGRATION_BRIDGE_AND_AUTH.md](docs/MIGRATION_BRIDGE_AND_AUTH.md)**.
 
 If **`NETSPEC_DATA_DIR` is already set in `.env`** (Komodo/Portainer-style), `./scripts/setup-netspec.sh` uses that path automatically — no **`--data-dir`** required.
 
@@ -61,19 +61,19 @@ The `.env` file should contain:
 - Channel targets come from env vars named in `config/alerts.yaml` under `channels.*.url_env` (for example `APPRISE_SLACK_WEBHOOK`). See `.env.example` for placeholders.
 - Optional: `APPRISE_NOTIFY_TIMEOUT` (HTTP timeout per notify, e.g. `15s`). Troubleshooting: [Apprise alerting](docs/APPRISE_ALERTING.md).
 - Optional OpenClaw webhooks: channel `type: openclaw` with `url_env` / `token_env`, plus `NETSPEC_PUBLIC_URL` for embedded UI links. See [OpenClaw alerting](docs/OPENCLAW_ALERTING.md).
-- `NETSPEC_INGEST_HOST` / `NETSPEC_INGEST_PORT` - where **`mdt-translator`** sends NetSpec JSON lines (must match `global.ingest` when `telemetry_mode` is `telemetry_ingest_push`; default compose **`NETSPEC_INGEST_HOST=netspec-netspec`**)
+- `NETSPEC_INGEST_HOST` / `NETSPEC_INGEST_PORT` - where **`netspec-mdt`** sends NetSpec JSON lines (must match `global.ingest` when `telemetry_mode` is `telemetry_ingest_push`; default compose **`NETSPEC_INGEST_HOST=netspec-netspec`**)
 - `NETSPEC_ADMIN_PASSWORD_HASH` / `NETSPEC_SESSION_SECRET` - optional **browser session** login for the web UI and API HTML routes (see **`.env.example`**; use `netspec hash-password` or CI image entrypoint). Omit both (or leave hash empty) for open access.
 - `NETSPEC_API_TOKEN` - optional **bearer token** for scripted API access alongside session cookies
 - **`TLS_CERT_PATH` / `TLS_KEY_PATH`** - **STRONGLY RECOMMENDED for production**: paths to TLS certificate and private key files to enable HTTPS. Without TLS, passwords, session cookies, API tokens, and SNMP communities are transmitted in plaintext. See **[docs/TLS_SETUP.md](docs/TLS_SETUP.md)** for detailed setup instructions.
-- `MDT_ALLOWED_DEVICES` - optional comma-separated device-name allowlist for the translator sidecar
+- `MDT_ALLOWED_DEVICES` - optional comma-separated device-name allowlist for **`netspec-mdt`**
 - `NETSPEC_IMAGE_TAG` - optional container image tag override (**`v2.0.0`**, **`v2.0.0-beta.3`**, **`v2.0.0-beta.2`**, **`v2.0.0-beta.1`**, **`v1.0.0`**, or **`latest`**)
-- `NETSPEC_*`, `APPRISE_*`, `TELEGRAF_*`, `TRANSLATOR_*` runtime knobs - per-service `*_LOG_MAX_SIZE`, `*_LOG_MAX_FILE`, `*_MEM_LIMIT`, `*_CPU_LIMIT`, `*_PIDS_LIMIT` (see `.env.example`)
+- `NETSPEC_*`, `APPRISE_*`, `MDT_*` runtime knobs - per-service `*_LOG_MAX_SIZE`, `*_LOG_MAX_FILE`, `*_MEM_LIMIT`, `*_CPU_LIMIT`, `*_PIDS_LIMIT` (see `.env.example`)
 - Other optional settings as documented in `.env.example`
 
 **Host / local binary:** When you run `./netspec -config /path/to/config/desired-state.yaml`, NetSpec loads environment defaults from **`/path/to/config/.env`** and **`/path/to/config/netspec.env`** if present (same directory as `desired-state.yaml`). Existing process environment variables are **not** overridden. Docker Compose still reads `.env` from the **project directory** (next to `docker-compose.yml`) for `${VAR}` interpolation. The **`netspec-netspec`** service also declares **`env_file: .env`** (optional if the file is missing) so secrets such as **`APPRISE_SLACK_WEBHOOK`** are passed into the container—not only variables listed under `environment:`.
 
 `${NETSPEC_DATA_DIR}/config/desired-state.yaml` sets `global.telemetry_mode`:
-- **`telemetry_ingest_push`** (default in the sample file): line-delimited JSON push ingest on **`global.ingest`** (**`NETSPEC_INGEST_PORT`** must match **`global.ingest.port`** — sample **57500** on bridge: Telegraf and NetSpec listen in **different containers**) with targeted SNMP confirmation per event — Telegraf + **`mdt-translator`** decode IOS-XE dial-out into that ingest. **`additional_listeners`** optional for per-port “sourcetype” tagging (same JSON format).
+- **`telemetry_ingest_push`** (default in the sample file): line-delimited JSON push ingest on **`global.ingest`** (**`NETSPEC_INGEST_PORT`** must match **`global.ingest.port`** — sample **57500** on bridge: **`netspec-mdt`** gRPC and NetSpec ingest listen in **different containers**) with targeted SNMP confirmation per event. Default compose **`netspec-mdt`** decodes IOS-XE dial-out and forwards that ingest. **`additional_listeners`** optional for per-port “sourcetype” tagging (same JSON format).
 - **`snmp_validate_only`**: SNMP validation only; no push ingest listener.
 
 In `telemetry_ingest_push` mode you can optionally enable `global.snmp.telemetry_fallback_enabled` to run periodic full-device SNMP polling as a safety net when telemetry is missing. This fallback can significantly increase SNMP/device load and slow large deployments; use conservative intervals (for example `5m` or longer).
@@ -83,9 +83,9 @@ In `telemetry_ingest_push` mode you can optionally enable `global.snmp.telemetry
 From the repo root, run **`./scripts/setup-netspec.sh`** (no flags needed; use **`sudo`** if the data directory requires root).
 
 1. **`NETSPEC_DATA_DIR`**: taken from **`.env`** if present, otherwise **`/opt/netspec`** or **`~/netspec-data`**.
-2. Creates **`NETSPEC_DATA_DIR`** (`config/`, `config/devices/`, `data/`, `mdt-sidecar/`, `apprise-config/`).
+2. Creates **`NETSPEC_DATA_DIR`** (`config/`, `config/devices/`, `data/`, `apprise-config/`).
 3. Seeds **`config/desired-state.yaml`** and **`config/alerts.yaml`**, and **always** installs sample split devices (**`config/devices/*.yaml`**) so NetSpec starts with **`devices: {}`** in **`desired-state`**. Skips replacing existing top-level YAML unless **`--force`**.
-4. Creates or updates **`.env`**: copies from **`.env.example`** when missing; syncs **`NETSPEC_DATA_DIR`**, **`SNMP_COMMUNITY`**, appends **`NETSPEC_INGEST_PORT`** when unset (align with sample **`global.ingest.port`**), and attempts **mdt-sidecar** **`chown`** for Telegraf (tries passwordless **`sudo`** if needed).
+4. Creates or updates **`.env`**: copies from **`.env.example`** when missing; syncs **`NETSPEC_DATA_DIR`**, **`SNMP_COMMUNITY`**, appends **`NETSPEC_INGEST_PORT`** when unset (align with sample **`global.ingest.port`**).
 
 Optional: **`--interactive`** to prompt for paths; **`--data-dir`** only when you want to override **`.env`**.
 
@@ -93,7 +93,7 @@ Then edit real devices and notification destinations, **`docker compose pull`** 
 
 ### Running
 
-GitHub Actions builds and publishes all images (NetSpec and mdt-translator) to GitHub Container Registry on every merge to main.
+GitHub Actions builds and publishes images (**NetSpec** and **`netspec-mdt`**) to GitHub Container Registry on every merge to main.
 
 **Note**: To pull from GitHub Container Registry, you may need to authenticate:
 ```bash
@@ -106,11 +106,11 @@ echo $GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
 docker compose up -d
 ```
 
-This starts **NetSpec** (web/API on host **`API_PORT`**, default **8088**), **Apprise-API** (**`8086:8000`** on the host), **Telegraf MDT** (host **`57500/tcp`** published into the container for MDT dial-out), and **mdt-translator**. All services attach to the Compose **`netspec` bridge** (`docker-compose.yml` uses a **`netspec-` name prefix**).
+This starts **NetSpec** (web/API on host **`API_PORT`**, default **8088**), **Apprise-API** (**`8086:8000`** on the host), and **`netspec-mdt`** (host **`57500/tcp`** for IOS-XE dial-out; host **`8089`** for **`/health`**, **`/stats`**, **`/metrics`**). All services attach to the Compose **`netspec` bridge** (`docker-compose.yml` uses a **`netspec-` name prefix**).
 
-Runtime artifacts: `${NETSPEC_DATA_DIR}/mdt-sidecar` (`decoded.json`, `forwarder.log`). **`decoded.json` is a tail-only buffer** between Telegraf and `mdt-translator` — it is **not** long-term storage. Telegraf rotates it at **100MB** (`tools/sidecar/telegraf-mdt.conf`); the translator prunes `decoded.json.N` archives on start and rotates `forwarder.log` (see **`MDT_FORWARDER_LOG_*`** in `.env.example`). If disk is already full from an older deploy without rotation, stop **`netspec-telegraf-mdt`** and **`netspec-mdt-translator`**, remove or truncate `${NETSPEC_DATA_DIR}/mdt-sidecar/decoded.json` (and any `decoded.json.*`), then redeploy/restart.
+The Go sidecar decodes kvGPB in memory and forwards NDJSON to **`netspec-netspec:57500`**. There is **no** `decoded.json` disk buffer on the default path. The pre-Go Telegraf + Python translator stack is **`docker-compose.legacy-mdt.yml`** (do not bind host **:57500** twice).
 
-All services use Docker log rotation via the `json-file` driver with per-service overrides. Tune `NETSPEC_*`, `APPRISE_*`, `TELEGRAF_*`, and `TRANSLATOR_*` limits in `.env` to avoid multi-GB container logs on low-activity stacks.
+All services use Docker log rotation via the `json-file` driver with per-service overrides. Tune `NETSPEC_*`, `APPRISE_*`, and `MDT_*` limits in `.env` to avoid multi-GB container logs on low-activity stacks.
 
 To pin a specific image tag instead of `latest`:
 ```bash
@@ -121,29 +121,23 @@ NETSPEC_IMAGE_TAG=v2.0.0-beta.2 docker compose up -d
 
 If you manage stacks with **Komodo**, **Portainer**, **Dockge**, or another Compose-based UI instead of typing `docker compose` by hand, the same **`docker-compose.yml`** applies—plus a few constraints these tools hide behind a form.
 
-#### 1. Project directory must include `tools/sidecar/`
+#### 1. Linked repo checkout (Komodo)
 
-**Telegraf** bind-mounts a path **relative to the compose file**:
-
-```yaml
-./tools/sidecar/telegraf-mdt.conf:/etc/telegraf/telegraf.conf:ro
-```
-
-So the directory the UI treats as the **Compose project root** must be a **NetSpec repo checkout** (or a copy) that still contains **`tools/sidecar/`** next to **`docker-compose.yml`**. A compose file alone in an empty folder **will not** start Telegraf correctly.
+Default compose does **not** bind-mount `tools/sidecar/`. Use a **Linked Repo** (or a full checkout that includes `docker-compose.yml`) so Komodo can parse the file list. Local-build stacks also need **`docker-compose.build-local.yml`**. Set **`auto_pull=false`** when using **`netspec:local`** / **`netspec-mdt:local`**.
 
 #### 2. `NETSPEC_DATA_DIR` and YAML config (outside the repo)
 
-Runtime config lives under **`${NETSPEC_DATA_DIR}`** on the host (default **`/opt/netspec`**): **`config/`**, **`data/`**, **`mdt-sidecar/`**, **`apprise-config/`**. Compose mounts **`config/` read-write** into the NetSpec container so dashboard/API edits (including deleting **`config/devices/*.yaml`**) persist. Operator edits with **`nano`/`vim`** remain valid—after YAML changes outside the UI, **reload** NetSpec (`POST /api/reload` or the dashboard button).
+Runtime config lives under **`${NETSPEC_DATA_DIR}`** on the host (default **`/opt/netspec`**): **`config/`**, **`data/`**, **`apprise-config/`**. Compose mounts **`config/` read-write** into the NetSpec container so dashboard/API edits (including deleting **`config/devices/*.yaml`**) persist. Operator edits with **`nano`/`vim`** remain valid—after YAML changes outside the UI, **reload** NetSpec (`POST /api/reload` or the dashboard button).
 
 #### 3. Environment: `.env` next to the compose file
 
 Compose loads **`.env`** in the project directory for **`${VAR}`** interpolation, and **`netspec-netspec`** uses **`env_file: .env`** to pass **`APPRISE_SLACK_WEBHOOK`** and other **`url_env`** secrets into the container.
 
-Set **`NETSPEC_DATA_DIR`** explicitly in `.env` (for example `/opt/netspec`) so runtime mounts never silently fall back to defaults. For push ingest, keep **`global.ingest.port`** in `${NETSPEC_DATA_DIR}/config/desired-state.yaml` aligned with **`NETSPEC_INGEST_PORT`** in `.env` (sample and bridge stack commonly use **57500** for both Telegraf publish and NetSpec listen in separate containers).
+Set **`NETSPEC_DATA_DIR`** explicitly in `.env` (for example `/opt/netspec`) so runtime mounts never silently fall back to defaults. For push ingest, keep **`global.ingest.port`** in `${NETSPEC_DATA_DIR}/config/desired-state.yaml` aligned with **`NETSPEC_INGEST_PORT`** in `.env` (sample **57500**: host **:57500** is the sidecar gRPC listener; NetSpec ingest is **57500 inside the compose network**).
 
 - **Komodo / file-based stacks:** Keep **`compose.yaml`** (or **`docker-compose.yml`**) and **`.env`** in the same stack folder (this matches Docker Compose’s usual layout). Komodo labels expose **`com.docker.compose.project.environment_file`** for the `.env` path—ensure it points at the real file after deploy.
 - **Portainer (stack from Git):** Set the **compose path** (e.g. **`docker-compose.yml`**), branch, and **environment variables** in the UI for secrets you do not commit (GHCR pull, **`SNMP_COMMUNITY`**, **`NETSPEC_DATA_DIR`**, Apprise URLs). You can paste the contents of **`.env.example`** and fill in values.
-- **Portainer (web editor):** Upload or paste compose **from the repo**, set **Working directory** / bind-mount base if the UI supports it so **`./tools/sidecar`** resolves, and add env vars in the stack’s **Environment** section.
+- **Portainer (web editor):** Upload or paste compose **from the repo**, set **Working directory** to the project root, and add env vars in the stack’s **Environment** section.
 
 Preflight before each `docker compose up -d` or UI restart:
 
@@ -155,11 +149,11 @@ The validator fails fast on common drift: missing `NETSPEC_DATA_DIR`, ingest por
 
 #### 4. Image registry (GHCR)
 
-Published images are **`ghcr.io/heymex/netspec`** and **`ghcr.io/heymex/netspec-mdt-translator`**. The Docker host (or registry settings in the UI) must be able to **`docker pull`**—log in with a GitHub token where required (see **Running** above).
+Published images are **`ghcr.io/heymex/netspec`** and **`ghcr.io/heymex/netspec-mdt`**. The Docker host (or registry settings in the UI) must be able to **`docker pull`**—log in with a GitHub token where required (see **Running** above). After this change lands on `main`, **`latest`** includes the Go sidecar. Until then, local-build stacks use **`netspec-mdt:local`**.
 
 #### 5. Published ports (bridge stack)
 
-**NetSpec**: **`${API_PORT:-8088}:${API_PORT:-8088}`** to the host. **Apprise**: **`8086:8000`**. **Telegraf**: **`57500:57500`** (MDT dial-out target on the host maps to the Telegraf container). **Translator** has no public port; it connects to NetSpec on the bridge. Ensure the host firewall permits MDT devices to reach **57500/tcp** where required.
+**NetSpec**: **`${API_PORT:-8088}:${API_PORT:-8088}`** to the host. **Apprise**: **`8086:8000`**. **`netspec-mdt`**: **`57500:57500`** (IOS-XE dial-out) and **`${NETSPEC_MDT_METRICS_PORT:-8089}:8089`**. Ensure the host firewall permits MDT devices to reach **57500/tcp** where required.
 
 #### 6. Use **Docker Compose** stacks, not raw Swarm-only manifests
 
@@ -179,17 +173,17 @@ Use this when you want the **same container layout as production** but built **o
 
 ```bash
 export NETSPEC_DATA_DIR=/opt/netspec   # or your config/data root
-make docker-rebuild                    # build netspec:local + netspec-mdt-translator:local
-make docker-up                         # start all four services (local images)
+make docker-rebuild                    # build netspec:local + netspec-mdt:local
+make docker-up                         # start NetSpec, Apprise, and netspec-mdt
 ```
 
-After each Go or translator Python change, run **`make docker-rebuild`** then **`make docker-up`** or **`docker compose -f docker-compose.yml -f docker-compose.build-local.yml up -d --force-recreate`**. **`make docker-up`** alone does not rebuild images.
+After each Go change, run **`make docker-rebuild`** then **`make docker-up`** or **`docker compose -f docker-compose.yml -f docker-compose.build-local.yml up -d --force-recreate`**. **`make docker-up`** alone does not rebuild images.
 
 Stop any host `nohup ./netspec` or old containers first so port **8088** / ingest port are free.
 
 | Make target | What it does |
 |---------------|----------------|
-| `make docker-rebuild` | Build `netspec:local` and `netspec-mdt-translator:local` |
+| `make docker-rebuild` | Build `netspec:local` and `netspec-mdt:local` |
 | `make docker-up` | Start full stack (local images) |
 | `make docker-down` | Stop the stack |
 | `make docker-logs-netspec` | Follow NetSpec container logs |
@@ -202,7 +196,7 @@ As of **v2.0.0-beta.2**, highlights include:
 
 - ✅ SNMP validator with targeted polling
 - ✅ Interface state evaluation (including **port-channel** members, `member_policy` thresholds, and high-speed interface alias normalization for SNMP vs. telemetry name drift)
-- ✅ Push telemetry ingest via **Telegraf MDT + `mdt-translator`** (newline-delimited JSON into NetSpec)
+- ✅ Push telemetry ingest via **`netspec-mdt`** (Cisco dial-out kvGPB → newline-delimited JSON into NetSpec)
 - ✅ **Alerts on desired-state mismatch**, delivered via **Apprise-API** (`/notify/`), optional **OpenClaw** webhooks, and channels in `config/alerts.yaml`
 - ✅ YAML configuration (split devices, optional credentials and maintenance files)
 - ✅ Docker deployment and **local parity** Makefile workflow
@@ -274,10 +268,10 @@ NetSpec currently supports two runtime collection modes:
 Preferred operating model:
 
 ```
-IOS-XE Dial-Out Telemetry → Collector (e.g. Telegraf MDT) → mdt-translator → NetSpec ingest → SNMP targeted validation → Evaluator → Alert engine
+IOS-XE Dial-Out Telemetry → netspec-mdt (gRPC :57500) → NDJSON TCP → NetSpec ingest → SNMP targeted validation → Evaluator → Alert engine
 ```
 
-This keeps telemetry event-driven while using targeted SNMP `GET` calls for confirmation. Dial-out telemetry configuration details are documented in `docs/CISCO_GNMI_SETUP.md`.
+This keeps telemetry event-driven while using targeted SNMP `GET` calls for confirmation. Dial-out telemetry configuration details are documented in `docs/CISCO_GNMI_SETUP.md`. Sidecar health and path mix: **`http://127.0.0.1:8089/stats`**.
 
 For `telemetry_ingest_push`, each TCP line must be valid JSON:
 
@@ -287,8 +281,8 @@ For `telemetry_ingest_push`, each TCP line must be valid JSON:
 
 Optional: set `global.ingest.token_env` if you want payload-level shared-token validation.
 
-When using the sidecar overlay, set `NETSPEC_INGEST_PORT` in `.env` to match your
-`global.ingest.port` value in `desired-state.yaml`.
+When using default compose, set `NETSPEC_INGEST_PORT` in `.env` to match your
+`global.ingest.port` value in `desired-state.yaml` (inside the compose network this is NetSpec ingest, not the host gRPC port).
 
 ## Configuration
 
@@ -443,7 +437,7 @@ For a full dev-host workflow (ports, Apprise URL, sidecar, `curl` checks), see [
 
 GitHub Actions automatically:
 - Builds and tests on every push and pull request
-- Builds and pushes multi-arch Docker images (linux/amd64, linux/arm64) to GitHub Container Registry for **NetSpec** and the **MDT translator** sidecar
+- Builds and pushes multi-arch Docker images (linux/amd64, linux/arm64) to GitHub Container Registry for **NetSpec** and **`netspec-mdt`**
 - Images are tagged with: `latest`, branch name, commit SHA, and semantic version tags (PR builds use corrected metadata tagging)
 
 ### Using the Container Image
@@ -454,12 +448,12 @@ Images are published to GitHub Container Registry. Replace `OWNER/REPO` with you
 # Pull the latest NetSpec image
 docker pull ghcr.io/OWNER/REPO:latest
 
-# MDT → NetSpec ingest translator
-docker pull ghcr.io/OWNER/REPO-mdt-translator:latest
+# MDT dial-out sidecar
+docker pull ghcr.io/OWNER/REPO-mdt:latest
 
 # Or pin a semver tag (stable v1.0.0 or pre-release beta)
 docker pull ghcr.io/OWNER/REPO:v2.0.0-beta.2
-docker pull ghcr.io/OWNER/REPO-mdt-translator:v2.0.0-beta.2
+docker pull ghcr.io/OWNER/REPO-mdt:v2.0.0-beta.2
 ```
 
 ## Notes
