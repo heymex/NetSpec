@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/netspec/netspec/internal/collector"
 	"github.com/netspec/netspec/internal/mdt/egress"
+	"github.com/netspec/netspec/internal/mdt/metrics"
 	"github.com/netspec/netspec/internal/mdt/receiver"
 	"github.com/netspec/netspec/internal/mdt/transformer"
 	"github.com/netspec/netspec/internal/version"
@@ -31,6 +33,7 @@ func main() {
 	queueSize := flag.Int("queue-size", envInt("NETSPEC_MDT_QUEUE_SIZE", 1024), "inbound job queue size")
 	keepaliveMin := flag.Duration("keepalive-min-time", envDuration("NETSPEC_MDT_KEEPALIVE_MIN_TIME", 5*time.Minute), "gRPC keepalive enforcement minimum")
 	permitIdlePing := flag.Bool("permit-keepalive-without-calls", envBool("NETSPEC_MDT_PERMIT_KEEPALIVE_WITHOUT_CALLS"), "allow IOS-XE idle pings")
+	metricsAddr := flag.String("metrics-addr", envOr("NETSPEC_MDT_METRICS_ADDR", "0.0.0.0:8089"), "HTTP /health /stats /metrics listen address (off/- disables)")
 	flag.Parse()
 
 	lvl, err := zerolog.ParseLevel(*logLevel)
@@ -84,6 +87,7 @@ func main() {
 
 	log.Info().
 		Str("listen", *listenAddr).
+		Str("metrics", *metricsAddr).
 		Interface("ingest_targets", targets).
 		Dur("resend_interval", *resend).
 		Msg("Starting MDT dial-out sidecar")
@@ -95,6 +99,30 @@ func main() {
 		KeepaliveMinTime:            *keepaliveMin,
 		PermitKeepaliveWithoutCalls: *permitIdlePing,
 	}, xf, onEvent, log)
+
+	started := time.Now()
+	if addr := strings.TrimSpace(*metricsAddr); addr != "" && addr != "off" && addr != "-" {
+		ln, err := net.Listen("tcp", addr)
+		if err != nil {
+			log.Fatal().Err(err).Str("addr", addr).Msg("Failed to listen for metrics HTTP")
+		}
+		httpSrv := metrics.NewServer(addr, func() metrics.Snapshot {
+			return metrics.Snapshot{
+				Status:   "healthy",
+				Time:     time.Now().UTC(),
+				Version:  version.GetVersion(),
+				Uptime:   time.Since(started).Round(time.Second).String(),
+				Receiver: srv.Stats(),
+				Forward:  client.Stats(),
+			}
+		}, log)
+		go func() {
+			if err := httpSrv.Serve(ctx, ln); err != nil {
+				log.Error().Err(err).Msg("Metrics HTTP stopped")
+			}
+		}()
+	}
+
 	if err := srv.Start(ctx); err != nil {
 		log.Fatal().Err(err).Msg("MDT receiver stopped")
 	}

@@ -166,4 +166,8 @@ func TestAllowlistAndResend(t *testing.T) {
 	if n := len(xf.Events([]*decoder.Record{rec})); n != 1 {
 		t.Fatalf("state change should emit=%d", n)
 	}
+	snap := xf.Snapshot()
+	if snap.Emitted != 3 || snap.SkippedDedup != 1 || snap.SkippedAllowlist != 1 || snap.TrackedInterfaces != 1 {
+		t.Fatalf("snapshot: %+v", snap)
+	}
 }

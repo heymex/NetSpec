@@ -37,6 +37,33 @@ type Transformer struct {
 	Emitted            atomic.Uint64
 }
 
+// Snapshot is a point-in-time copy of transformer counters.
+type Snapshot struct {
+	Emitted            uint64 `json:"emitted"`
+	SkippedUnknownPath uint64 `json:"skipped_unknown_path"`
+	SkippedNoStatus    uint64 `json:"skipped_no_status"`
+	SkippedAllowlist   uint64 `json:"skipped_allowlist"`
+	SkippedDedup       uint64 `json:"skipped_dedup"`
+	TrackedInterfaces  int    `json:"tracked_interfaces"`
+}
+
+func (t *Transformer) Snapshot() Snapshot {
+	if t == nil {
+		return Snapshot{}
+	}
+	t.mu.Lock()
+	tracked := len(t.lastState)
+	t.mu.Unlock()
+	return Snapshot{
+		Emitted:            t.Emitted.Load(),
+		SkippedUnknownPath: t.SkippedUnknownPath.Load(),
+		SkippedNoStatus:    t.SkippedNoStatus.Load(),
+		SkippedAllowlist:   t.SkippedAllowlist.Load(),
+		SkippedDedup:       t.SkippedDedup.Load(),
+		TrackedInterfaces:  tracked,
+	}
+}
+
 func New(cfg Config) *Transformer {
 	if cfg.ResendInterval <= 0 {
 		cfg.ResendInterval = DefaultResendInterval

@@ -82,4 +82,8 @@ func TestClientSendNDJSON(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("did not receive event")
 	}
+	st := c.Stats()
+	if st.ForwardOK != 1 || st.ForwardFailed != 0 || st.ForwardConns != 1 {
+		t.Fatalf("egress stats: %+v", st)
+	}
 }

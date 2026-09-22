@@ -39,7 +39,7 @@ WORKDIR /app
 
 COPY --from=builder /build/netspec-mdt .
 
-EXPOSE 57500
+EXPOSE 57500 8089
 
 ENTRYPOINT ["./netspec-mdt"]
 

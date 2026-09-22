@@ -91,6 +91,80 @@ func TestMdtDialoutEmitsInterfaceEvents(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("server did not stop")
 	}
+
+	st := srv.Stats()
+	if st.PacketsReceived != 1 || st.RecordsUnpacked != 2 {
+		t.Fatalf("receiver stats: %+v", st)
+	}
+	if st.Transformer.Emitted != 2 || st.QueueCap != 8 {
+		t.Fatalf("transformer stats: %+v", st)
+	}
+	if st.StreamsOpened != 1 || st.LastPacketAt.IsZero() {
+		t.Fatalf("stream stats: %+v", st)
+	}
+}
+
+func TestQueueBlockedIncrements(t *testing.T) {
+	block := make(chan struct{})
+	xf := transformer.New(transformer.Config{ResendInterval: time.Hour})
+	srv := New(Config{
+		ListenAddr: "127.0.0.1:0",
+		Workers:    1,
+		QueueSize:  1,
+	}, xf, func(collector.PushTelemetryEvent) {
+		<-block
+	}, zerolog.Nop())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.Start(ctx) }()
+
+	addr := waitAddr(t, srv)
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	stream, err := mdtdialout.NewGRPCMdtDialoutClient(conn).MdtDialout(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := proto.Marshal(decoderFixture())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		if err := stream.Send(&mdtdialout.MdtDialoutArgs{ReqId: int64(i + 1), Data: raw}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	waitUntil(t, 2*time.Second, func() bool {
+		return srv.Stats().QueueBlocked > 0
+	})
+	close(block)
+	_ = stream.CloseSend()
+	cancel()
+	select {
+	case <-errCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("server did not stop")
+	}
+}
+
+func waitAddr(t *testing.T, srv *Server) string {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if addr := srv.Addr(); addr != "" {
+			return addr
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("server did not bind")
+	return ""
 }
 
 func decoderFixture() *telemetrybis.Telemetry {

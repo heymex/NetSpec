@@ -7,6 +7,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/netspec/netspec/internal/collector"
@@ -32,6 +33,17 @@ type Client struct {
 
 	mu    sync.Mutex
 	conns map[string]net.Conn
+
+	sendOK   atomic.Uint64
+	sendFail atomic.Uint64
+}
+
+// Stats is a point-in-time copy of NDJSON forward counters.
+type Stats struct {
+	ForwardOK     uint64   `json:"forward_ok"`
+	ForwardFailed uint64   `json:"forward_failed"`
+	ForwardConns  int      `json:"forward_conns"`
+	IngestTargets []string `json:"ingest_targets,omitempty"`
 }
 
 func NewClient(targets []Target, token string, log zerolog.Logger) *Client {
@@ -82,12 +94,32 @@ func ParseTargets(csv string, fallbackHost string, fallbackPort int) ([]Target, 
 	return out, nil
 }
 
+func (c *Client) Stats() Stats {
+	if c == nil {
+		return Stats{}
+	}
+	c.mu.Lock()
+	conns := len(c.conns)
+	c.mu.Unlock()
+	targets := make([]string, 0, len(c.targets))
+	for _, t := range c.targets {
+		targets = append(targets, t.addr())
+	}
+	return Stats{
+		ForwardOK:     c.sendOK.Load(),
+		ForwardFailed: c.sendFail.Load(),
+		ForwardConns:  conns,
+		IngestTargets: targets,
+	}
+}
+
 func (c *Client) Send(ctx context.Context, ev collector.PushTelemetryEvent) error {
 	if c.token != "" {
 		ev.Token = c.token
 	}
 	line, err := json.Marshal(ev)
 	if err != nil {
+		c.sendFail.Add(1)
 		return err
 	}
 	payload := append(line, '\n')
@@ -98,7 +130,12 @@ func (c *Client) Send(ctx context.Context, ev collector.PushTelemetryEvent) erro
 			c.log.Warn().Err(err).Str("target", t.addr()).Msg("NDJSON ingest send failed")
 		}
 	}
-	return last
+	if last != nil {
+		c.sendFail.Add(1)
+		return last
+	}
+	c.sendOK.Add(1)
+	return nil
 }
 
 func (c *Client) sendOne(ctx context.Context, t Target, payload []byte) error {

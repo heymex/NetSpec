@@ -21,6 +21,7 @@ services:
       - netspec
     ports:
       - "57502:57500"
+      - "${NETSPEC_MDT_METRICS_PORT:-8089}:8089"
     environment:
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - NETSPEC_INGEST_HOST=${NETSPEC_INGEST_HOST:-netspec-netspec}
@@ -28,6 +29,7 @@ services:
       - NETSPEC_INGEST_TARGETS=${NETSPEC_INGEST_TARGETS:-}
       - MDT_ALLOWED_DEVICES=${MDT_ALLOWED_DEVICES:-}
       - MDT_RESEND_INTERVAL=${MDT_RESEND_INTERVAL:-60s}
+      - NETSPEC_MDT_METRICS_ADDR=${NETSPEC_MDT_METRICS_ADDR:-0.0.0.0:8089}
     depends_on:
       - netspec-netspec
     logging:
