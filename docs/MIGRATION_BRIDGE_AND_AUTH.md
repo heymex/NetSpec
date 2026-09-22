@@ -14,9 +14,9 @@ for most existing deployments; authentication is opt-in and non-breaking.
 |------|--------|-------|
 | Container networking | `network_mode: host` on netspec, telegraf, translator | All services on `netspec` bridge |
 | Web UI port | Bound directly to host `:8088` | Published via `ports: 8088:8088` |
-| MDT ingest port | Bound to host `:57500` (telegraf) | Published via `ports: 57500:57500` |
+| MDT dial-out port | Bound to host `:57500` (telegraf) | Published via `ports: 57500:57500` on **`netspec-mdt`** (gRPC). NetSpec ingest stays **57500 inside the compose network**. |
 | Apprise URL | `http://127.0.0.1:8086` (loopback) | `http://netspec-apprise:8000` (Docker DNS) |
-| Translator → NetSpec | `NETSPEC_INGEST_HOST=127.0.0.1` | `NETSPEC_INGEST_HOST=netspec-netspec` |
+| MDT sidecar → NetSpec | `NETSPEC_INGEST_HOST=127.0.0.1` | `NETSPEC_INGEST_HOST=netspec-netspec` |
 | Authentication | None | Optional; disabled by default |
 
 ---
@@ -92,12 +92,12 @@ curl -s http://localhost:8088/health
 # Apprise reachable from NetSpec (check logs for delivery errors)
 docker logs netspec-netspec 2>&1 | grep -i apprise
 
-# Translator forwarding to NetSpec ingest (should show sent= incrementing)
-tail -f /opt/netspec/mdt-sidecar/forwarder.log
+# Sidecar forwarding to NetSpec ingest (emitted should match forward_ok)
+curl -sS http://localhost:8089/stats
 ```
 
 If telemetry was previously flowing, you should see events resume within one
-collection interval (~60 s) once the translator reconnects to `netspec-netspec:57500`.
+collection interval (~60 s) once **`netspec-mdt`** reconnects to `netspec-netspec:57500`.
 
 ---
 
@@ -160,7 +160,8 @@ are both accepted simultaneously — browser users get the cookie, scripts get t
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | Apprise delivery errors in logs after restart | `APPRISE_API_URL` still points at `127.0.0.1` | Update to `http://netspec-apprise:8000` and restart |
-| `forwarder.log` stops incrementing | Translator can't reach netspec on `127.0.0.1:57500` | Update `NETSPEC_INGEST_HOST=netspec-netspec` and restart |
+| `forwarder.log` stops incrementing (legacy Telegraf stack) | Translator can't reach netspec on `127.0.0.1:57500` | Update `NETSPEC_INGEST_HOST=netspec-netspec` and restart |
+| Sidecar `/stats` `forward_fail` climbing | **`netspec-mdt`** can't reach NetSpec ingest | Align `global.ingest.port` with `NETSPEC_INGEST_PORT`; set `NETSPEC_INGEST_HOST=netspec-netspec` |
 | Port `57500` already in use | Another process on the host held the port | `ss -tlnp | grep 57500`; stop the conflicting process |
 | Port `8088` already in use | Same as above | `ss -tlnp | grep 8088` |
 | Login page appears but auth was not intended | `NETSPEC_ADMIN_PASSWORD_HASH` was set in `.env` unintentionally | Remove or blank the variable and restart |

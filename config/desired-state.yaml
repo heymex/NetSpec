@@ -5,7 +5,7 @@
 
 global:
   default_credentials: vault://network/gnmi-creds
-  # Production path: push ingest (IOS-XE dial-out → Telegraf + translator → NetSpec).
+  # Production path: push ingest (IOS-XE dial-out → netspec-mdt → NetSpec).
   # snmp_validate_only = SNMP validation only, no push ingest listener.
   telemetry_mode: telemetry_ingest_push
   collection_interval: 10s
@@ -24,7 +24,7 @@ global:
     listen_address: 0.0.0.0
     port: 57500
     # Optional per-pipeline tags (stored on push events as PushTelemetryEvent.source).
-    # source: telegraf
+    # source: netspec-mdt
     # additional_listeners:
     #   - port: 57501
     #     source: cribl_mdt
