@@ -1,0 +1,25 @@
+# Dedicated-host overlay: replace Telegraf MDT with the Go sidecar on host :57500.
+#
+# Use with docker-compose.yml + docker-compose.build-local.yml + docker-compose.mdt-go.yml
+# (this file last so it wins the published port):
+#
+#   docker compose \
+#     -f docker-compose.yml \
+#     -f docker-compose.build-local.yml \
+#     -f docker-compose.mdt-go.yml \
+#     -f docker-compose.mdt-go-cutover.yml \
+#     up -d
+#
+# Telegraf and the Python translator stay in the project but are profile-gated
+# (`legacy-mdt`) so they do not start and do not bind :57500.
+
+services:
+  netspec-telegraf-mdt:
+    profiles: ["legacy-mdt"]
+
+  netspec-mdt-translator:
+    profiles: ["legacy-mdt"]
+
+  netspec-mdt:
+    ports:
+      - "57500:57500"

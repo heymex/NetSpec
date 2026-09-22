@@ -45,5 +45,5 @@ data/
 
 # Documentation and misc files
 .docs/
-
+upcoming_development/
 .DS_Store
