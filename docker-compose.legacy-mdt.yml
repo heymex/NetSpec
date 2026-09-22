@@ -1,0 +1,61 @@
+# Telegraf + Python translator (pre-Go MDT). Both bind host :57500, so do not
+# run this overlay while netspec-mdt from docker-compose.yml is up.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.legacy-mdt.yml \
+#     up -d --scale netspec-mdt=0
+#
+# Requires ./tools/sidecar next to docker-compose.yml and a host mdt-sidecar
+# directory (uid 999) for decoded.json.
+
+services:
+  netspec-telegraf-mdt:
+    image: telegraf:1.31
+    container_name: netspec-telegraf-mdt
+    restart: unless-stopped
+    networks:
+      - netspec
+    ports:
+      - "57500:57500"
+    volumes:
+      - ./tools/sidecar/telegraf-mdt.conf:/etc/telegraf/telegraf.conf:ro
+      - ${NETSPEC_DATA_DIR:-/opt/netspec}/mdt-sidecar:/sidecar
+    logging:
+      driver: json-file
+      options:
+        max-size: ${TELEGRAF_LOG_MAX_SIZE:-10m}
+        max-file: "${TELEGRAF_LOG_MAX_FILE:-5}"
+    mem_limit: ${TELEGRAF_MEM_LIMIT:-512m}
+    cpus: "${TELEGRAF_CPU_LIMIT:-1.0}"
+    pids_limit: ${TELEGRAF_PIDS_LIMIT:-256}
+
+  netspec-mdt-translator:
+    image: ghcr.io/heymex/netspec-mdt-translator:${NETSPEC_IMAGE_TAG:-latest}
+    build:
+      context: ./tools/sidecar
+      dockerfile: Dockerfile
+    container_name: netspec-mdt-translator
+    restart: unless-stopped
+    networks:
+      - netspec
+    depends_on:
+      - netspec-telegraf-mdt
+    environment:
+      - MDT_DECODED_FILE=/sidecar/decoded.json
+      - MDT_FORWARDER_LOG=/sidecar/forwarder.log
+      - NETSPEC_INGEST_TARGETS=${NETSPEC_INGEST_TARGETS:-}
+      - NETSPEC_INGEST_HOST=${NETSPEC_INGEST_HOST:-netspec-netspec}
+      - NETSPEC_INGEST_PORT=${NETSPEC_INGEST_PORT:-57500}
+      - MDT_ALLOWED_DEVICES=${MDT_ALLOWED_DEVICES:-}
+      - MDT_FORWARDER_LOG_MAX_BYTES=${MDT_FORWARDER_LOG_MAX_BYTES:-10485760}
+      - MDT_FORWARDER_LOG_BACKUP_COUNT=${MDT_FORWARDER_LOG_BACKUP_COUNT:-3}
+      - MDT_PRUNE_DECODED_ARCHIVES_ON_START=${MDT_PRUNE_DECODED_ARCHIVES_ON_START:-true}
+    volumes:
+      - ${NETSPEC_DATA_DIR:-/opt/netspec}/mdt-sidecar:/sidecar
+    logging:
+      driver: json-file
+      options:
+        max-size: ${TRANSLATOR_LOG_MAX_SIZE:-10m}
+        max-file: "${TRANSLATOR_LOG_MAX_FILE:-5}"
+    mem_limit: ${TRANSLATOR_MEM_LIMIT:-512m}
+    cpus: "${TRANSLATOR_CPU_LIMIT:-1.0}"
+    pids_limit: ${TRANSLATOR_PIDS_LIMIT:-256}

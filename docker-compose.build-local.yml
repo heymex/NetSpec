@@ -2,7 +2,7 @@
 # Example:
 #   export NETSPEC_DATA_DIR=/opt/netspec
 #   docker compose -f docker-compose.yml -f docker-compose.build-local.yml build
-#   docker compose -f docker-compose.yml -f docker-compose.build-local.yml up -d
+#   docker compose -f docker-compose.yml -f docker-compose.build-local.yml up -d --remove-orphans
 #
 # Optional build metadata (e.g. from Makefile):
 #   NETSPEC_LOCAL_VERSION  (default: dev)
@@ -20,8 +20,13 @@ services:
         COMMIT: ${NETSPEC_LOCAL_COMMIT:-unknown}
         BUILD_DATE: ${NETSPEC_LOCAL_BUILD_DATE:-unknown}
 
-  netspec-mdt-translator:
-    image: netspec-mdt-translator:local
+  netspec-mdt:
+    image: netspec-mdt:local
     build:
-      context: ./tools/sidecar
+      context: .
       dockerfile: Dockerfile
+      target: netspec-mdt
+      args:
+        VERSION: ${NETSPEC_LOCAL_VERSION:-dev}
+        COMMIT: ${NETSPEC_LOCAL_COMMIT:-unknown}
+        BUILD_DATE: ${NETSPEC_LOCAL_BUILD_DATE:-unknown}

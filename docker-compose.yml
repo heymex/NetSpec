@@ -1,10 +1,13 @@
-# NetSpec + Apprise-API + Telegraf MDT + mdt-translator.
+# NetSpec + Apprise-API + Go MDT sidecar.
 #
 # NetSpec's job is to detect drift from desired state and surface it (including via alerts).
 # Apprise-API receives NetSpec POST /notify traffic and fans out to Slack, email, Teams, etc.
+# netspec-mdt accepts IOS-XE grpc-tcp dial-out on host :57500 and forwards NDJSON to
+# netspec-netspec:57500. Metrics are on host :8089 (/health /stats /metrics).
 # Service names use a netspec- prefix so the project groups cleanly in tooling and avoids
 # clashing with other stacks on the same host (unique container names).
 # For local builds from source, merge docker-compose.build-local.yml.
+# Telegraf + Python translator: docker-compose.legacy-mdt.yml (do not bind :57500 twice).
 
 services:
   netspec-netspec:
@@ -75,59 +78,36 @@ services:
     cpus: "${APPRISE_CPU_LIMIT:-1.0}"
     pids_limit: ${APPRISE_PIDS_LIMIT:-256}
 
-  netspec-telegraf-mdt:
-    image: telegraf:1.31
-    container_name: netspec-telegraf-mdt
+  netspec-mdt:
+    image: ghcr.io/heymex/netspec-mdt:${NETSPEC_IMAGE_TAG:-latest}
+    container_name: netspec-mdt
     restart: unless-stopped
     networks:
       - netspec
     ports:
       # Switch MDT dial-out target. Switches point to the host IP; Docker publishes to the container.
       - "57500:57500"
-    volumes:
-      - ./tools/sidecar/telegraf-mdt.conf:/etc/telegraf/telegraf.conf:ro
-      - ${NETSPEC_DATA_DIR:-/opt/netspec}/mdt-sidecar:/sidecar
-    logging:
-      driver: json-file
-      options:
-        max-size: ${TELEGRAF_LOG_MAX_SIZE:-10m}
-        max-file: "${TELEGRAF_LOG_MAX_FILE:-5}"
-    mem_limit: ${TELEGRAF_MEM_LIMIT:-512m}
-    cpus: "${TELEGRAF_CPU_LIMIT:-1.0}"
-    pids_limit: ${TELEGRAF_PIDS_LIMIT:-256}
-
-  netspec-mdt-translator:
-    image: ghcr.io/heymex/netspec-mdt-translator:${NETSPEC_IMAGE_TAG:-latest}
-    container_name: netspec-mdt-translator
-    restart: unless-stopped
-    networks:
-      - netspec
-    depends_on:
-      - netspec-telegraf-mdt
+      - "${NETSPEC_MDT_METRICS_PORT:-8089}:8089"
     environment:
-      - MDT_DECODED_FILE=/sidecar/decoded.json
-      - MDT_FORWARDER_LOG=/sidecar/forwarder.log
-      # Optional multi-target fanout (comma-separated host:port), e.g.
-      # NETSPEC_INGEST_TARGETS=10.10.199.38:57501,10.10.199.36:57501
-      # If unset, translator falls back to NETSPEC_INGEST_HOST/PORT below.
-      - NETSPEC_INGEST_TARGETS=${NETSPEC_INGEST_TARGETS:-}
-      # Single-target fallback for backward compatibility.
+      - LOG_LEVEL=${LOG_LEVEL:-info}
       - NETSPEC_INGEST_HOST=${NETSPEC_INGEST_HOST:-netspec-netspec}
       - NETSPEC_INGEST_PORT=${NETSPEC_INGEST_PORT:-57500}
+      - NETSPEC_INGEST_TARGETS=${NETSPEC_INGEST_TARGETS:-}
       - MDT_ALLOWED_DEVICES=${MDT_ALLOWED_DEVICES:-}
-      - MDT_FORWARDER_LOG_MAX_BYTES=${MDT_FORWARDER_LOG_MAX_BYTES:-10485760}
-      - MDT_FORWARDER_LOG_BACKUP_COUNT=${MDT_FORWARDER_LOG_BACKUP_COUNT:-3}
-      - MDT_PRUNE_DECODED_ARCHIVES_ON_START=${MDT_PRUNE_DECODED_ARCHIVES_ON_START:-true}
-    volumes:
-      - ${NETSPEC_DATA_DIR:-/opt/netspec}/mdt-sidecar:/sidecar
+      - MDT_RESEND_INTERVAL=${MDT_RESEND_INTERVAL:-60s}
+      - NETSPEC_MDT_METRICS_ADDR=${NETSPEC_MDT_METRICS_ADDR:-0.0.0.0:8089}
+      - NETSPEC_MDT_WORKERS=${NETSPEC_MDT_WORKERS:-4}
+      - NETSPEC_MDT_QUEUE_SIZE=${NETSPEC_MDT_QUEUE_SIZE:-1024}
+    depends_on:
+      - netspec-netspec
     logging:
       driver: json-file
       options:
-        max-size: ${TRANSLATOR_LOG_MAX_SIZE:-10m}
-        max-file: "${TRANSLATOR_LOG_MAX_FILE:-5}"
-    mem_limit: ${TRANSLATOR_MEM_LIMIT:-512m}
-    cpus: "${TRANSLATOR_CPU_LIMIT:-1.0}"
-    pids_limit: ${TRANSLATOR_PIDS_LIMIT:-256}
+        max-size: ${MDT_LOG_MAX_SIZE:-10m}
+        max-file: "${MDT_LOG_MAX_FILE:-5}"
+    mem_limit: ${MDT_MEM_LIMIT:-512m}
+    cpus: "${MDT_CPU_LIMIT:-1.0}"
+    pids_limit: ${MDT_PIDS_LIMIT:-256}
 
 networks:
   netspec:
