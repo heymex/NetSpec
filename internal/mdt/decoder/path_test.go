@@ -9,7 +9,8 @@ func TestClassifyPath(t *testing.T) {
 		kind string
 	}{
 		{"", "empty"},
-		{"openconfig-interfaces:interfaces/interface", "interface"},
+		{"ietf-interfaces:interfaces-state/interface", "interface"},
+		{"Cisco-IOS-XE-transceiver-oper:transceiver-oper-data/transceiver", "optics"},
 		{"Cisco-IOS-XE-interfaces-oper:interfaces/interface", "interface"},
 		{"openconfig-interfaces:interfaces/interface/state/counters", "interface_counters"},
 		{"Cisco-IOS-XE-interfaces-oper:interfaces/interface/statistics", "interface_counters"},

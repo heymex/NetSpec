@@ -91,6 +91,43 @@ func TestUnpackMultipleInterfaces(t *testing.T) {
 	}
 }
 
+func TestUnpackNumericCounterLeaves(t *testing.T) {
+	t.Parallel()
+	msg := &telemetrybis.Telemetry{
+		NodeId:       &telemetrybis.Telemetry_NodeIdStr{NodeIdStr: "csw-01"},
+		EncodingPath: "ietf-interfaces:interfaces-state/interface",
+		MsgTimestamp: 1_700_000_000_000,
+		DataGpbkv: []*telemetrybis.TelemetryField{{
+			Fields: []*telemetrybis.TelemetryField{
+				kvString("keys", "", []*telemetrybis.TelemetryField{
+					kvLeaf("name", "GigabitEthernet1/0/1"),
+				}),
+				kvString("content", "", []*telemetrybis.TelemetryField{
+					kvLeaf("oper-status", "up"),
+					kvUint("speed", 1_000_000_000),
+					kvString("statistics", "", []*telemetrybis.TelemetryField{
+						kvUint("in-octets", 100),
+						kvUint("out-octets", 200),
+					}),
+				}),
+			},
+		}},
+	}
+	recs := UnpackMessage("", msg)
+	if len(recs) != 1 {
+		t.Fatalf("len=%d", len(recs))
+	}
+	if recs[0].Fields["statistics/in_octets"] != "100" {
+		t.Fatalf("in_octets path: %v", recs[0].Fields)
+	}
+	if recs[0].Fields["speed"] != "1000000000" {
+		t.Fatalf("speed: %v", recs[0].Fields)
+	}
+	if recs[0].Timestamp != 1_700_000_000_000 {
+		t.Fatalf("ts=%d", recs[0].Timestamp)
+	}
+}
+
 func TestUnpackNativeIOSXEPath(t *testing.T) {
 	t.Parallel()
 	msg := interfaceStateMsg("dist-sw-01", "Cisco-IOS-XE-interfaces-oper:interfaces/interface", []ifaceRow{
@@ -218,5 +255,12 @@ func kvLeaf(name, value string) *telemetrybis.TelemetryField {
 	return &telemetrybis.TelemetryField{
 		Name:        name,
 		ValueByType: &telemetrybis.TelemetryField_StringValue{StringValue: value},
+	}
+}
+
+func kvUint(name string, v uint64) *telemetrybis.TelemetryField {
+	return &telemetrybis.TelemetryField{
+		Name:        name,
+		ValueByType: &telemetrybis.TelemetryField_Uint64Value{Uint64Value: v},
 	}
 }

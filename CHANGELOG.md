@@ -8,6 +8,7 @@ All notable changes to this project are documented here. Release tags follow [Se
 
 - Added **OpenClaw webhook** alert channel (`type: openclaw`) that POSTs structured JSON (`event`, `alert`, optional `links`) to an OpenClaw Gateway hook URL. See `docs/OPENCLAW_ALERTING.md`.
 - Replaced Telegraf + Python MDT as the default compose path with a native Go **`netspec-mdt`** sidecar (Cisco dial-out kvGPB → NDJSON ingest). Host **:57500** is gRPC; metrics on **:8089** (`/health`, `/stats`, `/metrics`). The old stack is **`docker-compose.legacy-mdt.yml`**.
+- Optional **`MDT_VM_URL`** on **`netspec-mdt`** writes contracted Graph series (`if_*`, `transceiver_*`) to VictoriaMetrics as Influx line protocol. Empty URL keeps the state-only path.
 
 ### Bug Fixes
 

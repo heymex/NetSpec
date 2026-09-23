@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/netspec/netspec/internal/mdt/egress"
+	"github.com/netspec/netspec/internal/mdt/egress/influx"
 	"github.com/netspec/netspec/internal/mdt/receiver"
 	"github.com/rs/zerolog"
 )
@@ -20,6 +21,7 @@ type Snapshot struct {
 	Uptime   string         `json:"uptime"`
 	Receiver receiver.Stats `json:"receiver"`
 	Forward  egress.Stats   `json:"forward"`
+	VM       influx.Stats   `json:"vm"`
 }
 
 // Gatherer supplies a live snapshot for HTTP handlers.
