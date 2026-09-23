@@ -12,7 +12,10 @@ import (
 	"time"
 
 	"github.com/netspec/netspec/internal/collector"
+	"github.com/netspec/netspec/internal/mdt/decoder"
 	"github.com/netspec/netspec/internal/mdt/egress"
+	"github.com/netspec/netspec/internal/mdt/egress/influx"
+	"github.com/netspec/netspec/internal/mdt/graphmap"
 	"github.com/netspec/netspec/internal/mdt/metrics"
 	"github.com/netspec/netspec/internal/mdt/receiver"
 	"github.com/netspec/netspec/internal/mdt/transformer"
@@ -34,6 +37,8 @@ func main() {
 	keepaliveMin := flag.Duration("keepalive-min-time", envDuration("NETSPEC_MDT_KEEPALIVE_MIN_TIME", 5*time.Minute), "gRPC keepalive enforcement minimum")
 	permitIdlePing := flag.Bool("permit-keepalive-without-calls", envBool("NETSPEC_MDT_PERMIT_KEEPALIVE_WITHOUT_CALLS"), "allow IOS-XE idle pings")
 	metricsAddr := flag.String("metrics-addr", envOr("NETSPEC_MDT_METRICS_ADDR", "0.0.0.0:8089"), "HTTP /health /stats /metrics listen address (off/- disables)")
+	vmURL := flag.String("vm-url", envOr("MDT_VM_URL", ""), "VictoriaMetrics base URL for Graph Influx LP (empty disables)")
+	vmDB := flag.String("vm-database", envOr("MDT_VM_DATABASE", "netspecgraph"), "Influx database query param (ignored by VM; kept for Telegraf parity)")
 	flag.Parse()
 
 	lvl, err := zerolog.ParseLevel(*logLevel)
@@ -76,6 +81,12 @@ func main() {
 	client := egress.NewClient(targets, token, log)
 	defer client.Close()
 
+	vm := influx.New(influx.Config{
+		URL:      *vmURL,
+		Database: *vmDB,
+	}, log)
+	defer vm.Close()
+
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
@@ -89,6 +100,7 @@ func main() {
 		Str("listen", *listenAddr).
 		Str("metrics", *metricsAddr).
 		Interface("ingest_targets", targets).
+		Str("vm_url", *vmURL).
 		Dur("resend_interval", *resend).
 		Msg("Starting MDT dial-out sidecar")
 
@@ -99,6 +111,13 @@ func main() {
 		KeepaliveMinTime:            *keepaliveMin,
 		PermitKeepaliveWithoutCalls: *permitIdlePing,
 	}, xf, onEvent, log)
+	if vm != nil {
+		srv.SetOnRecords(func(recs []*decoder.Record) {
+			res := graphmap.Map(recs)
+			vm.ObserveMap(res)
+			vm.Write(res.Samples)
+		})
+	}
 
 	started := time.Now()
 	if addr := strings.TrimSpace(*metricsAddr); addr != "" && addr != "off" && addr != "-" {
@@ -114,6 +133,7 @@ func main() {
 				Uptime:   time.Since(started).Round(time.Second).String(),
 				Receiver: srv.Stats(),
 				Forward:  client.Stats(),
+				VM:       vm.Stats(),
 			}
 		}, log)
 		go func() {

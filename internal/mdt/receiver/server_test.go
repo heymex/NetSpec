@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/netspec/netspec/internal/collector"
+	"github.com/netspec/netspec/internal/mdt/decoder"
 	"github.com/netspec/netspec/internal/mdt/pb/mdtdialout"
 	"github.com/netspec/netspec/internal/mdt/pb/telemetrybis"
 	"github.com/netspec/netspec/internal/mdt/transformer"
@@ -221,6 +222,70 @@ func TestPathKindBreakdown(t *testing.T) {
 	}
 	if got["interface"] != 2 || got["hardware"] != 1 || got["optics"] != 1 {
 		t.Fatalf("by_kind=%+v stats=%+v", st.ByKind, got)
+	}
+	_ = stream.CloseSend()
+	cancel()
+	select {
+	case <-errCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("server did not stop")
+	}
+}
+
+func TestOnRecordsSeesOpticsWithoutNDJSON(t *testing.T) {
+	var mu sync.Mutex
+	var events int
+	var recs []*decoder.Record
+	xf := transformer.New(transformer.Config{ResendInterval: time.Hour})
+	srv := New(Config{
+		ListenAddr: "127.0.0.1:0",
+		Workers:    1,
+		QueueSize:  8,
+	}, xf, func(collector.PushTelemetryEvent) {
+		mu.Lock()
+		events++
+		mu.Unlock()
+	}, zerolog.Nop())
+	srv.SetOnRecords(func(got []*decoder.Record) {
+		mu.Lock()
+		recs = append(recs, got...)
+		mu.Unlock()
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.Start(ctx) }()
+
+	addr := waitAddr(t, srv)
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	stream, err := mdtdialout.NewGRPCMdtDialoutClient(conn).MdtDialout(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := proto.Marshal(pathFixture("Cisco-IOS-XE-transceiver-oper:transceiver-oper-data/transceiver", "Te1/1/1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Send(&mdtdialout.MdtDialoutArgs{ReqId: 1, Data: raw}); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, 2*time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(recs) == 1
+	})
+	mu.Lock()
+	defer mu.Unlock()
+	if events != 0 {
+		t.Fatalf("NDJSON events=%d want 0", events)
+	}
+	if recs[0].EncodingPath != "Cisco-IOS-XE-transceiver-oper:transceiver-oper-data/transceiver" {
+		t.Fatalf("rec: %+v", recs[0])
 	}
 	_ = stream.CloseSend()
 	cancel()

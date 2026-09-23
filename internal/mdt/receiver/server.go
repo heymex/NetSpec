@@ -44,6 +44,7 @@ type Server struct {
 	log        zerolog.Logger
 	xf         *transformer.Transformer
 	onEvent    func(collector.PushTelemetryEvent)
+	onRecords  func([]*decoder.Record)
 	queue      chan job
 	grpcServer *grpc.Server
 	listener   net.Listener
@@ -134,6 +135,15 @@ func New(cfg Config, xf *transformer.Transformer, onEvent func(collector.PushTel
 		byPath:  map[string]uint64{},
 		byKind:  map[string]uint64{},
 	}
+}
+
+// SetOnRecords installs an optional hook that receives every unpacked kvGPB
+// row set (Graph VM mapper). Nil is a no-op. Safe to call before Start.
+func (s *Server) SetOnRecords(fn func([]*decoder.Record)) {
+	if s == nil {
+		return
+	}
+	s.onRecords = fn
 }
 
 func (s *Server) Addr() string {
@@ -313,6 +323,9 @@ func (s *Server) handle(j job) {
 	}
 	s.recordsUnpacked.Add(uint64(len(recs)))
 	s.notePaths(recs)
+	if s.onRecords != nil {
+		s.onRecords(recs)
+	}
 	for _, ev := range s.xf.Events(recs) {
 		s.onEvent(ev)
 	}

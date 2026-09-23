@@ -37,13 +37,22 @@ func WritePrometheus(w io.Writer, snap Snapshot) error {
 	p.counter("netspec_mdt_forward_ok_total", "NDJSON events successfully written to ingest.", fw.ForwardOK)
 	p.counter("netspec_mdt_forward_failed_total", "NDJSON events that failed to write to ingest.", fw.ForwardFailed)
 	p.gauge("netspec_mdt_forward_conns", "Cached NDJSON TCP connections.", float64(fw.ForwardConns))
+	vm := snap.VM
+	p.gauge("netspec_mdt_vm_enabled", "1 when VictoriaMetrics Influx write is configured.", boolGauge(vm.Enabled))
+	p.counter("netspec_mdt_vm_samples_total", "Contracted Graph samples queued for VictoriaMetrics.", vm.Samples)
+	p.counter("netspec_mdt_vm_write_ok_total", "Successful VictoriaMetrics Influx batch writes.", vm.WriteOK)
+	p.counter("netspec_mdt_vm_write_failed_total", "Failed VictoriaMetrics Influx batch writes.", vm.WriteFailed)
+	p.vmSkip("copper", vm.SkippedCopper)
+	p.vmSkip("unmapped", vm.SkippedUnmapped)
+	p.vmSkip("no_tags", vm.SkippedNoTags)
 	return p.err
 }
 
 type promWriter struct {
-	w        io.Writer
-	err      error
-	skipMeta bool
+	w          io.Writer
+	err        error
+	skipMeta   bool
+	vmSkipMeta bool
 }
 
 func (p *promWriter) counter(name, help string, v uint64) {
@@ -63,6 +72,22 @@ func (p *promWriter) skip(reason string, v uint64) {
 		p.skipMeta = true
 	}
 	p.printf("%s{reason=%q} %d\n", name, reason, v)
+}
+
+func (p *promWriter) vmSkip(reason string, v uint64) {
+	const name = "netspec_mdt_vm_skipped_total"
+	if !p.vmSkipMeta {
+		p.meta(name, "Graph mapper records not written to VictoriaMetrics, by reason.", "counter")
+		p.vmSkipMeta = true
+	}
+	p.printf("%s{reason=%q} %d\n", name, reason, v)
+}
+
+func boolGauge(v bool) float64 {
+	if v {
+		return 1
+	}
+	return 0
 }
 
 func (p *promWriter) kinds(rows []receiver.PathStat) {

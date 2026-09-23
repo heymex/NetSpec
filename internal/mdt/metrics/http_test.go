@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/netspec/netspec/internal/mdt/egress"
+	"github.com/netspec/netspec/internal/mdt/egress/influx"
 	"github.com/netspec/netspec/internal/mdt/receiver"
 	"github.com/netspec/netspec/internal/mdt/transformer"
 	"github.com/rs/zerolog"
@@ -55,6 +56,14 @@ func sample() Snapshot {
 			ForwardFailed: 1,
 			ForwardConns:  1,
 		},
+		VM: influx.Stats{
+			Enabled:         true,
+			Samples:         200,
+			WriteOK:         4,
+			WriteFailed:     1,
+			SkippedCopper:   8,
+			SkippedUnmapped: 3,
+		},
 	}
 }
 
@@ -87,6 +96,8 @@ func TestStatsAndMetricsHandlers(t *testing.T) {
 		"netspec_mdt_tracked_interfaces 400",
 		`netspec_mdt_records_by_kind_total{kind="interface"} 70`,
 		`netspec_mdt_records_by_kind_total{kind="optics"} 10`,
+		"netspec_mdt_vm_samples_total 200",
+		`netspec_mdt_vm_skipped_total{reason="copper"} 8`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("metrics missing %q\n%s", want, text)
