@@ -75,6 +75,8 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
             display: flex;
             justify-content: space-between;
             align-items: center;
+            gap: 1rem;
+            flex-wrap: wrap;
             margin-bottom: 2rem;
             padding-bottom: 1.5rem;
             border-bottom: 1px solid var(--border-color);
@@ -109,19 +111,36 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
 
         .header-actions {
             display: flex;
-            gap: 1rem;
+            gap: 0.75rem;
             align-items: center;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+        }
+
+        .header-group {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+        }
+
+        .header-actions .header-group + .header-group {
+            margin-left: 0.15rem;
+            padding-left: 0.75rem;
+            border-left: 1px solid var(--border-color);
         }
 
         .status-badge {
-            display: flex;
+            display: inline-flex;
             align-items: center;
             gap: 0.5rem;
-            padding: 0.5rem 1rem;
+            height: 36px;
+            padding: 0 0.85rem;
             background: var(--bg-secondary);
             border: 1px solid var(--border-color);
-            border-radius: 20px;
-            font-size: 0.875rem;
+            border-radius: 8px;
+            font-size: 0.8125rem;
+            white-space: nowrap;
+            flex: none;
         }
 
         .status-dot {
@@ -140,15 +159,21 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
         .btn {
             display: inline-flex;
             align-items: center;
+            justify-content: center;
             gap: 0.5rem;
-            padding: 0.625rem 1.25rem;
+            height: 36px;
+            padding: 0 0.85rem;
             border: none;
             border-radius: 8px;
             font-family: inherit;
-            font-size: 0.875rem;
+            font-size: 0.8125rem;
             font-weight: 500;
+            line-height: 1;
+            white-space: nowrap;
+            text-decoration: none;
             cursor: pointer;
-            transition: all 0.2s ease;
+            flex: none;
+            transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
         }
 
         .btn-primary {
@@ -159,7 +184,6 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
 
         .btn-primary:hover {
             background: var(--accent-green);
-            transform: translateY(-1px);
         }
 
         .btn-secondary {
@@ -193,6 +217,11 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
 
         .hex-overview-row {
             margin-bottom: 1.5rem;
+        }
+
+        .hex-overview-card .card-header {
+            flex-wrap: wrap;
+            gap: 0.5rem;
         }
 
         .hex-overview-card .card-body {
@@ -481,12 +510,18 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
         }
 
         .btn-sm {
+            height: auto;
             padding: 0.25rem 0.6rem;
             font-size: 0.75rem;
             border-radius: 4px;
             border: none;
             cursor: pointer;
             font-weight: 500;
+        }
+
+        .card-header .btn {
+            height: 32px;
+            padding: 0 0.7rem;
         }
 
         .btn-sm.btn-primary {
@@ -586,6 +621,7 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
         .config-row {
             display: flex;
             justify-content: space-between;
+            gap: 0.75rem;
             padding: 0.75rem 0;
             border-bottom: 1px solid var(--border-color);
         }
@@ -596,10 +632,14 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
 
         .config-key {
             color: var(--text-secondary);
+            flex: none;
         }
 
         .config-value {
             color: var(--accent-blue);
+            text-align: right;
+            min-width: 0;
+            overflow-wrap: anywhere;
         }
 
         .toast {
@@ -674,9 +714,190 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
         .snmp-banner.snmp-banner-info .snmp-banner-title {
             color: var(--accent-blue);
         }
+
+        .dash-main {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        .dash-col {
+            display: contents;
+        }
+
+        .dash-hex { order: 1; }
+        .dash-devices { order: 2; }
+        .dash-alerts { order: 3; }
+        .dash-config { order: 4; }
+        .dash-logs { order: 5; }
+
+        .dash-config .telemetry-mini {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+
+        .telemetry-spark {
+            grid-column: 1 / -1;
+            min-width: 0;
+        }
+
+        @media (max-width: 1199px) {
+            .dash-devices > .card-body,
+            .dash-alerts > .card-body {
+                max-height: 420px;
+                overflow: auto;
+            }
+        }
+
+        @media (min-width: 768px) and (max-width: 1199px) {
+            .dash-main {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 1.5rem;
+            }
+            .dash-hex {
+                grid-column: 1 / -1;
+            }
+        }
+
+        @media (min-width: 1200px) {
+            body.page-dashboard {
+                height: 100vh;
+                height: 100dvh;
+                overflow: hidden;
+            }
+            body.page-dashboard .container {
+                max-width: none;
+                width: 100%;
+                height: 100%;
+                margin: 0;
+                padding: 0.85rem 1.25rem 1rem;
+                display: flex;
+                flex-direction: column;
+                gap: 0.75rem;
+                overflow: hidden;
+            }
+            body.page-dashboard header {
+                margin-bottom: 0;
+                padding-bottom: 0.7rem;
+                flex: none;
+            }
+            body.page-dashboard .snmp-banner-stack {
+                margin-bottom: 0;
+                flex: none;
+                max-height: 18vh;
+                overflow: auto;
+            }
+            body.page-dashboard .stats-grid {
+                margin-bottom: 0;
+                flex: none;
+                gap: 0.75rem;
+            }
+            body.page-dashboard .stat-card {
+                padding: 0.55rem 0.9rem;
+            }
+            body.page-dashboard .stat-label {
+                margin-bottom: 0.1rem;
+            }
+            body.page-dashboard .stat-value {
+                font-size: 1.35rem;
+                line-height: 1.2;
+            }
+            body.page-dashboard .dash-main {
+                flex: 1 1 auto;
+                min-height: 0;
+                display: grid;
+                grid-template-columns: minmax(280px, 340px) minmax(0, 1fr) minmax(320px, 420px);
+                gap: 0.85rem;
+            }
+            body.page-dashboard .dash-col {
+                display: flex;
+                flex-direction: column;
+                gap: 0.85rem;
+                min-width: 0;
+                min-height: 0;
+            }
+            body.page-dashboard .dash-hex,
+            body.page-dashboard .dash-devices,
+            body.page-dashboard .dash-alerts,
+            body.page-dashboard .dash-config,
+            body.page-dashboard .dash-logs {
+                order: 0;
+            }
+            body.page-dashboard .dash-devices,
+            body.page-dashboard .dash-logs,
+            body.page-dashboard .dash-alerts {
+                flex: 1 1 auto;
+                min-height: 0;
+            }
+            body.page-dashboard .dash-col-side {
+                overflow: hidden;
+            }
+            body.page-dashboard .dash-alerts {
+                min-height: 160px;
+            }
+            body.page-dashboard .dash-hex {
+                flex: 0 0 auto;
+            }
+            body.page-dashboard .dash-hex .hex-map-svg {
+                max-height: 200px;
+            }
+            body.page-dashboard .dash-config {
+                flex: 0 0 auto;
+                max-height: calc(100% - 176px);
+                min-height: 0;
+                display: flex;
+                flex-direction: column;
+            }
+            body.page-dashboard .dash-config > .card-header {
+                flex: none;
+            }
+            body.page-dashboard .dash-config > .card-body {
+                flex: 1 1 auto;
+                overflow: auto;
+                min-height: 0;
+            }
+            body.page-dashboard .dash-scroll-card {
+                display: flex;
+                flex-direction: column;
+                min-height: 0;
+            }
+            body.page-dashboard .dash-scroll-card > .card-header {
+                flex: none;
+            }
+            body.page-dashboard .dash-scroll-card > .card-body {
+                flex: 1 1 auto;
+                min-height: 0;
+                overflow: auto;
+            }
+            body.page-dashboard .dash-logs > .card-body {
+                display: flex;
+                flex-direction: column;
+            }
+            body.page-dashboard .dash-logs .log-container {
+                flex: 1 1 auto;
+                height: auto;
+                min-height: 0;
+            }
+            body.page-dashboard .dash-devices .device-item {
+                padding: 0.65rem 0.9rem;
+                gap: 0.5rem;
+            }
+            body.page-dashboard .dash-devices .device-info {
+                min-width: 0;
+            }
+            body.page-dashboard .dash-devices .device-info h3 {
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            body.page-dashboard .dash-devices .device-meta {
+                flex-wrap: wrap;
+                gap: 0.2rem 0.65rem;
+            }
+        }
     </style>
 </head>
-<body>
+<body class="{{if .NOCView}}page-noc{{else}}page-dashboard{{end}}">
     <div class="container">
         {{template "content" .}}
     </div>
@@ -722,7 +943,7 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                 showToast('Failed to reload: ' + e.message, true);
             }
             btn.disabled = false;
-            btn.textContent = '↻ Reload Config';
+            btn.textContent = 'Reload';
         }
 
         async function exportConfigBackup(ev) {
@@ -894,10 +1115,14 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                     <span class="status-dot"></span>
                     Running
                 </div>
-                <a class="btn btn-secondary" href="/">Dashboard</a>
-                <a class="btn btn-secondary" href="/api-browser">API</a>
-                <a class="btn btn-secondary" href="/diagnostics">Diagnostics</a>
-                <button class="btn btn-primary" onclick="reloadConfig()">↻ Reload Config</button>
+                <nav class="header-group" aria-label="Views">
+                    <a class="btn btn-secondary" href="/">Dashboard</a>
+                    <a class="btn btn-secondary" href="/api-browser">API</a>
+                    <a class="btn btn-secondary" href="/diagnostics">Diagnostics</a>
+                </nav>
+                <div class="header-group">
+                    <button class="btn btn-primary" onclick="reloadConfig()">Reload</button>
+                </div>
             </div>
         </header>
 
@@ -974,15 +1199,19 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                     <span class="status-dot"></span>
                     Running
                 </div>
-                <a class="btn btn-secondary" href="/noc">NOC View</a>
-                <a class="btn btn-secondary" href="/api-browser">API</a>
-                <a class="btn btn-secondary" href="/diagnostics">Diagnostics</a>
-                <a class="btn btn-secondary" href="/wizard">+ Add Device</a>
-                <button type="button" class="btn btn-secondary" onclick="exportConfigBackup(event)">⬇ Export config</button>
-                <button type="button" class="btn btn-secondary" onclick="triggerConfigImport()">⬆ Import config</button>
-                <input type="file" id="config-import-input" accept=".zip,application/zip" style="display:none" onchange="onConfigImportSelected(event)">
-                <button type="button" class="btn btn-secondary" onclick="testNotifications(event)">🔔 Test alerts</button>
-                <button class="btn btn-primary" onclick="reloadConfig()">↻ Reload Config</button>
+                <nav class="header-group" aria-label="Views">
+                    <a class="btn btn-secondary" href="/noc">NOC</a>
+                    <a class="btn btn-secondary" href="/api-browser">API</a>
+                    <a class="btn btn-secondary" href="/diagnostics">Diagnostics</a>
+                </nav>
+                <div class="header-group">
+                    <a class="btn btn-secondary" href="/wizard">Add device</a>
+                    <button type="button" class="btn btn-secondary" onclick="exportConfigBackup(event)">Export</button>
+                    <button type="button" class="btn btn-secondary" onclick="triggerConfigImport()">Import</button>
+                    <input type="file" id="config-import-input" accept=".zip,application/zip" style="display:none" onchange="onConfigImportSelected(event)">
+                    <button type="button" class="btn btn-secondary" onclick="testNotifications(event)">Test alerts</button>
+                    <button class="btn btn-primary" onclick="reloadConfig()">Reload</button>
+                </div>
             </div>
         </header>
 
@@ -1007,27 +1236,9 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
             </div>
         </div>
 
-        <div class="hex-overview-row">
-            <div class="card hex-overview-card">
-                <div class="card-header">
-                    <span class="card-title">⬡ Host Overview</span>
-                    {{if .Roles}}
-                    <div class="role-filter" id="role-filter" role="group" aria-label="Filter devices by type">
-                        {{range .Roles}}
-                        <label class="role-filter-item"><input type="checkbox" class="role-filter-check" data-role-prefix="{{.Prefix}}" checked> <span class="role-filter-label">{{.Name}}</span></label>
-                        {{end}}
-                        <label class="role-filter-item"><input type="checkbox" class="role-filter-check" data-role-prefix="" checked> <span class="role-filter-label">Other</span></label>
-                    </div>
-                    {{end}}
-                </div>
-                <div class="card-body">
-                    <div id="hex-overview-root">{{.HexMapSVG}}</div>
-                </div>
-            </div>
-        </div>
-
-        <div class="grid">
-            <div class="card">
+        <div class="dash-main">
+            <div class="dash-col dash-col-devices">
+            <div class="card dash-devices dash-scroll-card">
                 <div class="card-header">
                     <span class="card-title">📡 Monitored Devices</span>
                 </div>
@@ -1055,8 +1266,46 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                     {{end}}
                 </div>
             </div>
+            </div>
 
-            <div class="card">
+            <div class="dash-col dash-col-center">
+            <div class="card hex-overview-card dash-hex">
+                <div class="card-header">
+                    <span class="card-title">⬡ Host Overview</span>
+                    {{if .Roles}}
+                    <div class="role-filter" id="role-filter" role="group" aria-label="Filter devices by type">
+                        {{range .Roles}}
+                        <label class="role-filter-item"><input type="checkbox" class="role-filter-check" data-role-prefix="{{.Prefix}}" checked> <span class="role-filter-label">{{.Name}}</span></label>
+                        {{end}}
+                        <label class="role-filter-item"><input type="checkbox" class="role-filter-check" data-role-prefix="" checked> <span class="role-filter-label">Other</span></label>
+                    </div>
+                    {{end}}
+                </div>
+                <div class="card-body">
+                    <div id="hex-overview-root">{{.HexMapSVG}}</div>
+                </div>
+            </div>
+            <div class="card dash-logs dash-scroll-card">
+                <div class="card-header">
+                    <span class="card-title">📋 Recent Logs</span>
+                    <button class="btn btn-secondary" onclick="document.querySelector('.log-container').scrollTop = document.querySelector('.log-container').scrollHeight">↓ Latest</button>
+                </div>
+                <div class="card-body no-padding">
+                    <div class="log-container">
+                        {{range .Logs}}
+                        <div class="log-entry {{levelClass .Level}}">
+                            <span class="log-time" data-local-ts="{{.Timestamp.Format "2006-01-02T15:04:05Z07:00"}}" data-local-ts-mode="time"></span>
+                            <span class="log-level">{{.Level}}</span>
+                            <span class="log-message">{{.Message}}</span>
+                        </div>
+                        {{end}}
+                    </div>
+                </div>
+            </div>
+            </div>
+
+            <div class="dash-col dash-col-side">
+            <div class="card dash-alerts dash-scroll-card">
                 <div class="card-header">
                     <span class="card-title">🚨 Active Alerts</span>
                 </div>
@@ -1064,10 +1313,7 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                     <div class="empty-state"><p style="color:var(--text-muted)">Loading…</p></div>
                 </div>
             </div>
-        </div>
-
-        <div class="grid">
-            <div class="card">
+            <div class="card dash-config">
                 <div class="card-header">
                     <span class="card-title">⚙️ Configuration</span>
                 </div>
@@ -1078,7 +1324,7 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                             <div class="telemetry-pill"><div class="k">Received</div><div class="v">{{.Telemetry.Received}}</div></div>
                             <div class="telemetry-pill"><div class="k">Accepted</div><div class="v">{{.Telemetry.Accepted}}</div></div>
                             <div class="telemetry-pill"><div class="k">Rejected</div><div class="v">{{add .Telemetry.RejectedInvalidJSON .Telemetry.RejectedAuth .Telemetry.RejectedMissing}}</div></div>
-                            <div class="telemetry-pill" style="min-width:260px; flex: 2 1 260px;">
+                            <div class="telemetry-pill telemetry-spark">
                                 <div class="k">Ingest rate (last 10m)</div>
                                 <div class="v" style="line-height:1; margin-top: 0.2rem;">{{.TelemetrySparkline}}</div>
                             </div>
@@ -1142,23 +1388,6 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                     </div>
                 </div>
             </div>
-
-            <div class="card">
-                <div class="card-header">
-                    <span class="card-title">📋 Recent Logs</span>
-                    <button class="btn btn-secondary" onclick="document.querySelector('.log-container').scrollTop = document.querySelector('.log-container').scrollHeight">↓ Latest</button>
-                </div>
-                <div class="card-body no-padding">
-                    <div class="log-container">
-                        {{range .Logs}}
-                        <div class="log-entry {{levelClass .Level}}">
-                            <span class="log-time" data-local-ts="{{.Timestamp.Format "2006-01-02T15:04:05Z07:00"}}" data-local-ts-mode="time"></span>
-                            <span class="log-level">{{.Level}}</span>
-                            <span class="log-message">{{.Message}}</span>
-                        </div>
-                        {{end}}
-                    </div>
-                </div>
             </div>
         </div>
         <script>
