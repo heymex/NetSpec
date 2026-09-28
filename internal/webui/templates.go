@@ -726,8 +726,8 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
         }
 
         .dash-hex { order: 1; }
-        .dash-devices { order: 2; }
-        .dash-alerts { order: 3; }
+        .dash-alerts { order: 2; }
+        .dash-devices { order: 3; }
         .dash-config { order: 4; }
         .dash-logs { order: 5; }
 
@@ -806,7 +806,7 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
                 flex: 1 1 auto;
                 min-height: 0;
                 display: grid;
-                grid-template-columns: minmax(280px, 340px) minmax(0, 1fr) minmax(320px, 420px);
+                grid-template-columns: minmax(320px, 420px) minmax(0, 1fr) minmax(320px, 420px);
                 gap: 0.85rem;
             }
             body.page-dashboard .dash-col {
@@ -832,7 +832,7 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
             body.page-dashboard .dash-col-side {
                 overflow: hidden;
             }
-            body.page-dashboard .dash-alerts {
+            body.page-dashboard .dash-col-side .dash-devices {
                 min-height: 160px;
             }
             body.page-dashboard .dash-hex {
@@ -1238,32 +1238,12 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
 
         <div class="dash-main">
             <div class="dash-col dash-col-devices">
-            <div class="card dash-devices dash-scroll-card">
+            <div class="card dash-alerts dash-scroll-card">
                 <div class="card-header">
-                    <span class="card-title">📡 Monitored Devices</span>
+                    <span class="card-title">🚨 Active Alerts</span>
                 </div>
-                <div class="card-body no-padding">
-                    {{if .Devices}}
-                    <ul class="device-list" id="device-list">
-                        {{range .Devices}}
-                        <li class="device-item" data-role-prefix="{{.RolePrefix}}" data-role-name="{{.RoleName}}" onclick="window.location.href='/device/{{.Name}}?from=dashboard'" style="cursor: pointer;">
-                            <div class="device-info">
-                                <h3>{{.Name}}</h3>
-                                <div class="device-meta">
-                                    <span>{{.Address}}</span>
-                                    {{if .RoleName}}<span class="device-role-tag">{{.RoleName}}</span>{{end}}
-                                    {{if .Description}}<span>{{.Description}}</span>{{end}}
-                                </div>
-                            </div>
-                            <span class="interface-count">{{.InterfaceCount}} ifaces</span>
-                        </li>
-                        {{end}}
-                    </ul>
-                    {{else}}
-                    <div class="empty-state">
-                        <p>No devices configured</p>
-                    </div>
-                    {{end}}
+                <div class="card-body no-padding" id="alerts-card-body">
+                    <div class="empty-state"><p style="color:var(--text-muted)">Loading…</p></div>
                 </div>
             </div>
             </div>
@@ -1305,12 +1285,32 @@ var Templates = template.Must(template.New("").Funcs(template.FuncMap{
             </div>
 
             <div class="dash-col dash-col-side">
-            <div class="card dash-alerts dash-scroll-card">
+            <div class="card dash-devices dash-scroll-card">
                 <div class="card-header">
-                    <span class="card-title">🚨 Active Alerts</span>
+                    <span class="card-title">📡 Monitored Devices</span>
                 </div>
-                <div class="card-body no-padding" id="alerts-card-body">
-                    <div class="empty-state"><p style="color:var(--text-muted)">Loading…</p></div>
+                <div class="card-body no-padding">
+                    {{if .Devices}}
+                    <ul class="device-list" id="device-list">
+                        {{range .Devices}}
+                        <li class="device-item" data-role-prefix="{{.RolePrefix}}" data-role-name="{{.RoleName}}" onclick="window.location.href='/device/{{.Name}}?from=dashboard'" style="cursor: pointer;">
+                            <div class="device-info">
+                                <h3>{{.Name}}</h3>
+                                <div class="device-meta">
+                                    <span>{{.Address}}</span>
+                                    {{if .RoleName}}<span class="device-role-tag">{{.RoleName}}</span>{{end}}
+                                    {{if .Description}}<span>{{.Description}}</span>{{end}}
+                                </div>
+                            </div>
+                            <span class="interface-count">{{.InterfaceCount}} ifaces</span>
+                        </li>
+                        {{end}}
+                    </ul>
+                    {{else}}
+                    <div class="empty-state">
+                        <p>No devices configured</p>
+                    </div>
+                    {{end}}
                 </div>
             </div>
             <div class="card dash-config">
