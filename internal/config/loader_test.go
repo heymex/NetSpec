@@ -278,6 +278,94 @@ func TestValidateConfigOpenClawChannelRequiresURLEnv(t *testing.T) {
 	}
 }
 
+func TestValidateConfigWebhookChannel(t *testing.T) {
+	t.Parallel()
+	cfg := webhookValidationConfig(ChannelConfig{Type: "webhook"})
+	if err := ValidateConfig(cfg); err == nil {
+		t.Fatal("expected url_env or endpoints required")
+	}
+
+	cfg = webhookValidationConfig(ChannelConfig{
+		Type:   "webhook",
+		URLEnv: "HOOK_URL",
+	})
+	if err := ValidateConfig(cfg); err != nil {
+		t.Fatalf("single endpoint: %v", err)
+	}
+
+	cfg = webhookValidationConfig(ChannelConfig{
+		Type:     "webhook",
+		URLEnv:   "HOOK_URL",
+		Auth:     "header",
+		TokenEnv: "HOOK_TOKEN",
+	})
+	if err := ValidateConfig(cfg); err == nil {
+		t.Fatal("expected header_name required")
+	}
+
+	cfg = webhookValidationConfig(ChannelConfig{
+		Type:   "webhook",
+		URLEnv: "HOOK_URL",
+		Endpoints: []WebhookEndpoint{
+			{Name: "a", URLEnv: "HOOK_A"},
+		},
+	})
+	if err := ValidateConfig(cfg); err == nil {
+		t.Fatal("expected url_env and endpoints to be mutually exclusive")
+	}
+
+	cfg = webhookValidationConfig(ChannelConfig{
+		Type: "webhook",
+		Endpoints: []WebhookEndpoint{
+			{Name: "openclaw", URLEnv: "OPENCLAW_WEBHOOK_URL", TokenEnv: "OPENCLAW_HOOK_TOKEN", Auth: "bearer_and_header", HeaderName: "x-openclaw-token"},
+			{Name: "internal", URLEnv: "INTERNAL_WEBHOOK_URL"},
+			{Name: "openclaw", URLEnv: "DUP_URL"},
+		},
+	})
+	if err := ValidateConfig(cfg); err == nil {
+		t.Fatal("expected duplicate endpoint name")
+	}
+
+	cfg = webhookValidationConfig(ChannelConfig{
+		Type: "webhook",
+		Endpoints: []WebhookEndpoint{
+			{Name: "openclaw", URLEnv: "OPENCLAW_WEBHOOK_URL", TokenEnv: "OPENCLAW_HOOK_TOKEN", Auth: "bearer_and_header", HeaderName: "x-openclaw-token"},
+			{Name: "internal", URLEnv: "INTERNAL_WEBHOOK_URL"},
+		},
+	})
+	if err := ValidateConfig(cfg); err != nil {
+		t.Fatalf("multi endpoint: %v", err)
+	}
+}
+
+func webhookValidationConfig(channel ChannelConfig) *Config {
+	return &Config{
+		DesiredState: DesiredStateConfig{
+			Global: GlobalConfig{
+				TelemetryMode: "snmp_validate_only",
+				SNMP:          SNMPConfig{Version: "2c"},
+			},
+			Devices: map[string]DeviceConfig{
+				"sw1": {
+					Address: "10.0.0.1",
+					Interfaces: map[string]InterfaceConfig{
+						"Gi1/0/1": {DesiredState: "up", Monitor: true},
+					},
+				},
+			},
+		},
+		Alerts: AlertsConfig{
+			Channels: map[string]ChannelConfig{
+				"ops-hook": channel,
+			},
+			AlertRules: map[string]AlertRule{},
+			AlertBehavior: AlertBehavior{
+				DeduplicationWindow: time.Minute,
+			},
+		},
+	}
+}
+
 func TestLoadConfigDirMonolithicDeviceOverlay(t *testing.T) {
 	t.Parallel()
 	tmp := t.TempDir()

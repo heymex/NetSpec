@@ -48,8 +48,8 @@ func NewNotifier(logger zerolog.Logger, channels map[string]config.ChannelConfig
 }
 
 // SendAlert delivers an alert to the given logical channel names (from alert_rules).
-// Supports type "apprise" (default) and "openclaw". type "slack_chatops" is skipped here
-// (handled by SlackNotifier in the alert engine).
+// Supports type "apprise" (default), "webhook", and the "openclaw" webhook alias.
+// type "slack_chatops" is skipped here (handled by SlackNotifier in the alert engine).
 func (n *Notifier) SendAlert(alert *types.Alert, channelNames []string) error {
 	if len(channelNames) == 0 {
 		return nil
@@ -82,33 +82,9 @@ func (n *Notifier) SendAlert(alert *types.Alert, channelNames []string) error {
 			// Handled by SlackNotifier in the alert engine.
 			n.logger.Debug().Str("channel", name).Str("type", ch.Type).Msg("skipping non-apprise channel")
 			continue
-		case "openclaw":
-			webhookURL := strings.TrimSpace(os.Getenv(ch.URLEnv))
-			if webhookURL == "" {
-				n.logger.Warn().
-					Str("channel", name).
-					Str("url_env", ch.URLEnv).
-					Msg("openclaw webhook URL environment variable is empty")
-				errs = append(errs, fmt.Errorf("channel %q: environment variable %s is not set or empty", name, ch.URLEnv))
-				continue
-			}
-			token := ""
-			if ch.TokenEnv != "" {
-				token = strings.TrimSpace(os.Getenv(ch.TokenEnv))
-				if token == "" {
-					n.logger.Warn().
-						Str("channel", name).
-						Str("token_env", ch.TokenEnv).
-						Msg("openclaw token environment variable is empty")
-					errs = append(errs, fmt.Errorf("channel %q: environment variable %s is not set or empty", name, ch.TokenEnv))
-					continue
-				}
-			}
-			if err := n.deliverOpenClaw(webhookURL, token, name, alert); err != nil {
-				n.logger.Error().Err(err).Str("channel", name).Msg("failed to send openclaw notification")
+		case "webhook", "openclaw":
+			if err := n.deliverWebhookChannel(name, ch, alert); err != nil {
 				errs = append(errs, fmt.Errorf("channel %q: %w", name, err))
-			} else {
-				n.logger.Info().Str("channel", name).Str("alert_id", alert.ID).Msg("openclaw notification sent")
 			}
 		case "apprise", "":
 			if apiBase == "" {
@@ -184,7 +160,7 @@ func (n *Notifier) NotifyAppriseTest(channelNames []string) ([]ChannelTestOutcom
 			outcomes = append(outcomes, ChannelTestOutcome{
 				Channel: name,
 				OK:      true,
-				Message: fmt.Sprintf("skipped: channel type %q is not delivered via Apprise test (use a real alert or openclaw webhook)", ch.Type),
+				Message: fmt.Sprintf("skipped: channel type %q is not delivered via Apprise test (use a real alert)", ch.Type),
 			})
 			continue
 		}

@@ -12,13 +12,20 @@ channels:
     url_env: APPRISE_TEAMS_WEBHOOK
     severity_filter: [critical]
 
-  # OpenClaw Gateway webhook (structured JSON). Point url_env at a mapped hook
-  # (e.g. http://openclaw:18789/hooks/netspec) or /hooks/agent with a transform.
-  # ops-openclaw:
-  #   type: openclaw
-  #   url_env: OPENCLAW_WEBHOOK_URL
-  #   token_env: OPENCLAW_HOOK_TOKEN
+  # Generic HTTP webhooks (structured JSON). One channel can fan out to
+  # several providers. See docs/WEBHOOK_ALERTING.md.
+  # ops-webhooks:
+  #   type: webhook
   #   severity_filter: [warning, critical]
+  #   endpoints:
+  #     - name: primary
+  #       url_env: WEBHOOK_URL
+  #       token_env: WEBHOOK_TOKEN
+  #     - name: secondary
+  #       url_env: WEBHOOK_SECONDARY_URL
+  #       token_env: WEBHOOK_SECONDARY_TOKEN
+  #       auth: bearer_and_header
+  #       header_name: X-Webhook-Token
 
 alert_rules:
   default:
