@@ -68,12 +68,12 @@ type SNMPConfig struct {
 	// TelemetryFallbackEnabled enables periodic full SNMP polling while in
 	// telemetry_ingest_push mode. This is a safety net for missed telemetry and
 	// increases SNMP/device load significantly.
-	TelemetryFallbackEnabled bool          `yaml:"telemetry_fallback_enabled,omitempty"`
+	TelemetryFallbackEnabled bool `yaml:"telemetry_fallback_enabled,omitempty"`
 	// TelemetryFallbackInterval controls how often fallback full-device SNMP
 	// polls run when telemetry_fallback_enabled is true.
 	TelemetryFallbackInterval time.Duration `yaml:"telemetry_fallback_interval,omitempty"`
-	Timeout            time.Duration `yaml:"timeout,omitempty"`
-	Retries            int           `yaml:"retries,omitempty"`
+	Timeout                   time.Duration `yaml:"timeout,omitempty"`
+	Retries                   int           `yaml:"retries,omitempty"`
 }
 
 // IngestConfig contains push telemetry ingest listener configuration.
@@ -174,23 +174,37 @@ type AlertSeverity struct {
 // type "apprise" (default) routes through Apprise-API via url_env.
 // type "slack_chatops" uses the direct Slack API with interactive Block Kit messages;
 // set channel_env to the env var holding the Slack channel ID (e.g. "C0123456789").
-// type "openclaw" POSTs structured JSON to an OpenClaw Gateway webhook
-// (e.g. POST /hooks/agent or a mapped /hooks/<name>); url_env holds the full webhook URL,
-// token_env (optional) holds the shared hook token for Authorization: Bearer.
+// type "webhook" POSTs structured JSON to one HTTP endpoint (url_env) or several
+// (endpoints). token_env is optional; auth selects how the token is sent.
+// type "openclaw" is a single-endpoint alias: when token_env is set, the token is
+// sent as Authorization: Bearer and x-openclaw-token.
 type ChannelConfig struct {
-	Type            string   `yaml:"type"`
-	URLEnv          string   `yaml:"url_env,omitempty"`
-	TokenEnv        string   `yaml:"token_env,omitempty"`
-	ChannelEnv      string   `yaml:"channel_env,omitempty"`
-	SeverityFilter  []string `yaml:"severity_filter,omitempty"`
-	EscalationDelay int      `yaml:"escalation_delay,omitempty"`
+	Type            string            `yaml:"type"`
+	URLEnv          string            `yaml:"url_env,omitempty"`
+	TokenEnv        string            `yaml:"token_env,omitempty"`
+	Auth            string            `yaml:"auth,omitempty"`
+	HeaderName      string            `yaml:"header_name,omitempty"`
+	Endpoints       []WebhookEndpoint `yaml:"endpoints,omitempty"`
+	ChannelEnv      string            `yaml:"channel_env,omitempty"`
+	SeverityFilter  []string          `yaml:"severity_filter,omitempty"`
+	EscalationDelay int               `yaml:"escalation_delay,omitempty"`
+}
+
+// WebhookEndpoint is one HTTP destination for a webhook channel.
+// auth is "bearer" (default when token_env is set), "header", "bearer_and_header", or "none".
+type WebhookEndpoint struct {
+	Name       string `yaml:"name,omitempty"`
+	URLEnv     string `yaml:"url_env"`
+	TokenEnv   string `yaml:"token_env,omitempty"`
+	Auth       string `yaml:"auth,omitempty"`
+	HeaderName string `yaml:"header_name,omitempty"`
 }
 
 // SlackChatOpsConfig enables two-way Slack alerting via the Slack Web API.
 type SlackChatOpsConfig struct {
 	Enabled          bool   `yaml:"enabled"`
-	BotTokenEnv      string `yaml:"bot_token_env"`       // env var: xoxb-… bot token
-	SigningSecretEnv string  `yaml:"signing_secret_env"`  // env var: Slack signing secret for webhook validation
+	BotTokenEnv      string `yaml:"bot_token_env"`      // env var: xoxb-… bot token
+	SigningSecretEnv string `yaml:"signing_secret_env"` // env var: Slack signing secret for webhook validation
 }
 
 // AlertRule defines routing rules for alerts
