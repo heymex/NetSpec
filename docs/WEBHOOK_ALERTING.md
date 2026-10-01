@@ -1,6 +1,6 @@
 # Webhook alerting (NetSpec)
 
-NetSpec can POST the same structured alert JSON to one or more HTTP endpoints. Use a channel of `type: webhook` when a provider accepts a JSON body (OpenClaw mapped hooks, an internal receiver, PagerDuty-style routing headers, and similar).
+NetSpec can POST the same structured alert JSON to one or more HTTP endpoints. Use a channel of `type: webhook` for any receiver that accepts a JSON body.
 
 Each endpoint has its own URL and optional token. Endpoints on one channel share that channel's `severity_filter` and receive every alert routed to the channel. Use separate channels when providers should see different severities.
 
@@ -15,8 +15,6 @@ Each endpoint has its own URL and optional token. Endpoints on one channel share
 | UI links | **`NETSPEC_PUBLIC_URL`** (optional) — when set, payload includes `links.alert` and `links.device` |
 | Routing | Add the channel name under `alert_rules` (same as Apprise) |
 
-`type: openclaw` is still accepted as a single-endpoint alias. With `token_env` set and no explicit `auth`, the token is sent as `Authorization: Bearer` and `x-openclaw-token`.
-
 Example `alerts.yaml` fragment:
 
 ```yaml
@@ -25,13 +23,14 @@ channels:
     type: webhook
     severity_filter: [warning, critical]
     endpoints:
-      - name: openclaw
-        url_env: OPENCLAW_WEBHOOK_URL
-        token_env: OPENCLAW_HOOK_TOKEN
+      - name: primary
+        url_env: WEBHOOK_URL
+        token_env: WEBHOOK_TOKEN
+      - name: secondary
+        url_env: WEBHOOK_SECONDARY_URL
+        token_env: WEBHOOK_SECONDARY_TOKEN
         auth: bearer_and_header
-        header_name: x-openclaw-token
-      - name: internal
-        url_env: INTERNAL_WEBHOOK_URL
+        header_name: X-Webhook-Token
 
   ops-pager:
     type: webhook
@@ -54,8 +53,8 @@ A single endpoint can omit the list:
 channels:
   ops-hook:
     type: webhook
-    url_env: GENERIC_WEBHOOK_URL
-    token_env: GENERIC_WEBHOOK_TOKEN
+    url_env: WEBHOOK_URL
+    token_env: WEBHOOK_TOKEN
 ```
 
 That sends `Authorization: Bearer <token>`. Leave `token_env` unset to POST with no auth header.
@@ -89,18 +88,15 @@ Every endpoint receives the same body. Firing example:
 
 One failing endpoint does not cancel the others. NetSpec logs `webhook notification sent` per endpoint and returns an error that names the endpoint that failed.
 
-## OpenClaw
+`auth: bearer` (the default when `token_env` is set) sends `Authorization: Bearer`. `auth: header` sends only the named header. `auth: bearer_and_header` sends both. `auth: none` sends no token header.
 
-Point `url_env` at a mapped hook (`hooks.enabled` + shared token), for example `http://openclaw:18789/hooks/netspec`, and use `auth: bearer_and_header` with `header_name: x-openclaw-token`. A transform on the OpenClaw side should read `event` / `alert.*` and produce a `wake` or `agent` action.
-
-Built-in `/hooks/wake` and `/hooks/agent` expect `{ "text": … }` / `{ "message": … }` — they will not accept this payload as-is without a mapping/transform. Keep the endpoint on loopback, a tailnet, or a trusted reverse proxy.
+An older channel `type: openclaw` still loads as a single webhook endpoint. With `token_env` set and no explicit `auth`, that alias sends the token as `Authorization: Bearer` and `x-openclaw-token`. New channels should use `type: webhook`.
 
 ## Verifying
 
 ```bash
-curl -sS -X POST "$OPENCLAW_WEBHOOK_URL" \
-  -H "Authorization: Bearer $OPENCLAW_HOOK_TOKEN" \
-  -H "x-openclaw-token: $OPENCLAW_HOOK_TOKEN" \
+curl -sS -X POST "$WEBHOOK_URL" \
+  -H "Authorization: Bearer $WEBHOOK_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"event":"alert.firing","alert":{"id":"test","device":"lab-sw","entity":"Gi1/0/1","alert_type":"interface_state_mismatch","severity":"warning","state":"firing","fired_at":"2026-08-10T20:00:00Z","message":"manual test","related_state":{}}}'
 ```

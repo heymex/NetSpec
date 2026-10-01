@@ -18,13 +18,14 @@ channels:
   #   type: webhook
   #   severity_filter: [warning, critical]
   #   endpoints:
-  #     - name: openclaw
-  #       url_env: OPENCLAW_WEBHOOK_URL
-  #       token_env: OPENCLAW_HOOK_TOKEN
+  #     - name: primary
+  #       url_env: WEBHOOK_URL
+  #       token_env: WEBHOOK_TOKEN
+  #     - name: secondary
+  #       url_env: WEBHOOK_SECONDARY_URL
+  #       token_env: WEBHOOK_SECONDARY_TOKEN
   #       auth: bearer_and_header
-  #       header_name: x-openclaw-token
-  #     - name: internal
-  #       url_env: INTERNAL_WEBHOOK_URL
+  #       header_name: X-Webhook-Token
 
 alert_rules:
   default:
