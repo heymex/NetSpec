@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/netspec/netspec/internal/enrichment"
 	"gopkg.in/yaml.v3"
 )
 
@@ -20,10 +21,16 @@ func LoadConfig(path string) (*Config, error) {
 func LoadConfigDir(dir string) (*Config, error) {
 	cfg := &Config{}
 
-	// Load desired-state.yaml
-	if err := loadYAML(filepath.Join(dir, "desired-state.yaml"), &cfg.DesiredState); err != nil {
+	// Load desired-state.yaml (global + devices + optional enrichment)
+	var dsFile desiredStateFile
+	if err := loadYAML(filepath.Join(dir, "desired-state.yaml"), &dsFile); err != nil {
 		return nil, fmt.Errorf("loading desired-state.yaml: %w", err)
 	}
+	cfg.DesiredState = DesiredStateConfig{
+		Global:  dsFile.Global,
+		Devices: dsFile.Devices,
+	}
+	cfg.Enrichment = dsFile.Enrichment
 	if err := MergeMonolithicDeviceOverlay(dir, &cfg.DesiredState); err != nil {
 		return nil, err
 	}
@@ -49,6 +56,17 @@ func LoadConfigDir(dir string) (*Config, error) {
 		if err := loadYAML(alertsPath, &cfg.Alerts); err != nil {
 			return nil, fmt.Errorf("loading alerts.yaml: %w", err)
 		}
+	}
+
+	// Apply enrichment defaults (optional block from desired-state.yaml)
+	if cfg.Enrichment == nil {
+		cfg.Enrichment = &enrichment.Config{}
+	}
+	if cfg.Enrichment.Timeout == 0 {
+		cfg.Enrichment.Timeout = 15 * time.Second
+	}
+	if cfg.Enrichment.MaxConc == 0 {
+		cfg.Enrichment.MaxConc = 3
 	}
 
 	// Load credentials.yaml (optional)
@@ -121,6 +139,14 @@ func LoadConfigDir(dir string) (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// desiredStateFile is the on-disk shape of desired-state.yaml: global settings,
+// devices, and an optional top-level enrichment block.
+type desiredStateFile struct {
+	Global     GlobalConfig            `yaml:"global"`
+	Devices    map[string]DeviceConfig `yaml:"devices"`
+	Enrichment *enrichment.Config      `yaml:"enrichment"`
 }
 
 // loadYAML loads a YAML file into a struct
@@ -336,6 +362,12 @@ func ValidateConfig(cfg *Config) error {
 
 	if err := validateIngestListeners(&cfg.DesiredState.Global.Ingest); err != nil {
 		return err
+	}
+
+	if cfg.Enrichment != nil {
+		if err := cfg.Enrichment.Validate(); err != nil {
+			return err
+		}
 	}
 
 	// Validate alert channels

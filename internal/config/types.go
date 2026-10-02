@@ -1,6 +1,10 @@
 package config
 
-import "time"
+import (
+	"time"
+
+	"github.com/netspec/netspec/internal/enrichment"
+)
 
 // Config represents the complete NetSpec configuration
 type Config struct {
@@ -9,6 +13,7 @@ type Config struct {
 	Credentials  CredentialsConfig  `yaml:"credentials"`
 	Maintenance  MaintenanceConfig  `yaml:"maintenance"`
 	Rules        RulesConfig        `yaml:"-"` // loaded from rules.yaml, not inline
+	Enrichment   *enrichment.Config `yaml:"enrichment"`
 	// Device source stats are runtime-only metadata for observability.
 	MonolithicDeviceCount int `yaml:"-"`
 	SplitDeviceCount      int `yaml:"-"`

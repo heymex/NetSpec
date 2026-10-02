@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/netspec/netspec/internal/config"
+	"github.com/netspec/netspec/internal/enrichment"
 	"github.com/netspec/netspec/internal/types"
 	"github.com/rs/zerolog"
 )
@@ -364,5 +365,62 @@ func (n *Notifier) formatMessage(alert *types.Alert) string {
 		msgBody += fmt.Sprintf("\nResolved at: %s", alert.ResolvedAt.Format(time.RFC3339))
 	}
 
+	if alert.Enriched != nil && alert.Enriched.HasAny() {
+		msgBody += formatEnrichedContext(alert.Enriched)
+	}
+
 	return fmt.Sprintf("%s\n\n%s", title, msgBody)
+}
+
+// formatEnrichedContext appends compact NetBox / Taillight / Elastic sections.
+func formatEnrichedContext(ec *enrichment.EnrichedContext) string {
+	var b strings.Builder
+
+	if nb := ec.Netbox; nb != nil {
+		b.WriteString("\n\nNetBox:")
+		if nb.Role != "" {
+			b.WriteString(fmt.Sprintf("\n  Role: %s", nb.Role))
+		}
+		if nb.Site != "" {
+			b.WriteString(fmt.Sprintf("\n  Site: %s", nb.Site))
+		}
+		if nb.Rack != "" {
+			b.WriteString(fmt.Sprintf("\n  Rack: %s", nb.Rack))
+		}
+		if nb.Tenant != "" {
+			b.WriteString(fmt.Sprintf("\n  Tenant: %s", nb.Tenant))
+		}
+		if nb.ManagementIP != "" {
+			b.WriteString(fmt.Sprintf("\n  Mgmt IP: %s", nb.ManagementIP))
+		}
+	}
+
+	if tl := ec.Taillight; tl != nil {
+		b.WriteString("\n\nTaillight:")
+		if sw := tl.SyslogWindow; sw != nil {
+			b.WriteString(fmt.Sprintf("\n  Syslog (%s): %d hits", sw.Lookback, sw.TotalHits))
+		}
+		if ds := tl.DailySummary; ds != nil {
+			b.WriteString(fmt.Sprintf("\n  Daily summary (%s): %d events (%d errors, %d warnings)",
+				ds.ReportDate, ds.TotalEvents, ds.ErrorCount, ds.WarningCount))
+			if ds.SummaryText != "" {
+				b.WriteString(fmt.Sprintf("\n  %s", ds.SummaryText))
+			}
+		}
+	}
+
+	if el := ec.Elastic; el != nil && el.Trend != nil {
+		t := el.Trend
+		b.WriteString(fmt.Sprintf("\n\nElastic trend (%s): %d hits", t.Window, t.TotalHits))
+		if len(t.BySeverity) > 0 {
+			parts := make([]string, 0, len(t.BySeverity))
+			for sev, count := range t.BySeverity {
+				parts = append(parts, fmt.Sprintf("%s=%d", sev, count))
+			}
+			sort.Strings(parts)
+			b.WriteString(fmt.Sprintf("\n  By severity: %s", strings.Join(parts, ", ")))
+		}
+	}
+
+	return b.String()
 }

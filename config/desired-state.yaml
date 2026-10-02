@@ -30,3 +30,35 @@ global:
     #     source: cribl_mdt
 
 devices: {}
+
+# Optional alert enrichment (NetBox / Taillight / Elastic). See docs/ENRICHMENT.md.
+# enrichment:
+#   enabled: false
+#   timeout: 15s
+#   netbox:
+#     enabled: false
+#     api_url: https://netbox.example.com
+#     api_token_env: NETBOX_API_TOKEN
+#   taillight:
+#     enabled: false
+#     backend: api
+#     base_url: https://taillight.example.com
+#     api_key_env: TAILLIGHT_API_KEY
+#     syslog_window:
+#       enabled: true
+#       lookback_min: 30
+#       max_entries: 20
+#       event_kind: netlog
+#     daily_summary:
+#       enabled: true
+#       hostname_exact: true
+#       event_kind: netlog
+#   elastic:
+#     enabled: false
+#     url: https://elastic.example.com
+#     api_key_env: ELASTIC_API_KEY
+#     trend:
+#       enabled: true
+#       window: 1h
+#       index_pattern: "logs-*"
+#       max_hits: 100

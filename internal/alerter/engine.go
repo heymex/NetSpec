@@ -1,6 +1,7 @@
 package alerter
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/netspec/netspec/internal/config"
+	"github.com/netspec/netspec/internal/enrichment"
 	"github.com/netspec/netspec/internal/evaluator"
 	"github.com/netspec/netspec/internal/notifier"
 	"github.com/netspec/netspec/internal/types"
@@ -24,6 +26,7 @@ type Engine struct {
 	config          *config.Config
 	notifier        *notifier.Notifier
 	slackNotifier   *notifier.SlackNotifier
+	pipeline        *enrichment.Pipeline
 	logger          zerolog.Logger
 	activeAlerts    map[string]*types.Alert
 	lastFired       map[string]time.Time // dedup tracking
@@ -97,9 +100,15 @@ func NewEngine(cfg *config.Config, notifier *notifier.Notifier, logger zerolog.L
 		}
 	}
 
+	var pipeline *enrichment.Pipeline
+	if cfg.Enrichment != nil {
+		pipeline = enrichment.New(*cfg.Enrichment, logger)
+	}
+
 	engine := &Engine{
 		config:          cfg,
 		notifier:        notifier,
+		pipeline:        pipeline,
 		logger:          l,
 		activeAlerts:    make(map[string]*types.Alert),
 		lastFired:       make(map[string]time.Time),
@@ -131,6 +140,21 @@ func NewEngine(cfg *config.Config, notifier *notifier.Notifier, logger zerolog.L
 	}
 
 	return engine
+}
+
+// notifyAlert enriches the alert (when a pipeline is configured) then delivers it.
+// Enrichment failures are non-fatal — the alert still fires.
+func (e *Engine) notifyAlert(alert *types.Alert) {
+	if alert == nil || e.notify == nil {
+		return
+	}
+	if e.pipeline != nil {
+		alert.Enriched = e.pipeline.Enrich(context.Background(), &enrichment.EnrichContext{
+			DeviceName: alert.Device,
+			AlertID:    alert.ID,
+		})
+	}
+	e.notify(*alert)
 }
 
 // stateFile returns the path to the persisted alert state file.
@@ -310,7 +334,7 @@ func (e *Engine) process(ev AlertEvent) {
 					}
 					e.activeAlerts["flap|"+entityKey] = flapAlert
 					if e.notify != nil {
-						e.notify(*flapAlert)
+						e.notifyAlert(flapAlert)
 					}
 				}
 				// Suppress the actual alert
@@ -368,7 +392,7 @@ func (e *Engine) process(ev AlertEvent) {
 			Msg("alert fired")
 
 		if e.notify != nil {
-			e.notify(*alert)
+			e.notifyAlert(alert)
 		}
 
 		// Post interactive Slack Block Kit message.
@@ -402,7 +426,7 @@ func (e *Engine) process(ev AlertEvent) {
 			Msg("alert resolved")
 
 		if e.notify != nil {
-			e.notify(*existing)
+			e.notifyAlert(existing)
 		}
 
 		// Update Slack message to resolved state before removing from map.
@@ -435,7 +459,7 @@ func (e *Engine) checkFlapRecovery() {
 			alert.Message = fmt.Sprintf("Flapping stopped on %s %s", alert.Device, alert.Entity)
 
 			if e.notify != nil {
-				e.notify(*alert)
+				e.notifyAlert(alert)
 			}
 			e.updateSlackAlert(alert)
 			delete(e.activeAlerts, key)
@@ -581,7 +605,7 @@ func (e *Engine) CloseAlert(alertID, by string) (*types.Alert, error) {
 			e.escalation.CancelEscalation(alert.Device, alert.Entity, alert.AlertType)
 		}
 		if e.notify != nil {
-			e.notify(*alert)
+			e.notifyAlert(alert)
 		}
 
 		// Suppress re-fire until the condition actually clears on the network.
