@@ -6,6 +6,7 @@ All notable changes to this project are documented here. Release tags follow [Se
 
 ### Features
 
+- **`netspec-mdt` transport bandwidth metrics**: dial-out payload and NDJSON forward byte totals, ~10s rates, per-device `/stats` rollups, and optional YAML groups (`NETSPEC_MDT_BANDWIDTH_GROUPS`) for site/WAN sizing. Prometheus exposes aggregate + by-group series (not per-device, to avoid cardinality). See `config/mdt-bandwidth-groups.example.yaml` and `docs/CISCO_GNMI_SETUP.md`.
 - Added **webhook** alert channels (`type: webhook`) that POST structured JSON (`event`, `alert`, optional `links`) to one or more HTTP endpoints, each with its own URL and auth. See `docs/WEBHOOK_ALERTING.md`. Existing `type: openclaw` channels still load as a single-endpoint compatibility alias.
 - Replaced Telegraf + Python MDT as the default compose path with a native Go **`netspec-mdt`** sidecar (Cisco dial-out kvGPB → NDJSON ingest). Host **:57500** is gRPC; metrics on **:8089** (`/health`, `/stats`, `/metrics`). The old stack is **`docker-compose.legacy-mdt.yml`**.
 - Optional **`MDT_VM_URL`** on **`netspec-mdt`** writes contracted Graph series (`if_*`, `transceiver_*`) to VictoriaMetrics as Influx line protocol. Empty URL keeps the state-only path.

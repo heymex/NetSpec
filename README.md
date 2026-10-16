@@ -66,6 +66,7 @@ The `.env` file should contain:
 - `NETSPEC_API_TOKEN` - optional **bearer token** for scripted API access alongside session cookies
 - **`TLS_CERT_PATH` / `TLS_KEY_PATH`** - **STRONGLY RECOMMENDED for production**: paths to TLS certificate and private key files to enable HTTPS. Without TLS, passwords, session cookies, API tokens, and SNMP communities are transmitted in plaintext. See **[docs/TLS_SETUP.md](docs/TLS_SETUP.md)** for detailed setup instructions.
 - `MDT_ALLOWED_DEVICES` - optional comma-separated device-name allowlist for **`netspec-mdt`**
+- `NETSPEC_MDT_BANDWIDTH_GROUPS` - optional path to a YAML file mapping devices into transport bandwidth groups (see `config/mdt-bandwidth-groups.example.yaml`)
 - `NETSPEC_IMAGE_TAG` - optional container image tag override (**`v2.0.0`**, **`v2.0.0-beta.3`**, **`v2.0.0-beta.2`**, **`v2.0.0-beta.1`**, **`v1.0.0`**, or **`latest`**)
 - `NETSPEC_*`, `APPRISE_*`, `MDT_*` runtime knobs - per-service `*_LOG_MAX_SIZE`, `*_LOG_MAX_FILE`, `*_MEM_LIMIT`, `*_CPU_LIMIT`, `*_PIDS_LIMIT` (see `.env.example`)
 - Other optional settings as documented in `.env.example`
@@ -271,7 +272,7 @@ Preferred operating model:
 IOS-XE Dial-Out Telemetry → netspec-mdt (gRPC :57500) → NDJSON TCP → NetSpec ingest → SNMP targeted validation → Evaluator → Alert engine
 ```
 
-This keeps telemetry event-driven while using targeted SNMP `GET` calls for confirmation. Dial-out telemetry configuration details are documented in `docs/CISCO_GNMI_SETUP.md`. Sidecar health and path mix: **`http://127.0.0.1:8089/stats`**.
+This keeps telemetry event-driven while using targeted SNMP `GET` calls for confirmation. Dial-out telemetry configuration details are documented in `docs/CISCO_GNMI_SETUP.md`. Sidecar health, path mix, and **transport bandwidth** (dial-out bytes, NDJSON forward bytes, per-device / group rollups): **`http://127.0.0.1:8089/stats`** and **`/metrics`**.
 
 For `telemetry_ingest_push`, each TCP line must be valid JSON:
 

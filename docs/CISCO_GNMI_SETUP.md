@@ -85,6 +85,7 @@ Notes:
 - Keep SNMP targeted validation enabled in NetSpec to confirm telemetry events.
 - NetSpec `telemetry_ingest_push` listens for **newline-delimited JSON** on `global.ingest.listen_address` / `global.ingest.port` (defaults `0.0.0.0:57500` **inside** the NetSpec container). IOS-XE dial-out uses **grpc-tcp** to **`netspec-mdt`** on host **:57500**, not directly to NetSpec. The sidecar unpacks kvGPB in memory and forwards NDJSON to `NETSPEC_INGEST_HOST:NETSPEC_INGEST_PORT` (default compose: **`netspec-netspec:57500`**). There is no `decoded.json` disk buffer. Sidecar stats: **`http://<host>:8089/stats`**. See [README](../README.md#running).
 - Optional `MDT_ALLOWED_DEVICES` restricts which device names the sidecar forwards.
+- Optional `NETSPEC_MDT_BANDWIDTH_GROUPS` points at a YAML file that groups devices for transport bandwidth rollups (see `config/mdt-bandwidth-groups.example.yaml`). Use `/stats` fields `receiver.bytes_received_per_second`, `forward.bytes_forwarded_per_second`, `by_device`, and `by_group` (or Prometheus `netspec_mdt_bytes_*`) when sizing a WAN path for dial-out vs keeping a local collector that drops or compresses before the WAN. If forwarded bytes stay much lower than received bytes, the sidecar’s state-only transform is already shrinking the stream.
 - In isolated management VRF/firewall environments, token-based payload auth can be omitted and transport isolation can be the primary control. For payload-level checks, set `global.ingest.token_env` in YAML and set that environment variable for NetSpec.
 
 ## Troubleshooting
@@ -126,7 +127,7 @@ Confirm the receiver entry shows **`grpc-tcp`** versus **`grpc-tls`** exactly as
 
 2. Verify receiver IP/port is reachable from switch management VRF.
 3. Confirm NetSpec `global.ingest.port` matches `NETSPEC_INGEST_PORT` (inside the compose network). Host **:57500** is the sidecar gRPC listener, not NetSpec ingest.
-4. `curl -sS http://127.0.0.1:8089/stats` — `receiver.packets` and `transformer.emitted` should climb; `egress.forward_ok` should match `emitted`.
+4. `curl -sS http://127.0.0.1:8089/stats` — `receiver.packets_received` and `transformer.emitted` should climb; `forward.forward_ok` should match `emitted`. `receiver.bytes_received_total` / `bytes_received_per_second` show dial-out transport load.
 
 ## Security Considerations
 

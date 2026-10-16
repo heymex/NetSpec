@@ -1,0 +1,15 @@
+# Example NETSPEC_MDT_BANDWIDTH_GROUPS file for netspec-mdt.
+# Maps MDT node_id (device) names into operator-defined transport bandwidth groups.
+# Unlisted devices roll up under the implicit "ungrouped" bucket.
+#
+# Mount this into the netspec-mdt container and set:
+#   NETSPEC_MDT_BANDWIDTH_GROUPS=/etc/netspec/mdt-bandwidth-groups.yaml
+groups:
+  - name: remote_branches
+    devices:
+      - br-sw-01
+      - br-sw-02
+  - name: campus_core
+    devices:
+      - csw-01
+      - dist-01

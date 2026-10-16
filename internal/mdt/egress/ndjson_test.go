@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/netspec/netspec/internal/collector"
+	"github.com/netspec/netspec/internal/mdt/bandwidth"
 	"github.com/rs/zerolog"
 )
 
@@ -62,16 +63,20 @@ func TestClientSendNDJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := NewClient([]Target{{Host: "127.0.0.1", Port: port}}, "", zerolog.Nop())
+	c.SetBandwidthGroups(bandwidth.NewRegistry([]bandwidth.Group{
+		{Name: "campus_core", Devices: []string{"csw-01"}},
+	}))
 	defer c.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	if err := c.Send(ctx, collector.PushTelemetryEvent{
+	evIn := collector.PushTelemetryEvent{
 		Device:      "csw-01",
 		Interface:   "Gi1/0/1",
 		OperStatus:  "down",
 		AdminStatus: "up",
 		Source:      "netspec-mdt",
-	}); err != nil {
+	}
+	if err := c.Send(ctx, evIn); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -85,5 +90,20 @@ func TestClientSendNDJSON(t *testing.T) {
 	st := c.Stats()
 	if st.ForwardOK != 1 || st.ForwardFailed != 0 || st.ForwardConns != 1 {
 		t.Fatalf("egress stats: %+v", st)
+	}
+	if st.BytesForwarded == 0 {
+		t.Fatalf("expected forwarded bytes, got %+v", st)
+	}
+	found := false
+	for _, g := range st.ByGroup {
+		if g.Group == "campus_core" {
+			found = true
+			if g.Bytes != st.BytesForwarded || g.Events != 1 {
+				t.Fatalf("campus_core: %+v total=%d", g, st.BytesForwarded)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("missing campus_core in %+v", st.ByGroup)
 	}
 }

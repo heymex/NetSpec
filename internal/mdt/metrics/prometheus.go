@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/netspec/netspec/internal/mdt/egress"
 	"github.com/netspec/netspec/internal/mdt/receiver"
 )
 
@@ -23,6 +24,9 @@ func WritePrometheus(w io.Writer, snap Snapshot) error {
 	p.counter("netspec_mdt_packets_error_payload_total", "MDT dial-out packets that carried an errors string.", rx.PacketsErrorPayload)
 	p.counter("netspec_mdt_decode_failed_total", "Telemetry protobuf unmarshal failures.", rx.DecodeFailed)
 	p.counter("netspec_mdt_records_unpacked_total", "kvGPB rows unpacked from MDT packets.", rx.RecordsUnpacked)
+	p.counter("netspec_mdt_bytes_received_total", "Dial-out telemetry payload bytes received (transport bandwidth).", rx.BytesReceived)
+	p.gauge("netspec_mdt_bytes_received_per_second", "Dial-out payload bytes/sec over the last ~10s window.", rx.BytesReceivedPerSecond)
+	p.rxGroups(rx.ByGroup)
 	p.kinds(rx.ByKind)
 	p.paths(rx.ByEncodingPath)
 	p.gauge("netspec_mdt_streams_active", "Open MdtDialout gRPC streams.", float64(rx.StreamsActive))
@@ -37,6 +41,9 @@ func WritePrometheus(w io.Writer, snap Snapshot) error {
 	p.counter("netspec_mdt_forward_ok_total", "NDJSON events successfully written to ingest.", fw.ForwardOK)
 	p.counter("netspec_mdt_forward_failed_total", "NDJSON events that failed to write to ingest.", fw.ForwardFailed)
 	p.gauge("netspec_mdt_forward_conns", "Cached NDJSON TCP connections.", float64(fw.ForwardConns))
+	p.counter("netspec_mdt_bytes_forwarded_total", "NDJSON bytes successfully written to NetSpec ingest.", fw.BytesForwarded)
+	p.gauge("netspec_mdt_bytes_forwarded_per_second", "NDJSON forward bytes/sec over the last ~10s window.", fw.BytesForwardedPerSecond)
+	p.fwGroups(fw.ByGroup)
 	vm := snap.VM
 	p.gauge("netspec_mdt_vm_enabled", "1 when VictoriaMetrics Influx write is configured.", boolGauge(vm.Enabled))
 	p.counter("netspec_mdt_vm_samples_total", "Contracted Graph samples queued for VictoriaMetrics.", vm.Samples)
@@ -88,6 +95,28 @@ func boolGauge(v bool) float64 {
 		return 1
 	}
 	return 0
+}
+
+func (p *promWriter) rxGroups(rows []receiver.GroupBandwidthStat) {
+	if len(rows) == 0 {
+		return
+	}
+	const name = "netspec_mdt_bytes_received_by_group_total"
+	p.meta(name, "Dial-out telemetry payload bytes by operator-defined bandwidth group.", "counter")
+	for _, row := range rows {
+		p.printf("%s{group=%q} %d\n", name, row.Group, row.Bytes)
+	}
+}
+
+func (p *promWriter) fwGroups(rows []egress.GroupBandwidthStat) {
+	if len(rows) == 0 {
+		return
+	}
+	const name = "netspec_mdt_bytes_forwarded_by_group_total"
+	p.meta(name, "NDJSON ingest bytes by operator-defined bandwidth group.", "counter")
+	for _, row := range rows {
+		p.printf("%s{group=%q} %d\n", name, row.Group, row.Bytes)
+	}
 }
 
 func (p *promWriter) kinds(rows []receiver.PathStat) {

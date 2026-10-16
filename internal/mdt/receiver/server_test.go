@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/netspec/netspec/internal/collector"
+	"github.com/netspec/netspec/internal/mdt/bandwidth"
 	"github.com/netspec/netspec/internal/mdt/decoder"
 	"github.com/netspec/netspec/internal/mdt/pb/mdtdialout"
 	"github.com/netspec/netspec/internal/mdt/pb/telemetrybis"
@@ -97,6 +98,15 @@ func TestMdtDialoutEmitsInterfaceEvents(t *testing.T) {
 	if st.PacketsReceived != 1 || st.RecordsUnpacked != 2 {
 		t.Fatalf("receiver stats: %+v", st)
 	}
+	if st.BytesReceived != uint64(len(raw)) {
+		t.Fatalf("bytes_received: got %d want %d", st.BytesReceived, len(raw))
+	}
+	if len(st.ByDevice) != 1 || st.ByDevice[0].Device != "csw-01" || st.ByDevice[0].Bytes != uint64(len(raw)) || st.ByDevice[0].Packets != 1 {
+		t.Fatalf("by_device: %+v", st.ByDevice)
+	}
+	if len(st.ByGroup) != 1 || st.ByGroup[0].Group != "ungrouped" || st.ByGroup[0].Bytes != uint64(len(raw)) {
+		t.Fatalf("by_group: %+v", st.ByGroup)
+	}
 	if st.Transformer.Emitted != 2 || st.QueueCap != 8 {
 		t.Fatalf("transformer stats: %+v", st)
 	}
@@ -108,6 +118,66 @@ func TestMdtDialoutEmitsInterfaceEvents(t *testing.T) {
 	}
 	if len(st.ByEncodingPath) != 1 || st.ByEncodingPath[0].EncodingPath != "openconfig-interfaces:interfaces/interface" {
 		t.Fatalf("by_path: %+v", st.ByEncodingPath)
+	}
+}
+
+func TestBandwidthGroupsRollup(t *testing.T) {
+	xf := transformer.New(transformer.Config{ResendInterval: time.Hour})
+	srv := New(Config{
+		ListenAddr: "127.0.0.1:0",
+		Workers:    1,
+		QueueSize:  8,
+	}, xf, func(collector.PushTelemetryEvent) {}, zerolog.Nop())
+	srv.SetBandwidthGroups(bandwidth.NewRegistry([]bandwidth.Group{
+		{Name: "campus_core", Devices: []string{"csw-01"}},
+	}))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.Start(ctx) }()
+
+	addr := waitAddr(t, srv)
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	stream, err := mdtdialout.NewGRPCMdtDialoutClient(conn).MdtDialout(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := proto.Marshal(decoderFixture())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Send(&mdtdialout.MdtDialoutArgs{ReqId: 1, Data: raw}); err != nil {
+		t.Fatal(err)
+	}
+	_ = stream.CloseSend()
+
+	waitUntil(t, 2*time.Second, func() bool {
+		st := srv.Stats()
+		return st.BytesReceived == uint64(len(raw)) && len(st.ByGroup) >= 1
+	})
+	st := srv.Stats()
+	found := false
+	for _, g := range st.ByGroup {
+		if g.Group == "campus_core" {
+			found = true
+			if g.Bytes != uint64(len(raw)) || g.Packets != 1 {
+				t.Fatalf("campus_core: %+v", g)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("missing campus_core in %+v", st.ByGroup)
+	}
+	cancel()
+	select {
+	case <-errCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("server did not stop")
 	}
 }
 

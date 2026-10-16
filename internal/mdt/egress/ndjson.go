@@ -5,14 +5,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/netspec/netspec/internal/collector"
+	"github.com/netspec/netspec/internal/mdt/bandwidth"
 	"github.com/rs/zerolog"
 )
+
+const byteRateWindowSec = 10
 
 // Target is a NetSpec NDJSON ingest host:port.
 type Target struct {
@@ -34,25 +38,59 @@ type Client struct {
 	mu    sync.Mutex
 	conns map[string]net.Conn
 
-	sendOK   atomic.Uint64
-	sendFail atomic.Uint64
+	sendOK         atomic.Uint64
+	sendFail       atomic.Uint64
+	bytesForwarded atomic.Uint64
+
+	bwMu       sync.Mutex
+	groups     *bandwidth.Registry
+	byGroup    map[string]fwGroupCounters
+	bytesBySec map[int64]uint64
+}
+
+type fwGroupCounters struct {
+	Bytes  uint64
+	Events uint64
+}
+
+// GroupBandwidthStat is NDJSON forward bytes rolled up by operator group.
+type GroupBandwidthStat struct {
+	Group  string `json:"group"`
+	Bytes  uint64 `json:"bytes_forwarded"`
+	Events uint64 `json:"events"`
 }
 
 // Stats is a point-in-time copy of NDJSON forward counters.
 type Stats struct {
-	ForwardOK     uint64   `json:"forward_ok"`
-	ForwardFailed uint64   `json:"forward_failed"`
-	ForwardConns  int      `json:"forward_conns"`
-	IngestTargets []string `json:"ingest_targets,omitempty"`
+	ForwardOK               uint64               `json:"forward_ok"`
+	ForwardFailed           uint64               `json:"forward_failed"`
+	ForwardConns            int                  `json:"forward_conns"`
+	BytesForwarded          uint64               `json:"bytes_forwarded_total"`
+	BytesForwardedPerSecond float64              `json:"bytes_forwarded_per_second"`
+	ByGroup                 []GroupBandwidthStat `json:"by_group,omitempty"`
+	IngestTargets           []string             `json:"ingest_targets,omitempty"`
 }
 
 func NewClient(targets []Target, token string, log zerolog.Logger) *Client {
 	return &Client{
-		targets: targets,
-		token:   token,
-		log:     log,
-		conns:   map[string]net.Conn{},
+		targets:    targets,
+		token:      token,
+		log:        log,
+		conns:      map[string]net.Conn{},
+		byGroup:    map[string]fwGroupCounters{},
+		bytesBySec: map[int64]uint64{},
 	}
+}
+
+// SetBandwidthGroups installs the device→group registry for forwarded byte
+// rollups. Nil treats every device as bandwidth.Ungrouped.
+func (c *Client) SetBandwidthGroups(r *bandwidth.Registry) {
+	if c == nil {
+		return
+	}
+	c.bwMu.Lock()
+	defer c.bwMu.Unlock()
+	c.groups = r
 }
 
 func ParseTargets(csv string, fallbackHost string, fallbackPort int) ([]Target, error) {
@@ -105,11 +143,15 @@ func (c *Client) Stats() Stats {
 	for _, t := range c.targets {
 		targets = append(targets, t.addr())
 	}
+	byGroup, rate := c.snapshotBandwidth()
 	return Stats{
-		ForwardOK:     c.sendOK.Load(),
-		ForwardFailed: c.sendFail.Load(),
-		ForwardConns:  conns,
-		IngestTargets: targets,
+		ForwardOK:               c.sendOK.Load(),
+		ForwardFailed:           c.sendFail.Load(),
+		ForwardConns:            conns,
+		BytesForwarded:          c.bytesForwarded.Load(),
+		BytesForwardedPerSecond: rate,
+		ByGroup:                 byGroup,
+		IngestTargets:           targets,
 	}
 }
 
@@ -135,7 +177,69 @@ func (c *Client) Send(ctx context.Context, ev collector.PushTelemetryEvent) erro
 		return last
 	}
 	c.sendOK.Add(1)
+	n := uint64(len(payload))
+	c.bytesForwarded.Add(n)
+	c.noteForwarded(ev.Device, n)
 	return nil
+}
+
+func (c *Client) noteForwarded(device string, n uint64) {
+	if c == nil || n == 0 {
+		return
+	}
+	now := time.Now().Unix()
+	c.bwMu.Lock()
+	defer c.bwMu.Unlock()
+	c.bytesBySec[now] += n
+	group := bandwidth.Ungrouped
+	if c.groups != nil {
+		group = c.groups.GroupOf(device)
+	}
+	g := c.byGroup[group]
+	g.Bytes += n
+	g.Events++
+	c.byGroup[group] = g
+}
+
+func (c *Client) snapshotBandwidth() ([]GroupBandwidthStat, float64) {
+	c.bwMu.Lock()
+	defer c.bwMu.Unlock()
+
+	nowSec := time.Now().Unix()
+	var recent uint64
+	for sec, n := range c.bytesBySec {
+		age := nowSec - sec
+		if age >= 0 && age < byteRateWindowSec {
+			recent += n
+		}
+		if age > 1200 {
+			delete(c.bytesBySec, sec)
+		}
+	}
+	rate := float64(recent) / float64(byteRateWindowSec)
+
+	if c.groups != nil {
+		for _, name := range c.groups.Names() {
+			if _, ok := c.byGroup[name]; !ok {
+				c.byGroup[name] = fwGroupCounters{}
+			}
+		}
+	}
+	byGroup := make([]GroupBandwidthStat, 0, len(c.byGroup))
+	for group, counters := range c.byGroup {
+		byGroup = append(byGroup, GroupBandwidthStat{
+			Group:  group,
+			Bytes:  counters.Bytes,
+			Events: counters.Events,
+		})
+	}
+	sort.Slice(byGroup, func(i, j int) bool {
+		if byGroup[i].Bytes != byGroup[j].Bytes {
+			return byGroup[i].Bytes > byGroup[j].Bytes
+		}
+		return byGroup[i].Group < byGroup[j].Group
+	})
+	return byGroup, rate
 }
 
 func (c *Client) sendOne(ctx context.Context, t Target, payload []byte) error {

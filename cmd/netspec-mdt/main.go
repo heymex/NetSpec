@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/netspec/netspec/internal/collector"
+	"github.com/netspec/netspec/internal/mdt/bandwidth"
 	"github.com/netspec/netspec/internal/mdt/decoder"
 	"github.com/netspec/netspec/internal/mdt/egress"
 	"github.com/netspec/netspec/internal/mdt/egress/influx"
@@ -37,6 +38,7 @@ func main() {
 	keepaliveMin := flag.Duration("keepalive-min-time", envDuration("NETSPEC_MDT_KEEPALIVE_MIN_TIME", 5*time.Minute), "gRPC keepalive enforcement minimum")
 	permitIdlePing := flag.Bool("permit-keepalive-without-calls", envBool("NETSPEC_MDT_PERMIT_KEEPALIVE_WITHOUT_CALLS"), "allow IOS-XE idle pings")
 	metricsAddr := flag.String("metrics-addr", envOr("NETSPEC_MDT_METRICS_ADDR", "0.0.0.0:8089"), "HTTP /health /stats /metrics listen address (off/- disables)")
+	bwGroupsPath := flag.String("bandwidth-groups", envOr("NETSPEC_MDT_BANDWIDTH_GROUPS", ""), "YAML file mapping devices to transport bandwidth groups")
 	vmURL := flag.String("vm-url", envOr("MDT_VM_URL", ""), "VictoriaMetrics base URL for Graph Influx LP (empty disables)")
 	vmDB := flag.String("vm-database", envOr("MDT_VM_DATABASE", "netspecgraph"), "Influx database query param (ignored by VM; kept for Telegraf parity)")
 	flag.Parse()
@@ -81,6 +83,12 @@ func main() {
 	client := egress.NewClient(targets, token, log)
 	defer client.Close()
 
+	bwGroups, err := bandwidth.LoadFile(*bwGroupsPath)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Invalid bandwidth groups file")
+	}
+	client.SetBandwidthGroups(bwGroups)
+
 	vm := influx.New(influx.Config{
 		URL:      *vmURL,
 		Database: *vmDB,
@@ -99,6 +107,7 @@ func main() {
 	log.Info().
 		Str("listen", *listenAddr).
 		Str("metrics", *metricsAddr).
+		Str("bandwidth_groups", strings.TrimSpace(*bwGroupsPath)).
 		Interface("ingest_targets", targets).
 		Str("vm_url", *vmURL).
 		Dur("resend_interval", *resend).
@@ -111,6 +120,7 @@ func main() {
 		KeepaliveMinTime:            *keepaliveMin,
 		PermitKeepaliveWithoutCalls: *permitIdlePing,
 	}, xf, onEvent, log)
+	srv.SetBandwidthGroups(bwGroups)
 	if vm != nil {
 		srv.SetOnRecords(func(recs []*decoder.Record) {
 			res := graphmap.Map(recs)

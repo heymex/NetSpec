@@ -7,11 +7,13 @@ import (
 	"io"
 	"net"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/netspec/netspec/internal/collector"
+	"github.com/netspec/netspec/internal/mdt/bandwidth"
 	"github.com/netspec/netspec/internal/mdt/decoder"
 	"github.com/netspec/netspec/internal/mdt/pb/mdtdialout"
 	"github.com/netspec/netspec/internal/mdt/transformer"
@@ -25,6 +27,8 @@ const (
 	defaultMaxRecvMsgSize = 4 * 1024 * 1024
 	defaultQueueSize      = 1024
 	defaultKeepaliveMin   = 5 * time.Minute
+	byDeviceStatsLimit    = 50
+	byteRateWindowSec     = 10
 )
 
 // Config is the gRPC MDT dial-out listener.
@@ -59,6 +63,7 @@ type Server struct {
 	streamsActive       atomic.Int64
 	streamsOpened       atomic.Uint64
 	streamsClosed       atomic.Uint64
+	bytesReceived       atomic.Uint64
 
 	lastMu       sync.Mutex
 	lastPacketAt time.Time
@@ -67,8 +72,19 @@ type Server struct {
 	byPath map[string]uint64
 	byKind map[string]uint64
 
+	bwMu       sync.Mutex
+	groups     *bandwidth.Registry
+	byDevice   map[string]bwCounters
+	byGroup    map[string]bwCounters
+	bytesBySec map[int64]uint64
+
 	mu      sync.Mutex
 	started bool
+}
+
+type bwCounters struct {
+	Bytes   uint64
+	Packets uint64
 }
 
 // PathStat is an encoding_path or kind rollup from unpacked kvGPB rows.
@@ -78,25 +94,43 @@ type PathStat struct {
 	Count        uint64 `json:"count"`
 }
 
+// DeviceBandwidthStat is dial-out transport bytes attributed to a node_id.
+type DeviceBandwidthStat struct {
+	Device  string `json:"device"`
+	Bytes   uint64 `json:"bytes_received"`
+	Packets uint64 `json:"packets"`
+}
+
+// GroupBandwidthStat is dial-out transport bytes rolled up by operator group.
+type GroupBandwidthStat struct {
+	Group   string `json:"group"`
+	Bytes   uint64 `json:"bytes_received"`
+	Packets uint64 `json:"packets"`
+}
+
 // Stats is a point-in-time copy of receiver + transformer counters.
 type Stats struct {
-	ListenAddr          string               `json:"listen_addr"`
-	QueueLen            int                  `json:"queue_len"`
-	QueueCap            int                  `json:"queue_cap"`
-	QueueHighWater      uint64               `json:"queue_high_water"`
-	QueueBlocked        uint64               `json:"queue_blocked"`
-	PacketsReceived     uint64               `json:"packets_received"`
-	PacketsEmpty        uint64               `json:"packets_empty"`
-	PacketsErrorPayload uint64               `json:"packets_error_payload"`
-	DecodeFailed        uint64               `json:"decode_failed"`
-	RecordsUnpacked     uint64               `json:"records_unpacked"`
-	StreamsActive       int64                `json:"streams_active"`
-	StreamsOpened       uint64               `json:"streams_opened"`
-	StreamsClosed       uint64               `json:"streams_closed"`
-	LastPacketAt        time.Time            `json:"last_packet_at,omitempty"`
-	ByKind              []PathStat           `json:"by_kind,omitempty"`
-	ByEncodingPath      []PathStat           `json:"by_encoding_path,omitempty"`
-	Transformer         transformer.Snapshot `json:"transformer"`
+	ListenAddr             string                `json:"listen_addr"`
+	QueueLen               int                   `json:"queue_len"`
+	QueueCap               int                   `json:"queue_cap"`
+	QueueHighWater         uint64                `json:"queue_high_water"`
+	QueueBlocked           uint64                `json:"queue_blocked"`
+	PacketsReceived        uint64                `json:"packets_received"`
+	PacketsEmpty           uint64                `json:"packets_empty"`
+	PacketsErrorPayload    uint64                `json:"packets_error_payload"`
+	DecodeFailed           uint64                `json:"decode_failed"`
+	RecordsUnpacked        uint64                `json:"records_unpacked"`
+	StreamsActive          int64                 `json:"streams_active"`
+	StreamsOpened          uint64                `json:"streams_opened"`
+	StreamsClosed          uint64                `json:"streams_closed"`
+	BytesReceived          uint64                `json:"bytes_received_total"`
+	BytesReceivedPerSecond float64               `json:"bytes_received_per_second"`
+	ByDevice               []DeviceBandwidthStat `json:"by_device,omitempty"`
+	ByGroup                []GroupBandwidthStat  `json:"by_group,omitempty"`
+	LastPacketAt           time.Time             `json:"last_packet_at,omitempty"`
+	ByKind                 []PathStat            `json:"by_kind,omitempty"`
+	ByEncodingPath         []PathStat            `json:"by_encoding_path,omitempty"`
+	Transformer            transformer.Snapshot  `json:"transformer"`
 }
 
 type job struct {
@@ -127,13 +161,16 @@ func New(cfg Config, xf *transformer.Transformer, onEvent func(collector.PushTel
 		onEvent = func(collector.PushTelemetryEvent) {}
 	}
 	return &Server{
-		cfg:     cfg,
-		log:     log,
-		xf:      xf,
-		onEvent: onEvent,
-		queue:   make(chan job, cfg.QueueSize),
-		byPath:  map[string]uint64{},
-		byKind:  map[string]uint64{},
+		cfg:        cfg,
+		log:        log,
+		xf:         xf,
+		onEvent:    onEvent,
+		queue:      make(chan job, cfg.QueueSize),
+		byPath:     map[string]uint64{},
+		byKind:     map[string]uint64{},
+		byDevice:   map[string]bwCounters{},
+		byGroup:    map[string]bwCounters{},
+		bytesBySec: map[int64]uint64{},
 	}
 }
 
@@ -144,6 +181,17 @@ func (s *Server) SetOnRecords(fn func([]*decoder.Record)) {
 		return
 	}
 	s.onRecords = fn
+}
+
+// SetBandwidthGroups installs the device→group registry used for by_group
+// rollups. Nil treats every device as bandwidth.Ungrouped. Safe before Start.
+func (s *Server) SetBandwidthGroups(r *bandwidth.Registry) {
+	if s == nil {
+		return
+	}
+	s.bwMu.Lock()
+	defer s.bwMu.Unlock()
+	s.groups = r
 }
 
 func (s *Server) Addr() string {
@@ -177,24 +225,29 @@ func (s *Server) Stats() Stats {
 	byKind := snapshotPathStats(s.byKind, false)
 	byPath := snapshotPathStats(s.byPath, true)
 	s.pathMu.Unlock()
+	byDevice, byGroup, bytesPerSec := s.snapshotBandwidth()
 	return Stats{
-		ListenAddr:          addr,
-		QueueLen:            qlen,
-		QueueCap:            qcap,
-		QueueHighWater:      s.queueHighWater.Load(),
-		QueueBlocked:        s.queueBlocked.Load(),
-		PacketsReceived:     s.packetsReceived.Load(),
-		PacketsEmpty:        s.packetsEmpty.Load(),
-		PacketsErrorPayload: s.packetsErrorPayload.Load(),
-		DecodeFailed:        s.decodeFailed.Load(),
-		RecordsUnpacked:     s.recordsUnpacked.Load(),
-		StreamsActive:       s.streamsActive.Load(),
-		StreamsOpened:       s.streamsOpened.Load(),
-		StreamsClosed:       s.streamsClosed.Load(),
-		LastPacketAt:        last,
-		ByKind:              byKind,
-		ByEncodingPath:      byPath,
-		Transformer:         s.xf.Snapshot(),
+		ListenAddr:             addr,
+		QueueLen:               qlen,
+		QueueCap:               qcap,
+		QueueHighWater:         s.queueHighWater.Load(),
+		QueueBlocked:           s.queueBlocked.Load(),
+		PacketsReceived:        s.packetsReceived.Load(),
+		PacketsEmpty:           s.packetsEmpty.Load(),
+		PacketsErrorPayload:    s.packetsErrorPayload.Load(),
+		DecodeFailed:           s.decodeFailed.Load(),
+		RecordsUnpacked:        s.recordsUnpacked.Load(),
+		StreamsActive:          s.streamsActive.Load(),
+		StreamsOpened:          s.streamsOpened.Load(),
+		StreamsClosed:          s.streamsClosed.Load(),
+		BytesReceived:          s.bytesReceived.Load(),
+		BytesReceivedPerSecond: bytesPerSec,
+		ByDevice:               byDevice,
+		ByGroup:                byGroup,
+		LastPacketAt:           last,
+		ByKind:                 byKind,
+		ByEncodingPath:         byPath,
+		Transformer:            s.xf.Snapshot(),
 	}
 }
 
@@ -315,20 +368,129 @@ func (s *Server) worker() {
 }
 
 func (s *Server) handle(j job) {
+	n := uint64(len(j.data))
 	recs, err := decoder.Unpack(j.peer, j.data)
 	if err != nil {
 		s.decodeFailed.Add(1)
+		s.noteDeviceBandwidth("unknown", n, 1)
 		s.log.Warn().Err(err).Str("peer", j.peer).Msg("Failed to unmarshal MDT telemetry")
 		return
 	}
 	s.recordsUnpacked.Add(uint64(len(recs)))
 	s.notePaths(recs)
+	s.noteDeviceBandwidth(nodeIDFrom(recs), n, 1)
 	if s.onRecords != nil {
 		s.onRecords(recs)
 	}
 	for _, ev := range s.xf.Events(recs) {
 		s.onEvent(ev)
 	}
+}
+
+func nodeIDFrom(recs []*decoder.Record) string {
+	for _, rec := range recs {
+		if rec == nil {
+			continue
+		}
+		if id := strings.TrimSpace(rec.NodeID); id != "" {
+			return id
+		}
+	}
+	return "unknown"
+}
+
+func (s *Server) noteDeviceBandwidth(device string, bytes, packets uint64) {
+	if s == nil || (bytes == 0 && packets == 0) {
+		return
+	}
+	device = strings.TrimSpace(device)
+	if device == "" {
+		device = "unknown"
+	}
+	s.bwMu.Lock()
+	defer s.bwMu.Unlock()
+	d := s.byDevice[device]
+	d.Bytes += bytes
+	d.Packets += packets
+	s.byDevice[device] = d
+	group := bandwidth.Ungrouped
+	if s.groups != nil {
+		group = s.groups.GroupOf(device)
+	}
+	g := s.byGroup[group]
+	g.Bytes += bytes
+	g.Packets += packets
+	s.byGroup[group] = g
+}
+
+func (s *Server) noteByteRate(n uint64) {
+	if n == 0 {
+		return
+	}
+	now := time.Now().Unix()
+	s.bwMu.Lock()
+	defer s.bwMu.Unlock()
+	s.bytesBySec[now] += n
+}
+
+func (s *Server) snapshotBandwidth() ([]DeviceBandwidthStat, []GroupBandwidthStat, float64) {
+	s.bwMu.Lock()
+	defer s.bwMu.Unlock()
+
+	nowSec := time.Now().Unix()
+	var recent uint64
+	for sec, n := range s.bytesBySec {
+		age := nowSec - sec
+		if age >= 0 && age < byteRateWindowSec {
+			recent += n
+		}
+		if age > 1200 {
+			delete(s.bytesBySec, sec)
+		}
+	}
+	rate := float64(recent) / float64(byteRateWindowSec)
+
+	byDevice := make([]DeviceBandwidthStat, 0, len(s.byDevice))
+	for device, c := range s.byDevice {
+		byDevice = append(byDevice, DeviceBandwidthStat{
+			Device:  device,
+			Bytes:   c.Bytes,
+			Packets: c.Packets,
+		})
+	}
+	sort.Slice(byDevice, func(i, j int) bool {
+		if byDevice[i].Bytes != byDevice[j].Bytes {
+			return byDevice[i].Bytes > byDevice[j].Bytes
+		}
+		return byDevice[i].Device < byDevice[j].Device
+	})
+	if len(byDevice) > byDeviceStatsLimit {
+		byDevice = byDevice[:byDeviceStatsLimit]
+	}
+
+	// Ensure configured groups appear even at zero so operators see empty sites.
+	if s.groups != nil {
+		for _, name := range s.groups.Names() {
+			if _, ok := s.byGroup[name]; !ok {
+				s.byGroup[name] = bwCounters{}
+			}
+		}
+	}
+	byGroup := make([]GroupBandwidthStat, 0, len(s.byGroup))
+	for group, c := range s.byGroup {
+		byGroup = append(byGroup, GroupBandwidthStat{
+			Group:   group,
+			Bytes:   c.Bytes,
+			Packets: c.Packets,
+		})
+	}
+	sort.Slice(byGroup, func(i, j int) bool {
+		if byGroup[i].Bytes != byGroup[j].Bytes {
+			return byGroup[i].Bytes > byGroup[j].Bytes
+		}
+		return byGroup[i].Group < byGroup[j].Group
+	})
+	return byDevice, byGroup, rate
 }
 
 func (s *Server) MdtDialout(stream mdtdialout.GRPCMdtDialout_MdtDialoutServer) error {
@@ -362,6 +524,9 @@ func (s *Server) MdtDialout(stream mdtdialout.GRPCMdtDialout_MdtDialoutServer) e
 			continue
 		}
 		s.packetsReceived.Add(1)
+		nbytes := uint64(len(packet.GetData()))
+		s.bytesReceived.Add(nbytes)
+		s.noteByteRate(nbytes)
 		s.lastMu.Lock()
 		s.lastPacketAt = time.Now()
 		s.lastMu.Unlock()
