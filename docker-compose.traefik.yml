@@ -1,0 +1,23 @@
+# Attach only the NetSpec web/API container to the Traefik already running
+# on this host (network: proxy). Hostname netspec-test-01.rctc.dev.
+# Do not add netspec-mdt or netspec-apprise here.
+# Komodo must keep this file in the stack file list or the next Deploy drops it.
+
+services:
+  netspec-netspec:
+    networks:
+      - netspec
+      - proxy
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=proxy
+      - traefik.http.routers.netspec.rule=Host(`netspec-test-01.rctc.dev`)
+      - traefik.http.routers.netspec.entrypoints=websecure
+      - traefik.http.routers.netspec.tls.certresolver=cf
+      - traefik.http.routers.netspec.middlewares=sec-headers@docker
+      - traefik.http.services.netspec.loadbalancer.server.port=8088
+
+networks:
+  proxy:
+    external: true
+    name: proxy
