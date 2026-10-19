@@ -178,6 +178,10 @@ type AlertSeverity struct {
 // (endpoints). token_env is optional; auth selects how the token is sent.
 // type "openclaw" is a single-endpoint alias: when token_env is set, the token is
 // sent as Authorization: Bearer and x-openclaw-token.
+// type "splunk" POSTs Splunk HEC envelopes (event = webhook JSON) to url_env or
+// endpoints; token_env is required (Authorization: Splunk <token>).
+// type "elasticsearch" (alias "elastic") indexes the webhook JSON document;
+// auth is api_key (default when token_env is set), bearer, or none.
 type ChannelConfig struct {
 	Type            string            `yaml:"type"`
 	URLEnv          string            `yaml:"url_env,omitempty"`
@@ -188,6 +192,15 @@ type ChannelConfig struct {
 	ChannelEnv      string            `yaml:"channel_env,omitempty"`
 	SeverityFilter  []string          `yaml:"severity_filter,omitempty"`
 	EscalationDelay int               `yaml:"escalation_delay,omitempty"`
+	// Index is the Splunk HEC index or Elasticsearch index name (optional for
+	// Splunk; required for Elasticsearch when url_env is only a cluster base).
+	Index string `yaml:"index,omitempty"`
+	// IndexEnv names an env var that overrides Index when set and non-empty.
+	IndexEnv string `yaml:"index_env,omitempty"`
+	// Sourcetype is the Splunk HEC sourcetype (default netspec:alert).
+	Sourcetype string `yaml:"sourcetype,omitempty"`
+	// Source is the Splunk HEC source field (default netspec).
+	Source string `yaml:"source,omitempty"`
 }
 
 // WebhookEndpoint is one HTTP destination for a webhook channel.

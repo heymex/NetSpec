@@ -48,8 +48,9 @@ func NewNotifier(logger zerolog.Logger, channels map[string]config.ChannelConfig
 }
 
 // SendAlert delivers an alert to the given logical channel names (from alert_rules).
-// Supports type "apprise" (default), "webhook", and the "openclaw" webhook alias.
-// type "slack_chatops" is skipped here (handled by SlackNotifier in the alert engine).
+// Supports type "apprise" (default), "webhook", "openclaw", "splunk", and
+// "elasticsearch" (alias "elastic"). type "slack_chatops" is skipped here
+// (handled by SlackNotifier in the alert engine).
 func (n *Notifier) SendAlert(alert *types.Alert, channelNames []string) error {
 	if len(channelNames) == 0 {
 		return nil
@@ -84,6 +85,14 @@ func (n *Notifier) SendAlert(alert *types.Alert, channelNames []string) error {
 			continue
 		case "webhook", "openclaw":
 			if err := n.deliverWebhookChannel(name, ch, alert); err != nil {
+				errs = append(errs, fmt.Errorf("channel %q: %w", name, err))
+			}
+		case "splunk":
+			if err := n.deliverSplunkChannel(name, ch, alert); err != nil {
+				errs = append(errs, fmt.Errorf("channel %q: %w", name, err))
+			}
+		case "elasticsearch", "elastic":
+			if err := n.deliverElasticsearchChannel(name, ch, alert); err != nil {
 				errs = append(errs, fmt.Errorf("channel %q: %w", name, err))
 			}
 		case "apprise", "":

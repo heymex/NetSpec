@@ -104,3 +104,5 @@ curl -sS -X POST "$WEBHOOK_URL" \
 Then fire a real NetSpec alert (or resolve one) and check NetSpec logs for `webhook notify` / `webhook notification sent` (`LOG_LEVEL=debug` helps).
 
 The dashboard **Test alerts** button only exercises **Apprise** channels. Webhook channels are reported as skipped there.
+
+For Splunk HEC or Elasticsearch indexing (HEC envelope / `@timestamp` document), see [SIEM alerting](SIEM_ALERTING.md).

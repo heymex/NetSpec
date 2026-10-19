@@ -61,6 +61,7 @@ The `.env` file should contain:
 - Channel targets come from env vars named in `config/alerts.yaml` under `channels.*.url_env` (for example `APPRISE_SLACK_WEBHOOK`). See `.env.example` for placeholders.
 - Optional: `APPRISE_NOTIFY_TIMEOUT` (HTTP timeout per notify, e.g. `15s`). Troubleshooting: [Apprise alerting](docs/APPRISE_ALERTING.md).
 - Optional HTTP webhooks: channel `type: webhook` with one `url_env` or several `endpoints`, plus `NETSPEC_PUBLIC_URL` for embedded UI links. See [Webhook alerting](docs/WEBHOOK_ALERTING.md).
+- Optional Splunk HEC / Elasticsearch: channel `type: splunk` or `type: elasticsearch` (alias `elastic`). See [SIEM alerting](docs/SIEM_ALERTING.md).
 - `NETSPEC_INGEST_HOST` / `NETSPEC_INGEST_PORT` - where **`netspec-mdt`** sends NetSpec JSON lines (must match `global.ingest` when `telemetry_mode` is `telemetry_ingest_push`; default compose **`NETSPEC_INGEST_HOST=netspec-netspec`**)
 - `NETSPEC_ADMIN_PASSWORD_HASH` / `NETSPEC_SESSION_SECRET` - optional **browser session** login for the web UI and API HTML routes (see **`.env.example`**; use `netspec hash-password` or CI image entrypoint). Omit both (or leave hash empty) for open access.
 - `NETSPEC_API_TOKEN` - optional **bearer token** for scripted API access alongside session cookies
@@ -197,7 +198,7 @@ As of **v2.0.0-beta.2**, highlights include:
 - ✅ SNMP validator with targeted polling
 - ✅ Interface state evaluation (including **port-channel** members, `member_policy` thresholds, and high-speed interface alias normalization for SNMP vs. telemetry name drift)
 - ✅ Push telemetry ingest via **`netspec-mdt`** (Cisco dial-out kvGPB → newline-delimited JSON into NetSpec)
-- ✅ **Alerts on desired-state mismatch**, delivered via **Apprise-API** (`/notify/`), optional **HTTP webhooks**, and channels in `config/alerts.yaml`
+- ✅ **Alerts on desired-state mismatch**, delivered via **Apprise-API** (`/notify/`), optional **HTTP webhooks**, **Splunk HEC** / **Elasticsearch**, and channels in `config/alerts.yaml`
 - ✅ YAML configuration (split devices, optional credentials and maintenance files)
 - ✅ Docker deployment and **local parity** Makefile workflow
 - ✅ Web status interface, discovery wizard (including **re-walk / sync** monitored interfaces for existing devices), API browser (OpenAPI/Swagger)
@@ -254,7 +255,7 @@ NetSpec includes a built-in web UI accessible at `http://localhost:8088` (or you
 
 ## Architecture
 
-`SNMP Validation / Push Ingest → State Evaluator → Alert Engine → Apprise / Webhook`
+`SNMP Validation / Push Ingest → State Evaluator → Alert Engine → Apprise / Webhook / Splunk / Elasticsearch`
 
 ### Current Telemetry Modes
 

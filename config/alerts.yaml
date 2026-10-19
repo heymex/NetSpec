@@ -27,6 +27,21 @@ channels:
   #       auth: bearer_and_header
   #       header_name: X-Webhook-Token
 
+  # Splunk HEC / Elasticsearch (same alert JSON, SIEM envelopes).
+  # See docs/SIEM_ALERTING.md.
+  # ops-splunk:
+  #   type: splunk
+  #   url_env: SPLUNK_HEC_URL
+  #   token_env: SPLUNK_HEC_TOKEN
+  #   index: netops
+  #   severity_filter: [warning, critical]
+  # ops-elastic:
+  #   type: elasticsearch
+  #   url_env: ELASTIC_URL
+  #   token_env: ELASTIC_API_KEY
+  #   index: netspec-alerts
+  #   severity_filter: [warning, critical]
+
 alert_rules:
   default:
     channels: [ops-slack]
