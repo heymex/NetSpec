@@ -27,7 +27,7 @@ type Engine struct {
 	logger          zerolog.Logger
 	activeAlerts    map[string]*types.Alert
 	lastFired       map[string]time.Time // dedup tracking
-	suppressedUntil map[string]time.Time // zero time = suppress until condition resolves
+	suppressedUntil map[string]time.Time // non-zero: suppress new fires until this time
 	dataDir         string
 	mu              sync.RWMutex
 	flap            *FlapDetector
@@ -182,16 +182,26 @@ func (e *Engine) loadState() {
 		return
 	}
 	if state.ActiveAlerts != nil {
+		// Manual close used to persist the alert as "resolved" and then delete
+		// it only in memory. Those tombstones are not active and must not block
+		// a later firing sample.
+		for k, alert := range state.ActiveAlerts {
+			if alert == nil || (alert.State != "firing" && alert.State != "acked") {
+				delete(state.ActiveAlerts, k)
+			}
+		}
 		e.activeAlerts = state.ActiveAlerts
 	}
 	if state.LastFired != nil {
 		e.lastFired = state.LastFired
 	}
 	if state.SuppressedUntil != nil {
-		// Drop expired time-bounded suppressions; keep zero-time (until-resolved) entries.
+		// Drop expired suppressions and zero-time entries. Zero meant "suppress
+		// until a resolved event", but interface mismatch and admin-down never
+		// emit one while the fault persists, so a manual close hid it across restarts.
 		now := time.Now()
 		for k, t := range state.SuppressedUntil {
-			if !t.IsZero() && t.Before(now) {
+			if t.IsZero() || t.Before(now) {
 				delete(state.SuppressedUntil, k)
 			}
 		}
@@ -324,10 +334,12 @@ func (e *Engine) process(ev AlertEvent) {
 			return
 		}
 
-		// If the alert was manually closed but the condition persists, suppress until resolved.
+		// Honor only a future, time-bounded suppression. A zero time is an
+		// indefinite close latch from older builds and must not hide a fault
+		// that telemetry is still reporting.
 		if suppUntil, ok := e.suppressedUntil[key]; ok {
-			if suppUntil.IsZero() || time.Now().Before(suppUntil) {
-				e.logger.Debug().Str("key", key).Msg("alert suppressed after manual close")
+			if !suppUntil.IsZero() && time.Now().Before(suppUntil) {
+				e.logger.Debug().Str("key", key).Msg("alert suppressed until configured time")
 				return
 			}
 			delete(e.suppressedUntil, key)
@@ -382,12 +394,18 @@ func (e *Engine) process(ev AlertEvent) {
 
 		e.saveState()
 	} else {
-		// Resolve — always lift suppression so a future re-occurrence fires normally.
+		// Resolve. Drop any leftover suppression and the dedup stamp so a later
+		// recurrence fires as a new incident instead of being swallowed.
+		_, hadSupp := e.suppressedUntil[key]
 		delete(e.suppressedUntil, key)
+		_, hadFired := e.lastFired[key]
+		delete(e.lastFired, key)
 
 		existing, ok := e.activeAlerts[key]
 		if !ok {
-			e.saveState()
+			if hadSupp || hadFired {
+				e.saveState()
+			}
 			return
 		}
 		now := time.Now()
@@ -559,8 +577,9 @@ func (e *Engine) AckAlert(alertID, by, note string) (*types.Alert, error) {
 	return nil, fmt.Errorf("alert %s not found", alertID)
 }
 
-// CloseAlert manually resolves an alert (user-initiated from Slack).
-// Sends a resolved notification through configured Apprise channels and removes the alert.
+// CloseAlert manually resolves an alert (user-initiated from the UI or Slack).
+// The alert is removed immediately. A condition that is still true fires again
+// after the dedup window; recovery clears that stamp so a later recurrence is new.
 func (e *Engine) CloseAlert(alertID, by string) (*types.Alert, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -584,14 +603,16 @@ func (e *Engine) CloseAlert(alertID, by string) (*types.Alert, error) {
 			e.notify(*alert)
 		}
 
-		// Suppress re-fire until the condition actually clears on the network.
-		// Zero time = suppress indefinitely until a non-firing event is received.
-		e.suppressedUntil[key] = time.Time{}
+		// Quiet period only. Do not latch the key off until some future clear
+		// event — interface alerts do not emit one while the fault persists,
+		// and that latch was persisted across restarts.
+		delete(e.suppressedUntil, key)
+		e.lastFired[key] = now
 
 		e.logger.Info().Str("alert_id", alertID).Str("by", by).Msg("alert closed")
-		e.saveState()
 		cp := *alert
 		delete(e.activeAlerts, key)
+		e.saveState()
 		return &cp, nil
 	}
 	return nil, fmt.Errorf("alert %s not found", alertID)

@@ -446,3 +446,80 @@ func setMemberState(e *Evaluator, device, member, oper string) {
 func ptrFloat(v float64) *float64 {
 	return &v
 }
+
+func TestEvaluateInterfaceSnapshot_OperMismatchThenRecovery(t *testing.T) {
+	t.Parallel()
+
+	e := newIfaceEvaluator(t)
+	down := e.EvaluateInterfaceSnapshotWithSource("sw1", "Gi1/0/1", "down", "enabled", "push_snmp")
+	if c := findChange(down, alertTypeInterfaceMismatch, false); c == nil {
+		t.Fatalf("expected firing mismatch, got %#v", down)
+	}
+	again := e.EvaluateInterfaceSnapshotWithSource("sw1", "Gi1/0/1", "down", "enabled", "push_snmp")
+	if c := findChange(again, alertTypeInterfaceMismatch, false); c == nil {
+		t.Fatalf("persisting mismatch should keep firing, got %#v", again)
+	}
+	if c := findChange(again, alertTypeInterfaceMismatch, true); c != nil {
+		t.Fatalf("down sample must not resolve, got %#v", c)
+	}
+
+	up := e.EvaluateInterfaceSnapshotWithSource("sw1", "Gi1/0/1", "up", "enabled", "push_snmp")
+	if c := findChange(up, alertTypeInterfaceMismatch, true); c == nil {
+		t.Fatalf("expected recovery, got %#v", up)
+	}
+	steady := e.EvaluateInterfaceSnapshotWithSource("sw1", "Gi1/0/1", "up", "enabled", "push_snmp")
+	if len(steady) != 0 {
+		t.Fatalf("healthy repeat should be quiet, got %#v", steady)
+	}
+}
+
+func TestEvaluateInterfaceSnapshot_AdminDownPersistsAndRecovers(t *testing.T) {
+	t.Parallel()
+
+	e := newIfaceEvaluator(t)
+	first := e.EvaluateInterfaceSnapshotWithSource("sw1", "Gi1/0/1", "down", "disabled", "push_snmp")
+	if c := findChange(first, alertTypeInterfaceAdminDown, false); c == nil {
+		t.Fatalf("expected admin-down fire, got %#v", first)
+	}
+	if c := findChange(first, alertTypeInterfaceMismatch, false); c != nil {
+		t.Fatalf("oper mismatch must not fire while admin is wrong, got %#v", c)
+	}
+
+	again := e.EvaluateInterfaceSnapshotWithSource("sw1", "Gi1/0/1", "down", "disabled", "push_snmp")
+	if c := findChange(again, alertTypeInterfaceAdminDown, false); c == nil {
+		t.Fatalf("persisting admin-down should keep firing, got %#v", again)
+	}
+
+	recovered := e.EvaluateInterfaceSnapshotWithSource("sw1", "Gi1/0/1", "down", "enabled", "push_snmp")
+	if c := findChange(recovered, alertTypeInterfaceAdminDown, true); c == nil {
+		t.Fatalf("expected admin recovery, got %#v", recovered)
+	}
+	if c := findChange(recovered, alertTypeInterfaceMismatch, false); c == nil {
+		t.Fatalf("oper mismatch should fire once admin matches, got %#v", recovered)
+	}
+}
+
+func newIfaceEvaluator(t *testing.T) *Evaluator {
+	t.Helper()
+	cfg := &config.Config{
+		DesiredState: config.DesiredStateConfig{
+			Devices: map[string]config.DeviceConfig{
+				"sw1": {
+					Interfaces: map[string]config.InterfaceConfig{
+						"Gi1/0/1": {DesiredState: "up", AdminState: "enabled", Monitor: true},
+					},
+				},
+			},
+		},
+	}
+	return NewEvaluator(cfg, zerolog.Nop())
+}
+
+func findChange(changes []StateChange, alertType string, resolved bool) *StateChange {
+	for i := range changes {
+		if changes[i].AlertType == alertType && changes[i].Resolved == resolved {
+			return &changes[i]
+		}
+	}
+	return nil
+}
