@@ -6,6 +6,7 @@ All notable changes to this project are documented here. Release tags follow [Se
 
 ### Features
 
+- **Distributed MDT ingest:** remote-only `docker-compose.mdt-remote.yml`, central `docker-compose.ingest-publish.yml`, and `NETSPEC_MDT_SOURCE` for per-site NDJSON tags. Dial-out stays on the site LAN; filtered events cross a VPN to central NetSpec. See `docs/DISTRIBUTED_INGEST.md`.
 - Added **webhook** alert channels (`type: webhook`) that POST structured JSON (`event`, `alert`, optional `links`) to one or more HTTP endpoints, each with its own URL and auth. See `docs/WEBHOOK_ALERTING.md`. Existing `type: openclaw` channels still load as a single-endpoint compatibility alias.
 - Replaced Telegraf + Python MDT as the default compose path with a native Go **`netspec-mdt`** sidecar (Cisco dial-out kvGPB → NDJSON ingest). Host **:57500** is gRPC; metrics on **:8089** (`/health`, `/stats`, `/metrics`). The old stack is **`docker-compose.legacy-mdt.yml`**.
 - Optional **`MDT_VM_URL`** on **`netspec-mdt`** writes contracted Graph series (`if_*`, `transceiver_*`) to VictoriaMetrics as Influx line protocol. Empty URL keeps the state-only path.

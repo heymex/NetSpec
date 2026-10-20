@@ -62,6 +62,8 @@ The `.env` file should contain:
 - Optional: `APPRISE_NOTIFY_TIMEOUT` (HTTP timeout per notify, e.g. `15s`). Troubleshooting: [Apprise alerting](docs/APPRISE_ALERTING.md).
 - Optional HTTP webhooks: channel `type: webhook` with one `url_env` or several `endpoints`, plus `NETSPEC_PUBLIC_URL` for embedded UI links. See [Webhook alerting](docs/WEBHOOK_ALERTING.md).
 - `NETSPEC_INGEST_HOST` / `NETSPEC_INGEST_PORT` - where **`netspec-mdt`** sends NetSpec JSON lines (must match `global.ingest` when `telemetry_mode` is `telemetry_ingest_push`; default compose **`NETSPEC_INGEST_HOST=netspec-netspec`**)
+- `NETSPEC_MDT_SOURCE` - optional source tag on NDJSON events (default **`netspec-mdt`**; use per-site values with remote sidecars)
+- `NETSPEC_INGEST_TOKEN` / `NETSPEC_INGEST_TOKEN_ENV` - optional shared push-ingest token for sidecar → NetSpec auth
 - `NETSPEC_ADMIN_PASSWORD_HASH` / `NETSPEC_SESSION_SECRET` - optional **browser session** login for the web UI and API HTML routes (see **`.env.example`**; use `netspec hash-password` or CI image entrypoint). Omit both (or leave hash empty) for open access.
 - `NETSPEC_API_TOKEN` - optional **bearer token** for scripted API access alongside session cookies
 - **`TLS_CERT_PATH` / `TLS_KEY_PATH`** - **STRONGLY RECOMMENDED for production**: paths to TLS certificate and private key files to enable HTTPS. Without TLS, passwords, session cookies, API tokens, and SNMP communities are transmitted in plaintext. See **[docs/TLS_SETUP.md](docs/TLS_SETUP.md)** for detailed setup instructions.
@@ -271,7 +273,7 @@ Preferred operating model:
 IOS-XE Dial-Out Telemetry → netspec-mdt (gRPC :57500) → NDJSON TCP → NetSpec ingest → SNMP targeted validation → Evaluator → Alert engine
 ```
 
-This keeps telemetry event-driven while using targeted SNMP `GET` calls for confirmation. Dial-out telemetry configuration details are documented in `docs/CISCO_GNMI_SETUP.md`. Sidecar health and path mix: **`http://127.0.0.1:8089/stats`**.
+This keeps telemetry event-driven while using targeted SNMP `GET` calls for confirmation. Dial-out telemetry configuration details are documented in `docs/CISCO_GNMI_SETUP.md`. Sidecar health and path mix: **`http://127.0.0.1:8089/stats`**. For remote-site sidecars that keep dial-out on the LAN and forward NDJSON over a VPN, see [Distributed ingest](docs/DISTRIBUTED_INGEST.md) (`docker-compose.mdt-remote.yml` + `docker-compose.ingest-publish.yml`).
 
 For `telemetry_ingest_push`, each TCP line must be valid JSON:
 

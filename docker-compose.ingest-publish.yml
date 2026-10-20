@@ -1,0 +1,19 @@
+# Opt-in: publish NetSpec push ingest on the host so remote netspec-mdt
+# sidecars can forward NDJSON over a VPN/private network.
+#
+# Merge with the central stack only (do not use on a remote-only host):
+#   docker compose -f docker-compose.yml -f docker-compose.ingest-publish.yml up -d
+#
+# Default host port 57500 matches global.ingest.port. Override with
+# NETSPEC_INGEST_PUBLISH_PORT if the host already binds 57500 for a local
+# dial-out sidecar (colocate remote dial-out and central ingest carefully).
+#
+# Restrict exposure to the VPN interface via host firewall. MVP assumes a
+# trusted private path + shared ingest token — not public TLS.
+#
+# See docs/DISTRIBUTED_INGEST.md.
+
+services:
+  netspec-netspec:
+    ports:
+      - "${NETSPEC_INGEST_PUBLISH_PORT:-57500}:57500"

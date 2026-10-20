@@ -1,0 +1,50 @@
+# Remote-site netspec-mdt only: dial-out stays on the LAN; filtered NDJSON
+# crosses the WAN to a central NetSpec ingest.
+#
+# Prerequisites on the central stack:
+#   - Merge docker-compose.ingest-publish.yml (or otherwise expose ingest :57500
+#     on a VPN/private path).
+#   - Shared ingest token: global.ingest.token_env + matching secret in both
+#     central NetSpec and this sidecar's .env.
+#
+# Example:
+#   export NETSPEC_INGEST_HOST=netspec-central.vpn.example
+#   export NETSPEC_MDT_SOURCE=site-east
+#   docker compose -f docker-compose.mdt-remote.yml up -d
+#
+# See docs/DISTRIBUTED_INGEST.md.
+
+services:
+  netspec-mdt:
+    image: ghcr.io/heymex/netspec-mdt:${NETSPEC_IMAGE_TAG:-latest}
+    container_name: netspec-mdt
+    restart: unless-stopped
+    ports:
+      # Local switches dial out here (LAN). Do not publish this over the WAN.
+      - "57500:57500"
+      - "${NETSPEC_MDT_METRICS_PORT:-8089}:8089"
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      # Point at central NetSpec ingest (VPN hostname/IP). Prefer TARGETS for
+      # explicit host:port; otherwise HOST+PORT.
+      - NETSPEC_INGEST_HOST=${NETSPEC_INGEST_HOST:-}
+      - NETSPEC_INGEST_PORT=${NETSPEC_INGEST_PORT:-57500}
+      - NETSPEC_INGEST_TARGETS=${NETSPEC_INGEST_TARGETS:-}
+      - NETSPEC_INGEST_TOKEN_ENV=${NETSPEC_INGEST_TOKEN_ENV:-NETSPEC_INGEST_TOKEN}
+      - NETSPEC_INGEST_TOKEN=${NETSPEC_INGEST_TOKEN:-}
+      - NETSPEC_MDT_SOURCE=${NETSPEC_MDT_SOURCE:-netspec-mdt}
+      - MDT_ALLOWED_DEVICES=${MDT_ALLOWED_DEVICES:-}
+      - MDT_RESEND_INTERVAL=${MDT_RESEND_INTERVAL:-60s}
+      # Keep Graph/VM off at the edge; state-only NDJSON is the WAN path.
+      - MDT_VM_URL=
+      - NETSPEC_MDT_METRICS_ADDR=${NETSPEC_MDT_METRICS_ADDR:-0.0.0.0:8089}
+      - NETSPEC_MDT_WORKERS=${NETSPEC_MDT_WORKERS:-4}
+      - NETSPEC_MDT_QUEUE_SIZE=${NETSPEC_MDT_QUEUE_SIZE:-1024}
+    logging:
+      driver: json-file
+      options:
+        max-size: ${MDT_LOG_MAX_SIZE:-10m}
+        max-file: "${MDT_LOG_MAX_FILE:-5}"
+    mem_limit: ${MDT_MEM_LIMIT:-512m}
+    cpus: "${MDT_CPU_LIMIT:-1.0}"
+    pids_limit: ${MDT_PIDS_LIMIT:-256}

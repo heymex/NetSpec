@@ -29,6 +29,7 @@ func main() {
 	ingestPort := flag.Int("ingest-port", envInt("NETSPEC_INGEST_PORT", 57500), "NetSpec NDJSON ingest port (if targets unset)")
 	ingestTargets := flag.String("ingest-targets", os.Getenv("NETSPEC_INGEST_TARGETS"), "comma-separated host:port NDJSON sinks")
 	ingestTokenEnv := flag.String("ingest-token-env", envOr("NETSPEC_INGEST_TOKEN_ENV", ""), "env var holding optional ingest token")
+	sourceTag := flag.String("source", envOr("NETSPEC_MDT_SOURCE", transformer.DefaultSource), "source tag stamped on forwarded NDJSON events (per-site label)")
 	allowed := flag.String("allowed-devices", os.Getenv("MDT_ALLOWED_DEVICES"), "comma-separated node_id allowlist")
 	resend := flag.Duration("resend-interval", envDuration("MDT_RESEND_INTERVAL", 60*time.Second), "unchanged-state resend interval")
 	logLevel := flag.String("log-level", envOr("LOG_LEVEL", "info"), "log level")
@@ -73,10 +74,14 @@ func main() {
 		allowSet = allow
 	}
 
+	src := strings.TrimSpace(*sourceTag)
+	if src == "" {
+		src = transformer.DefaultSource
+	}
 	xf := transformer.New(transformer.Config{
 		ResendInterval: *resend,
 		AllowedDevices: allowSet,
-		Source:         transformer.DefaultSource,
+		Source:         src,
 	})
 	client := egress.NewClient(targets, token, log)
 	defer client.Close()
@@ -99,6 +104,7 @@ func main() {
 	log.Info().
 		Str("listen", *listenAddr).
 		Str("metrics", *metricsAddr).
+		Str("source", src).
 		Interface("ingest_targets", targets).
 		Str("vm_url", *vmURL).
 		Dur("resend_interval", *resend).
