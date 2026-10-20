@@ -140,7 +140,7 @@ func (e *Evaluator) evaluateInterfaceSnapshotWithSource(deviceName, ifaceName, o
 	if adminChange := e.evaluateAdminChange(deviceName, ifaceName, ifCfg, prevState, newState); adminChange != nil {
 		changes = append(changes, *adminChange)
 	}
-	if operChange := e.evaluateOperChange(deviceName, ifaceName, ifCfg, newState); operChange != nil {
+	if operChange := e.evaluateOperChange(deviceName, ifaceName, ifCfg, prevState, newState); operChange != nil {
 		changes = append(changes, *operChange)
 	}
 	changes = append(changes, e.evaluatePortChannel(deviceName, ifaceName, deviceCfg)...)
@@ -225,10 +225,12 @@ func (e *Evaluator) EvaluateNotification(deviceName string, notification *gnmi.N
 			}
 		}
 
-		// Update state cache
+		// Update state cache. Keep the pre-update snapshot so recovery can
+		// tell a real transition from a repeat sample.
 		e.mu.Lock()
 		cacheKey := fmt.Sprintf("%s:%s", deviceName, ifaceName)
-		state := e.stateCache[cacheKey]
+		prevState := e.stateCache[cacheKey]
+		state := prevState
 		state.Device = deviceName
 		state.Interface = ifaceName
 		state.UpdatedAt = time.Now()
@@ -244,7 +246,6 @@ func (e *Evaluator) EvaluateNotification(deviceName string, notification *gnmi.N
 		}
 
 		e.stateCache[cacheKey] = state
-		prevState := state
 		e.mu.Unlock()
 
 		// Evaluate state against desired state
@@ -254,7 +255,7 @@ func (e *Evaluator) EvaluateNotification(deviceName string, notification *gnmi.N
 			}
 		}
 		if stateType == "oper-status" {
-			if operChange := e.evaluateOperChange(deviceName, ifaceName, ifCfg, state); operChange != nil {
+			if operChange := e.evaluateOperChange(deviceName, ifaceName, ifCfg, prevState, state); operChange != nil {
 				changes = append(changes, *operChange)
 			}
 		}
@@ -314,7 +315,9 @@ func (e *Evaluator) parseInterfacePath(path *gnmi.Path) (ifaceName string, state
 	return ifaceName, stateType, nil
 }
 
-// evaluateAdminChange evaluates admin status changes
+// evaluateAdminChange evaluates admin status against desired state.
+// A mismatch fires on every sample so a closed alert can return after the
+// dedup window. Recovery emits a single resolved event on the bad-to-good transition.
 func (e *Evaluator) evaluateAdminChange(deviceName, ifaceName string, ifCfg config.InterfaceConfig, prevState, ifaceState interfaceState) *StateChange {
 	if ifCfg.AdminState == "" {
 		return nil
@@ -323,11 +326,25 @@ func (e *Evaluator) evaluateAdminChange(deviceName, ifaceName string, ifCfg conf
 	if _, ok := supportedAdminStates[desiredAdmin]; !ok {
 		return nil
 	}
-	if prevState.AdminStatus == ifaceState.AdminStatus {
+	if ifaceState.AdminStatus == "" {
 		return nil
 	}
-	if ifaceState.AdminStatus == "" || ifaceState.AdminStatus == desiredAdmin {
-		return nil
+	if ifaceState.AdminStatus == desiredAdmin {
+		if prevState.AdminStatus == "" || prevState.AdminStatus == desiredAdmin {
+			return nil
+		}
+		return &StateChange{
+			Device:    deviceName,
+			Interface: ifaceName,
+			AlertType: alertTypeInterfaceAdminDown,
+			Severity:  "info",
+			Message:   fmt.Sprintf("interface %s admin state recovered to %s", ifaceName, ifaceState.AdminStatus),
+			RelatedState: map[string]string{
+				"expected_admin": desiredAdmin,
+				"actual_admin":   ifaceState.AdminStatus,
+			},
+			Resolved: true,
+		}
 	}
 	severity := severityForAlert(ifCfg, "admin_down", "warning")
 	return &StateChange{
@@ -343,8 +360,10 @@ func (e *Evaluator) evaluateAdminChange(deviceName, ifaceName string, ifCfg conf
 	}
 }
 
-// evaluateOperChange evaluates operational status changes
-func (e *Evaluator) evaluateOperChange(deviceName, ifaceName string, ifCfg config.InterfaceConfig, ifaceState interfaceState) *StateChange {
+// evaluateOperChange evaluates operational status against desired state.
+// A mismatch fires on every sample. Recovery emits a single resolved event
+// when oper status transitions back to the desired value.
+func (e *Evaluator) evaluateOperChange(deviceName, ifaceName string, ifCfg config.InterfaceConfig, prevState, ifaceState interfaceState) *StateChange {
 	if ifCfg.DesiredState == "" {
 		return nil
 	}
@@ -382,7 +401,21 @@ func (e *Evaluator) evaluateOperChange(deviceName, ifaceName string, ifCfg confi
 		}
 	}
 
-	return nil
+	if prevState.OperStatus == "" || prevState.OperStatus == desired {
+		return nil
+	}
+	return &StateChange{
+		Device:    deviceName,
+		Interface: ifaceName,
+		AlertType: alertTypeInterfaceMismatch,
+		Severity:  "info",
+		Message:   fmt.Sprintf("interface %s recovered to %s", ifaceName, ifaceState.OperStatus),
+		RelatedState: map[string]string{
+			"expected_state": desired,
+			"actual_state":   ifaceState.OperStatus,
+		},
+		Resolved: true,
+	}
 }
 
 // evaluatePortChannel evaluates port-channel member requirements
